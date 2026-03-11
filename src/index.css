@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    overscroll-behavior: none;
+  }
+}
+
+@layer utilities {
+  /* Card face transitions */
+  .card-face {
+    transition: opacity 0.18s ease;
+  }
+  .card-face-hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Study card content: reset prose styles inside dangerouslySetInnerHTML */
+  .card-content {
+    font-size: 1rem;
+    line-height: 1.6;
+    word-break: break-word;
+  }
+  .card-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0.5rem auto;
+  }
+
+  /* Cloze highlight */
+  .card-content .cloze {
+    color: #3b82f6;
+    font-weight: 600;
+  }
+
+  /* Rating button press state */
+  .rating-btn:active {
+    transform: scale(0.96);
+  }
+}
