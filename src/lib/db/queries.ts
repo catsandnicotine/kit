@@ -195,6 +195,60 @@ function toReviewLog(row: Row): ReviewLog {
 }
 
 // ---------------------------------------------------------------------------
+// Transaction helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Begin an explicit transaction. All subsequent writes will be batched
+ * until {@link commitTransaction} or {@link rollbackTransaction} is called.
+ *
+ * This is the single biggest SQLite performance lever: without it, every
+ * INSERT is an implicit transaction with its own fsync. Wrapping 30K inserts
+ * in one transaction turns minutes into seconds.
+ *
+ * @param db - sql.js Database instance.
+ * @returns void on success, or an error.
+ */
+export function beginTransaction(db: Database): Result<void> {
+  try {
+    db.run('BEGIN TRANSACTION');
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Commit the current transaction, persisting all writes since BEGIN.
+ *
+ * @param db - sql.js Database instance.
+ * @returns void on success, or an error.
+ */
+export function commitTransaction(db: Database): Result<void> {
+  try {
+    db.run('COMMIT');
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Roll back the current transaction, discarding all writes since BEGIN.
+ *
+ * @param db - sql.js Database instance.
+ * @returns void on success, or an error.
+ */
+export function rollbackTransaction(db: Database): Result<void> {
+  try {
+    db.run('ROLLBACK');
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Deck queries
 // ---------------------------------------------------------------------------
 
@@ -252,6 +306,35 @@ export function insertDeck(db: Database, deck: Deck): Result<void> {
 }
 
 /**
+ * Rename a deck.
+ *
+ * @param db        - sql.js Database instance.
+ * @param id        - Deck UUID.
+ * @param name      - New deck name.
+ * @param updatedAt - Unix timestamp (seconds).
+ * @returns The updated Deck on success, or an error.
+ */
+export function renameDeck(
+  db: Database,
+  id: string,
+  name: string,
+  updatedAt: number,
+): Result<Deck> {
+  try {
+    db.run(
+      'UPDATE decks SET name = ?, updated_at = ? WHERE id = ?',
+      [name, updatedAt, id],
+    );
+    const result = getDeckById(db, id);
+    if (!result.success) return result;
+    if (!result.data) return { success: false, error: 'Deck not found after rename.' };
+    return { success: true, data: result.data };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Delete a deck and all its child records (notes, cards, media, logs) via CASCADE.
  * @param db - sql.js Database instance.
  * @param id - Deck UUID.
@@ -295,7 +378,7 @@ export function getCardsByDeck(db: Database, deckId: string): Result<Card[]> {
  * Fetch cards due for study in a deck, joined with their FSRS state.
  *
  * Returns three categories in priority order:
- *  1. New cards (no state row, or state = 'new')
+ *  1. New cards (no state row, or state = 'new') — limited by newCardsPerDay setting
  *  2. Cards in learning or relearning (due any time — these should not be skipped)
  *  3. Review cards whose due timestamp ≤ now
  *
@@ -310,6 +393,15 @@ export function getCardsDueForDeck(
   now: number,
 ): Result<CardWithState[]> {
   try {
+    // Get the new cards per day limit
+    const settingsResult = getDeckSettings(db, deckId);
+    const newCardsLimit = settingsResult.success ? settingsResult.data.newCardsPerDay : 20;
+
+    // Count how many new cards were already studied today
+    const todayResult = getNewCardsStudiedToday(db, deckId, now);
+    const studiedToday = todayResult.success ? todayResult.data : 0;
+    const newCardsRemaining = Math.max(0, newCardsLimit - studiedToday);
+
     const stmt = db.prepare(`
       SELECT
         c.id,  c.deck_id,  c.note_id,  c.front,  c.back,
@@ -336,12 +428,20 @@ export function getCardsDueForDeck(
     `);
     stmt.bind([deckId, now]);
     const results: CardWithState[] = [];
+    let newCardsSeen = 0;
     while (stmt.step()) {
       const row = stmt.getAsObject() as Row;
       const card  = toCard(row);
       const state = row['state'] !== null && row['state'] !== undefined
         ? toCardState(row, card.id)
         : defaultCardState(card.id);
+
+      // Enforce new cards per day limit
+      if (state.state === 'new') {
+        newCardsSeen++;
+        if (newCardsSeen > newCardsRemaining) continue;
+      }
+
       results.push({ card, state });
     }
     stmt.free();
@@ -375,6 +475,42 @@ export function insertCard(db: Database, card: Card): Result<void> {
       ],
     );
     return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Update a card's front, back, and tags content.
+ * Typically called when the user edits a card during a study session.
+ *
+ * @param db        - sql.js Database instance.
+ * @param id        - Card UUID.
+ * @param front     - New front HTML content.
+ * @param back      - New back HTML content.
+ * @param tags      - New tags array.
+ * @param updatedAt - Unix timestamp (seconds) of the edit.
+ * @returns The updated Card, or an error.
+ */
+export function updateCard(
+  db: Database,
+  id: string,
+  front: string,
+  back: string,
+  tags: string[],
+  updatedAt: number,
+): Result<Card> {
+  try {
+    db.run(
+      'UPDATE cards SET front = ?, back = ?, tags = ?, updated_at = ? WHERE id = ?',
+      [front, back, JSON.stringify(tags), updatedAt, id],
+    );
+    const stmt = db.prepare('SELECT * FROM cards WHERE id = ?');
+    stmt.bind([id]);
+    const found = stmt.step() ? toCard(stmt.getAsObject() as Row) : null;
+    stmt.free();
+    if (!found) return { success: false, error: `Card ${id} not found after update` };
+    return { success: true, data: found };
   } catch (e) {
     return { success: false, error: String(e) };
   }
@@ -511,6 +647,25 @@ export function updateCardAfterReview(
 // ---------------------------------------------------------------------------
 
 /**
+ * Fetch all notes belonging to a deck.
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns All notes in the deck, or an error.
+ */
+export function getNotesByDeck(db: Database, deckId: string): Result<Note[]> {
+  try {
+    const stmt = db.prepare('SELECT * FROM notes WHERE deck_id = ? ORDER BY created_at ASC');
+    stmt.bind([deckId]);
+    const notes: Note[] = [];
+    while (stmt.step()) notes.push(toNote(stmt.getAsObject() as Row));
+    stmt.free();
+    return { success: true, data: notes };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Fetch a single note by its ID.
  * @param db - sql.js Database instance.
  * @param id - Note UUID.
@@ -591,6 +746,52 @@ export function updateNote(
 // ---------------------------------------------------------------------------
 
 /**
+ * Fetch all note types belonging to a deck.
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns All note types in the deck, or an error.
+ */
+export function getNoteTypesByDeck(db: Database, deckId: string): Result<NoteType[]> {
+  try {
+    const stmt = db.prepare('SELECT * FROM note_types WHERE deck_id = ? ORDER BY name ASC');
+    stmt.bind([deckId]);
+    const noteTypes: NoteType[] = [];
+    while (stmt.step()) noteTypes.push(toNoteType(stmt.getAsObject() as Row));
+    stmt.free();
+    return { success: true, data: noteTypes };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Fetch all card states for cards in a given deck.
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns All card states for the deck's cards, or an error.
+ */
+export function getCardStatesByDeck(db: Database, deckId: string): Result<CardState[]> {
+  try {
+    const stmt = db.prepare(`
+      SELECT cs.*
+      FROM card_states cs
+      JOIN cards c ON cs.card_id = c.id
+      WHERE c.deck_id = ?
+    `);
+    stmt.bind([deckId]);
+    const states: CardState[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      states.push(toCardState(row, str(row, 'card_id')));
+    }
+    stmt.free();
+    return { success: true, data: states };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Insert a note type (Anki model).
  * @param db       - sql.js Database instance.
  * @param noteType - Fully-formed NoteType (caller provides UUID).
@@ -619,6 +820,46 @@ export function insertNoteType(db: Database, noteType: NoteType): Result<void> {
 // ---------------------------------------------------------------------------
 // Media queries
 // ---------------------------------------------------------------------------
+
+/** Lightweight media record for URL creation — omits id and timestamps. */
+export interface MediaBlob {
+  filename: string;
+  data: Uint8Array;
+  mimeType: string;
+}
+
+/**
+ * Fetch all media blobs for a deck.
+ *
+ * Returns filename, binary data, and MIME type — everything needed to
+ * create object URLs for card rendering.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns Array of media blobs, or an error.
+ */
+export function getMediaByDeck(db: Database, deckId: string): Result<MediaBlob[]> {
+  try {
+    const stmt = db.prepare(
+      'SELECT filename, data, mime_type FROM media WHERE deck_id = ?',
+    );
+    stmt.bind([deckId]);
+    const results: MediaBlob[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const data = row['data'];
+      results.push({
+        filename: str(row, 'filename'),
+        data:     data instanceof Uint8Array ? data : new Uint8Array(),
+        mimeType: str(row, 'mime_type'),
+      });
+    }
+    stmt.free();
+    return { success: true, data: results };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
 
 /**
  * Insert a media file attached to a deck.
@@ -734,6 +975,343 @@ export function deleteReviewLog(db: Database, logId: string): Result<void> {
   try {
     db.run('DELETE FROM review_logs WHERE id = ?', [logId]);
     return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deck statistics queries
+// ---------------------------------------------------------------------------
+
+/** Per-deck card count breakdown by learning state. */
+export interface DeckCardCounts {
+  deckId: string;
+  /** Cards never reviewed (no card_states row, or state = 'new'). */
+  newCount: number;
+  /** Cards in 'learning' or 'relearning' state. */
+  learningCount: number;
+  /** Cards in 'review' state that are due now. */
+  reviewCount: number;
+  /** Total cards in the deck. */
+  totalCount: number;
+}
+
+/**
+ * Get card count breakdowns for all decks.
+ *
+ * @param db  - sql.js Database instance.
+ * @param now - Current Unix timestamp in seconds (for review-due check).
+ * @returns Per-deck card counts keyed by deck ID, or an error.
+ */
+export function getAllDeckCardCounts(
+  db: Database,
+  now: number,
+): Result<Record<string, DeckCardCounts>> {
+  try {
+    const stmt = db.prepare(`
+      SELECT
+        c.deck_id,
+        COUNT(*)                                                              AS total,
+        SUM(CASE WHEN cs.card_id IS NULL OR cs.state = 'new' THEN 1 ELSE 0 END) AS new_count,
+        SUM(CASE WHEN cs.state IN ('learning', 'relearning')  THEN 1 ELSE 0 END) AS learning_count,
+        SUM(CASE WHEN cs.state = 'review' AND cs.due <= ?     THEN 1 ELSE 0 END) AS review_count
+      FROM cards c
+      LEFT JOIN card_states cs ON c.id = cs.card_id
+      GROUP BY c.deck_id
+    `);
+    stmt.bind([now]);
+
+    const result: Record<string, DeckCardCounts> = {};
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const deckId = str(row, 'deck_id');
+      result[deckId] = {
+        deckId,
+        newCount:      num(row, 'new_count'),
+        learningCount: num(row, 'learning_count'),
+        reviewCount:   num(row, 'review_count'),
+        totalCount:    num(row, 'total'),
+      };
+    }
+    stmt.free();
+    return { success: true, data: result };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get the total number of cards across all decks.
+ *
+ * @param db - sql.js Database instance.
+ * @returns Total card count, or an error.
+ */
+export function getTotalCardCount(db: Database): Result<number> {
+  try {
+    const stmt = db.prepare('SELECT COUNT(*) AS cnt FROM cards');
+    stmt.step();
+    const row = stmt.getAsObject() as Row;
+    const count = num(row, 'cnt');
+    stmt.free();
+    return { success: true, data: count };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deck settings queries
+// ---------------------------------------------------------------------------
+
+/** Settings for a single deck. */
+export interface DeckSettings {
+  deckId: string;
+  newCardsPerDay: number;
+}
+
+/**
+ * Get settings for a deck. Returns defaults if no row exists.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns DeckSettings with current or default values.
+ */
+export function getDeckSettings(db: Database, deckId: string): Result<DeckSettings> {
+  try {
+    const stmt = db.prepare(
+      'SELECT new_cards_per_day FROM deck_settings WHERE deck_id = ?',
+    );
+    stmt.bind([deckId]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      stmt.free();
+      return {
+        success: true,
+        data: { deckId, newCardsPerDay: num(row, 'new_cards_per_day') },
+      };
+    }
+    stmt.free();
+    return { success: true, data: { deckId, newCardsPerDay: 20 } };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Update the new-cards-per-day setting for a deck.
+ *
+ * @param db             - sql.js Database instance.
+ * @param deckId         - Deck UUID.
+ * @param newCardsPerDay - New daily limit (≥ 0).
+ * @returns void on success, or an error.
+ */
+export function setNewCardsPerDay(
+  db: Database,
+  deckId: string,
+  newCardsPerDay: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT INTO deck_settings (deck_id, new_cards_per_day)
+       VALUES (?, ?)
+       ON CONFLICT(deck_id) DO UPDATE SET new_cards_per_day = excluded.new_cards_per_day`,
+      [deckId, Math.max(0, Math.round(newCardsPerDay))],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deck statistics queries
+// ---------------------------------------------------------------------------
+
+/** Aggregated statistics for a single deck. */
+export interface DeckStats {
+  totalCards: number;
+  newCount: number;
+  learningCount: number;
+  reviewCount: number;
+  totalReviews: number;
+  retentionRate: number;
+  currentStreak: number;
+  /** Reviews per day for the last 7 days, oldest first. [day0, day1, ..., day6]. */
+  reviewsPerDay: number[];
+  /** Unix timestamp (seconds) of when the next card is due, or null if none. */
+  nextDue: number | null;
+}
+
+/**
+ * Compute comprehensive statistics for a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @param now    - Current Unix timestamp in seconds.
+ * @returns DeckStats on success, or an error.
+ */
+export function getDeckStats(
+  db: Database,
+  deckId: string,
+  now: number,
+): Result<DeckStats> {
+  try {
+    // ── Card counts by state ──────────────────────────────────────────
+    const countStmt = db.prepare(`
+      SELECT
+        COUNT(*)                                                              AS total,
+        SUM(CASE WHEN cs.card_id IS NULL OR cs.state = 'new' THEN 1 ELSE 0 END) AS new_count,
+        SUM(CASE WHEN cs.state IN ('learning', 'relearning')  THEN 1 ELSE 0 END) AS learning_count,
+        SUM(CASE WHEN cs.state = 'review'                     THEN 1 ELSE 0 END) AS review_count
+      FROM cards c
+      LEFT JOIN card_states cs ON c.id = cs.card_id
+      WHERE c.deck_id = ?
+    `);
+    countStmt.bind([deckId]);
+    countStmt.step();
+    const countRow = countStmt.getAsObject() as Row;
+    const totalCards = num(countRow, 'total');
+    const newCount = num(countRow, 'new_count');
+    const learningCount = num(countRow, 'learning_count');
+    const reviewCount = num(countRow, 'review_count');
+    countStmt.free();
+
+    // ── Total reviews & retention rate ────────────────────────────────
+    const reviewStmt = db.prepare(`
+      SELECT
+        COUNT(*)                                          AS total_reviews,
+        SUM(CASE WHEN rating != 'again' THEN 1 ELSE 0 END) AS correct
+      FROM review_logs rl
+      JOIN cards c ON rl.card_id = c.id
+      WHERE c.deck_id = ?
+    `);
+    reviewStmt.bind([deckId]);
+    reviewStmt.step();
+    const reviewRow = reviewStmt.getAsObject() as Row;
+    const totalReviews = num(reviewRow, 'total_reviews');
+    const correct = num(reviewRow, 'correct');
+    const retentionRate = totalReviews > 0
+      ? Math.round((correct / totalReviews) * 100)
+      : 0;
+    reviewStmt.free();
+
+    // ── Reviews per day (last 7 days) ─────────────────────────────────
+    const daySeconds = 86400;
+    const todayStart = now - (now % daySeconds);
+    const weekAgo = todayStart - 6 * daySeconds;
+
+    const dailyStmt = db.prepare(`
+      SELECT
+        CAST((rl.reviewed_at - ?) / 86400 AS INTEGER) AS day_idx,
+        COUNT(*) AS cnt
+      FROM review_logs rl
+      JOIN cards c ON rl.card_id = c.id
+      WHERE c.deck_id = ? AND rl.reviewed_at >= ?
+      GROUP BY day_idx
+    `);
+    dailyStmt.bind([weekAgo, deckId, weekAgo]);
+    const dailyMap = new Map<number, number>();
+    while (dailyStmt.step()) {
+      const row = dailyStmt.getAsObject() as Row;
+      dailyMap.set(num(row, 'day_idx'), num(row, 'cnt'));
+    }
+    dailyStmt.free();
+    const reviewsPerDay: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      reviewsPerDay.push(dailyMap.get(i) ?? 0);
+    }
+
+    // ── Current streak (consecutive days studied) ─────────────────────
+    let currentStreak = 0;
+    const streakStmt = db.prepare(`
+      SELECT DISTINCT CAST(rl.reviewed_at / 86400 AS INTEGER) AS day
+      FROM review_logs rl
+      JOIN cards c ON rl.card_id = c.id
+      WHERE c.deck_id = ?
+      ORDER BY day DESC
+    `);
+    streakStmt.bind([deckId]);
+    const todayDay = Math.floor(now / daySeconds);
+    let expectedDay = todayDay;
+    while (streakStmt.step()) {
+      const row = streakStmt.getAsObject() as Row;
+      const day = num(row, 'day');
+      if (day === expectedDay) {
+        currentStreak++;
+        expectedDay--;
+      } else if (day === expectedDay + 1) {
+        // Same as expected (rounding), skip
+        continue;
+      } else {
+        break;
+      }
+    }
+    streakStmt.free();
+
+    // ── Next due card ─────────────────────────────────────────────────
+    const nextDueStmt = db.prepare(`
+      SELECT MIN(cs.due) AS next_due
+      FROM card_states cs
+      JOIN cards c ON cs.card_id = c.id
+      WHERE c.deck_id = ? AND cs.state = 'review' AND cs.due > ?
+    `);
+    nextDueStmt.bind([deckId, now]);
+    nextDueStmt.step();
+    const nextDueRow = nextDueStmt.getAsObject() as Row;
+    const nextDueRaw = nextDueRow['next_due'];
+    const nextDue = nextDueRaw !== null && nextDueRaw !== undefined
+      ? Number(nextDueRaw)
+      : null;
+    nextDueStmt.free();
+
+    return {
+      success: true,
+      data: {
+        totalCards,
+        newCount,
+        learningCount,
+        reviewCount,
+        totalReviews,
+        retentionRate,
+        currentStreak,
+        reviewsPerDay,
+        nextDue,
+      },
+    };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get the number of new cards already studied today for a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @param now    - Current Unix timestamp in seconds.
+ * @returns Count of new cards studied today.
+ */
+export function getNewCardsStudiedToday(
+  db: Database,
+  deckId: string,
+  now: number,
+): Result<number> {
+  try {
+    const todayStart = now - (now % 86400);
+    const stmt = db.prepare(`
+      SELECT COUNT(DISTINCT rl.card_id) AS cnt
+      FROM review_logs rl
+      JOIN cards c ON rl.card_id = c.id
+      JOIN card_states cs ON cs.card_id = rl.card_id
+      WHERE c.deck_id = ? AND rl.reviewed_at >= ? AND cs.reps = 1
+    `);
+    stmt.bind([deckId, todayStart]);
+    stmt.step();
+    const row = stmt.getAsObject() as Row;
+    const count = num(row, 'cnt');
+    stmt.free();
+    return { success: true, data: count };
   } catch (e) {
     return { success: false, error: String(e) };
   }

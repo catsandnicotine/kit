@@ -38,3 +38,13 @@ export async function hapticLongPress(): Promise<void> {
 export async function hapticUndo(): Promise<void> {
   await Haptics.impact({ style: ImpactStyle.Light });
 }
+
+/** Generic button tap - light impact */
+export async function hapticTap(): Promise<void> {
+  await Haptics.impact({ style: ImpactStyle.Light });
+}
+
+/** Navigation transition - medium impact */
+export async function hapticNavigate(): Promise<void> {
+  await Haptics.impact({ style: ImpactStyle.Medium });
+}

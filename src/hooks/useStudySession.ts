@@ -28,6 +28,8 @@ import {
 import { initializeCard, reviewCard } from '../lib/srs/fsrs';
 import type { Card, CardState, CardWithState, Rating } from '../types';
 import { v4 as uuidv4 } from 'uuid';
+import { persistDatabase } from './useDatabase';
+import { scheduleICloudBackup } from './useBackup';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -155,9 +157,6 @@ export function useStudySession(
   const showCard = useCallback((queue: CardWithState[], index: number) => {
     const cws = queue[index];
     if (!cws) return;
-    // ── DEBUG ──────────────────────────────────────────────────────────────
-    console.debug('[showCard] index:', index, '| frontHtml length:', cws.card.front.length, '| backHtml length:', cws.card.back.length);
-    // ───────────────────────────────────────────────────────────────────────
     setFrontHtml(cws.card.front);
     setBackHtml(cws.card.back);
     setStats(prev => ({
@@ -172,10 +171,6 @@ export function useStudySession(
   // -------------------------------------------------------------------------
 
   useEffect(() => {
-    // ── DEBUG ────────────────────────────────────────────────────────────────
-    console.debug('[useStudySession] effect fired — db:', db ? 'present' : 'null', '| deckId:', deckId);
-    // ─────────────────────────────────────────────────────────────────────────
-
     if (!db) return;
 
     setPhase('loading');
@@ -183,15 +178,6 @@ export function useStudySession(
     undoRef.current = null;
 
     const result = getCardsDueForDeck(db, deckId, Math.floor(Date.now() / 1000));
-
-    // ── DEBUG ────────────────────────────────────────────────────────────────
-    console.debug('[useStudySession] getCardsDueForDeck result:', result.success ? `${result.data.length} cards` : `ERROR: ${result.error}`);
-    if (result.success && result.data.length > 0) {
-      const first = result.data[0].card;
-      console.debug('[useStudySession] first card front (first 120 chars):', first.front.slice(0, 120));
-      console.debug('[useStudySession] first card back  (first 120 chars):', first.back.slice(0, 120));
-    }
-    // ─────────────────────────────────────────────────────────────────────────
 
     if (!result.success) {
       setErrorMessage(result.error);
@@ -277,6 +263,10 @@ export function useStudySession(
         return;
       }
 
+      // --- Persist ---
+      persistDatabase();
+      scheduleICloudBackup();
+
       // --- Haptics ---
       if (rating === 'again') hapticAgain();
       else hapticSuccess();
@@ -337,6 +327,8 @@ export function useStudySession(
       setCardState(db, previousCardWithState.state);
     }
     deleteReviewLog(db, reviewLogId);
+    persistDatabase();
+    scheduleICloudBackup();
 
     // --- Revert queue ---
     const queue = queueRef.current;
@@ -367,6 +359,18 @@ export function useStudySession(
     if (cws && onEditCard) onEditCard(cws.card);
   }, [currentIndex, onEditCard]);
 
+  /** Replace the current card's data in the queue and re-display it. */
+  const updateCurrentCardInQueue = useCallback(
+    (updated: Card) => {
+      const queue = queueRef.current;
+      const cws = queue[currentIndex];
+      if (!cws) return;
+      queue[currentIndex] = { ...cws, card: updated };
+      showCard(queue, currentIndex);
+    },
+    [currentIndex, showCard],
+  );
+
   // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
@@ -390,13 +394,16 @@ export function useStudySession(
     flip,
     rate,
     undo,
-    // editCurrentCard is used internally by Study.tsx — not part of the public
-    // interface type, but we cast below so the page can access it.
+    // editCurrentCard and updateCurrentCardInQueue are used internally by
+    // Study.tsx — not part of the public interface type, but we cast below
+    // so the page can access them.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(({ editCurrentCard } as any)),
+    ...(({ editCurrentCard, updateCurrentCardInQueue } as any)),
   };
 }
 
 export type UseStudySessionReturnExtended = UseStudySessionReturn & {
   editCurrentCard: () => void;
+  /** Update the current card in the queue after an edit. Re-displays the card. */
+  updateCurrentCardInQueue: (updated: Card) => void;
 };

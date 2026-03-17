@@ -1,0 +1,497 @@
+/**
+ * Home page — deck list with card counts and import button.
+ *
+ * Layout:
+ *  ┌──────────────────────────┐
+ *  │  header: Kit + theme     │
+ *  ├──────────────────────────┤
+ *  │  deck list               │
+ *  │    deck name   N  L  R   │
+ *  │    …                     │
+ *  ├──────────────────────────┤
+ *  │  [ Import Deck ]         │
+ *  └──────────────────────────┘
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Database } from 'sql.js';
+import type { Deck } from '../types';
+import { useTheme } from '../hooks/useTheme';
+import { useDeckImport } from '../hooks/useDeckImport';
+import { useExport } from '../hooks/useExport';
+import type { ImportPhase } from '../hooks/useDeckImport';
+import {
+  getAllDecks,
+  getAllDeckCardCounts,
+  renameDeck,
+  type DeckCardCounts,
+} from '../lib/db/queries';
+import { persistDatabase } from '../hooks/useDatabase';
+import { scheduleICloudBackup } from '../hooks/useBackup';
+import { hapticTap, hapticNavigate } from '../lib/platform/haptics';
+import { PixelCat } from '../components/PixelCat';
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+interface HomeProps {
+  db: Database | null;
+  dbLoading: boolean;
+  dbError: string;
+  onStudy: (deckId: string, deckName: string) => void;
+  onBrowse: (deckId: string, deckName: string) => void;
+  onStats: (deckId: string, deckName: string) => void;
+  onSettings: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+/** Theme toggle button. */
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      onClick={() => { hapticTap(); toggleTheme(); }}
+      className="px-3 py-1.5 text-sm border border-[#E5E5E5] dark:border-[#262626] text-[#171717] dark:text-[#E5E5E5] bg-white dark:bg-[#141414] rounded"
+    >
+      {theme === 'dark' ? 'Light' : 'Dark'}
+    </button>
+  );
+}
+
+/** Count badge with a colour. */
+function CountBadge({
+  count,
+  color,
+  label,
+}: {
+  count: number;
+  color: 'blue' | 'orange' | 'green';
+  label: string;
+}) {
+  const colorMap: Record<string, string> = {
+    blue: 'text-blue-500 dark:text-blue-400',
+    orange: 'text-orange-500 dark:text-orange-400',
+    green: 'text-green-500 dark:text-green-400',
+  };
+
+  return (
+    <span
+      className={`text-sm font-semibold tabular-nums ${colorMap[color]}`}
+      title={label}
+    >
+      {count}
+    </span>
+  );
+}
+
+/** Action menu for a deck row — "..." button that opens a dropdown. */
+function DeckActionMenu({
+  onRename,
+  onBrowse,
+  onStats,
+  onExport,
+  exporting,
+}: {
+  onRename: () => void;
+  onBrowse: () => void;
+  onStats: () => void;
+  onExport: () => void;
+  exporting: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside tap
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent | TouchEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
+  }, [open]);
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="px-3 py-3 text-sm text-[#737373] hover:text-[#171717] dark:hover:text-[#E5E5E5] transition-colors"
+        aria-label="Deck actions"
+      >
+        ···
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-10 min-w-[140px] bg-white dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+          <button
+            onClick={() => { setOpen(false); onRename(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+          >
+            Rename
+          </button>
+          <button
+            onClick={() => { setOpen(false); onBrowse(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+          >
+            Browse Cards
+          </button>
+          <button
+            onClick={() => { setOpen(false); onStats(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+          >
+            Statistics
+          </button>
+          <button
+            onClick={() => { setOpen(false); onExport(); }}
+            disabled={exporting}
+            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
+          >
+            {exporting ? 'Exporting…' : 'Export .apkg'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A single deck row in the list. */
+function DeckRow({
+  deck,
+  counts,
+  onTap,
+  onBrowse,
+  onStats,
+  onExport,
+  onRename,
+  exporting,
+}: {
+  deck: Deck;
+  counts: DeckCardCounts | undefined;
+  onTap: () => void;
+  onBrowse: () => void;
+  onStats: () => void;
+  onExport: () => void;
+  onRename: (newName: string) => void;
+  exporting: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(deck.name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const newCount = counts?.newCount ?? 0;
+  const learningCount = counts?.learningCount ?? 0;
+  const reviewCount = counts?.reviewCount ?? 0;
+  const totalCount = counts?.totalCount ?? 0;
+
+  const startRename = useCallback(() => {
+    setDraftName(deck.name);
+    setEditing(true);
+  }, [deck.name]);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus();
+  }, [editing]);
+
+  const commitRename = useCallback(() => {
+    const trimmed = draftName.trim();
+    if (trimmed && trimmed !== deck.name) {
+      onRename(trimmed);
+    }
+    setEditing(false);
+  }, [draftName, deck.name, onRename]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitRename();
+      } else if (e.key === 'Escape') {
+        setEditing(false);
+      }
+    },
+    [commitRename],
+  );
+
+  return (
+    <div className="flex items-center border-b border-[#E5E5E5] dark:border-[#262626]">
+      {editing ? (
+        <div className="flex-1 px-4 py-3 flex items-center gap-2 min-w-0">
+          <input
+            ref={inputRef}
+            type="text"
+            value={draftName}
+            onChange={(e) => setDraftName(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={handleKeyDown}
+            className="flex-1 text-sm font-medium bg-transparent border-b border-[#171717] dark:border-[#E5E5E5] outline-none text-[#171717] dark:text-[#E5E5E5] min-w-0"
+          />
+        </div>
+      ) : (
+        <button
+          onClick={onTap}
+          className="flex-1 text-left px-4 py-3 flex items-center justify-between active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors min-w-0"
+        >
+          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <span className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] truncate">
+              {deck.name}
+            </span>
+            <span className="text-xs text-[#737373]">
+              {totalCount} {totalCount === 1 ? 'card' : 'cards'}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 ml-4 shrink-0">
+            <CountBadge count={newCount} color="blue" label="New" />
+            <CountBadge count={learningCount} color="orange" label="Learning" />
+            <CountBadge count={reviewCount} color="green" label="Review" />
+          </div>
+        </button>
+      )}
+      <DeckActionMenu
+        onRename={startRename}
+        onBrowse={onBrowse}
+        onStats={onStats}
+        onExport={onExport}
+        exporting={exporting}
+      />
+    </div>
+  );
+}
+
+/** Progress indicator shown during import. */
+function ImportProgress({ phase }: { phase: ImportPhase }) {
+  const labels: Record<string, string> = {
+    parsing: 'Parsing .apkg file\u2026',
+    'storing-cards': 'Storing cards — this may take a moment for large decks\u2026',
+    'storing-media': 'Storing media files\u2026',
+  };
+  const label = labels[phase];
+  if (!label) return null;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+      <span className="text-sm text-[#737373]">{label}</span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
+
+/**
+ * Home page showing all decks with card counts and an import button.
+ *
+ * @param db        - sql.js Database instance (null while loading).
+ * @param dbLoading - True while the database is initialising.
+ * @param dbError   - Non-empty string if DB init failed.
+ * @param onStudy   - Called when the user taps a deck to study.
+ */
+export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStats, onSettings }: HomeProps) {
+  const [decks, setDecks] = useState<Deck[]>([]);
+  const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Load / refresh deck list ──────────────────────────────────────────
+  const refreshDecks = useCallback(() => {
+    if (!db) return;
+    const now = Math.floor(Date.now() / 1000);
+
+    const decksResult = getAllDecks(db);
+    if (decksResult.success) setDecks(decksResult.data);
+
+    const countsResult = getAllDeckCardCounts(db, now);
+    if (countsResult.success) setCounts(countsResult.data);
+  }, [db]);
+
+  useEffect(() => {
+    refreshDecks();
+  }, [refreshDecks]);
+
+  // ── Import hook ───────────────────────────────────────────────────────
+  const onImportComplete = useCallback(() => {
+    refreshDecks();
+  }, [refreshDecks]);
+
+  const { phase: importPhase, errorMessage: importError, importFile, reset: resetImport } =
+    useDeckImport(db, onImportComplete);
+
+  // ── Export hook ──────────────────────────────────────────────────────
+  const { phase: exportPhase, errorMessage: exportError, exportDeck, reset: resetExport } =
+    useExport(db);
+
+  const isExporting = exportPhase === 'exporting';
+
+  // ── Rename handler ──────────────────────────────────────────────────
+  const handleRename = useCallback(
+    (deckId: string, newName: string) => {
+      if (!db) return;
+      const now = Math.floor(Date.now() / 1000);
+      const result = renameDeck(db, deckId, newName, now);
+      if (result.success) {
+        persistDatabase();
+        scheduleICloudBackup();
+        refreshDecks();
+      }
+    },
+    [db, refreshDecks],
+  );
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      importFile(file);
+      // Reset input so the same file can be re-selected
+      e.target.value = '';
+    },
+    [importFile],
+  );
+
+  const openFilePicker = useCallback(() => {
+    if (importPhase !== 'idle' && importPhase !== 'done' && importPhase !== 'error') return;
+    if (importPhase === 'done' || importPhase === 'error') resetImport();
+    hapticTap();
+    fileInputRef.current?.click();
+  }, [importPhase, resetImport]);
+
+  // ── Importing state ───────────────────────────────────────────────────
+  const isImporting =
+    importPhase === 'parsing' ||
+    importPhase === 'storing-cards' ||
+    importPhase === 'storing-media';
+
+  // ── Render ────────────────────────────────────────────────────────────
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 pt-safe-top pb-3 border-b border-[#E5E5E5] dark:border-[#262626]">
+        <span className="text-sm font-semibold tracking-widest uppercase">Kit</span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { hapticNavigate(); onSettings(); }}
+            className="px-3 py-1.5 text-sm border border-[#E5E5E5] dark:border-[#262626] text-[#171717] dark:text-[#E5E5E5] bg-white dark:bg-[#141414] rounded"
+          >
+            Settings
+          </button>
+          <ThemeToggle />
+        </div>
+      </header>
+
+      {/* DB status */}
+      {dbLoading && (
+        <div className="px-4 py-8 text-center">
+          <p className="text-sm text-[#737373]">Initialising database\u2026</p>
+        </div>
+      )}
+      {dbError && (
+        <div className="px-4 py-4">
+          <p className="text-xs text-red-500">{dbError}</p>
+        </div>
+      )}
+
+      {/* Deck list */}
+      {!dbLoading && !dbError && (
+        <div className="flex flex-col">
+          {decks.length === 0 && importPhase === 'idle' && (
+            <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
+              <PixelCat size={80} className="opacity-30" />
+              <div>
+                <p className="text-sm text-[#737373]">No decks yet</p>
+                <p className="text-xs text-[#A3A3A3] mt-1">
+                  Import an Anki .apkg file to get started
+                </p>
+              </div>
+            </div>
+          )}
+
+          {decks.map((deck) => (
+            <DeckRow
+              key={deck.id}
+              deck={deck}
+              counts={counts[deck.id]}
+              onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
+              onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
+              onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
+              onExport={() => { hapticTap(); exportDeck(deck.id, deck.name); }}
+              onRename={(newName: string) => handleRename(deck.id, newName)}
+              exporting={isExporting}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Import progress */}
+      {isImporting && <ImportProgress phase={importPhase} />}
+
+      {/* Import success */}
+      {importPhase === 'done' && (
+        <div className="px-4 py-3">
+          <p className="text-sm text-green-600 dark:text-green-400">
+            Deck imported successfully!
+          </p>
+        </div>
+      )}
+
+      {/* Import error */}
+      {importPhase === 'error' && importError && (
+        <div className="px-4 py-3 flex flex-col gap-2">
+          <p className="text-sm text-red-500">{importError}</p>
+          <button
+            onClick={resetImport}
+            className="text-xs text-[#737373] underline self-start"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Export status */}
+      {exportPhase === 'exporting' && (
+        <div className="flex items-center gap-3 px-4 py-3">
+          <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+          <span className="text-sm text-[#737373]">Exporting deck…</span>
+        </div>
+      )}
+      {exportPhase === 'done' && (
+        <div className="px-4 py-3 flex items-center justify-between">
+          <p className="text-sm text-green-600 dark:text-green-400">Deck exported!</p>
+          <button onClick={resetExport} className="text-xs text-[#737373] underline">Dismiss</button>
+        </div>
+      )}
+      {exportPhase === 'error' && exportError && (
+        <div className="px-4 py-3 flex flex-col gap-2">
+          <p className="text-sm text-red-500">{exportError}</p>
+          <button onClick={resetExport} className="text-xs text-[#737373] underline self-start">Dismiss</button>
+        </div>
+      )}
+
+      {/* Import button */}
+      <div className="px-4 py-4">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".apkg"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+        <button
+          disabled={dbLoading || !!dbError || isImporting}
+          onClick={openFilePicker}
+          className="w-full py-3 text-sm font-semibold border-2 border-dashed border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#171717] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+        >
+          {isImporting ? 'Importing\u2026' : 'Import Deck'}
+        </button>
+      </div>
+    </div>
+  );
+}

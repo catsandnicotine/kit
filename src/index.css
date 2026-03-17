@@ -48,8 +48,91 @@
     font-weight: 600;
   }
 
+  /* Audio controls: compact, centered, full-width */
+  .card-content audio,
+  .card-content .anki-audio {
+    display: block;
+    width: 100%;
+    max-width: 20rem;
+    height: 2.5rem;
+    margin: 0.75rem auto;
+    border-radius: 9999px;
+  }
+
+  /* Replay button */
+  .anki-replay-btn {
+    display: block;
+    margin: 0.75rem auto 0;
+    padding: 0.375rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #737373;
+    border: 1px solid #d4d4d4;
+    border-radius: 9999px;
+    background: transparent;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .anki-replay-btn:active {
+    opacity: 0.6;
+  }
+  .dark .anki-replay-btn {
+    color: #a3a3a3;
+    border-color: #404040;
+  }
+
   /* Rating button press state */
   .rating-btn:active {
     transform: scale(0.96);
+  }
+
+  /* Card editor slide-up overlay */
+  .card-editor-panel {
+    animation: slide-up 0.25s ease-out;
+  }
+  @keyframes slide-up {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+
+  /* Browse page: mini card previews */
+  .browse-card-preview {
+    height: 5rem;
+    pointer-events: none;
+  }
+  .browse-card-preview img {
+    max-height: 3rem;
+    width: auto;
+    max-width: 100%;
+  }
+  .browse-card-fade {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1.5rem;
+    background: linear-gradient(transparent, var(--tw-surface, #f5f5f5));
+    pointer-events: none;
+  }
+  .dark .browse-card-fade {
+    background: linear-gradient(transparent, #1a1a1a);
+  }
+
+  /* Rich field (contenteditable) in card editor */
+  .rich-field {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rich-field:empty::before {
+    content: 'Type here…';
+    color: #a3a3a3;
+    pointer-events: none;
+  }
+  .rich-field img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0.5rem auto;
+    border-radius: 0.25rem;
   }
 }

@@ -1,82 +1,235 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
-import { useTheme } from './hooks/useTheme';
 import { useDatabase } from './hooks/useDatabase';
-import { seedDemoData } from './lib/db/seed';
+import { useBackup } from './hooks/useBackup';
+import { PixelCat } from './components/PixelCat';
+import Home from './pages/Home';
 import Study from './pages/Study';
+import Browse from './pages/Browse';
+import Settings from './pages/Settings';
+import DeckStats from './pages/DeckStats';
 
-const DEMO_DECK_ID = 'demo-deck-00000000-0000-0000-0000-000000000000';
+// ---------------------------------------------------------------------------
+// Route state
+// ---------------------------------------------------------------------------
 
-function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
+type Route =
+  | { page: 'home' }
+  | { page: 'study'; deckId: string; deckName: string }
+  | { page: 'browse'; deckId: string; deckName: string }
+  | { page: 'stats'; deckId: string; deckName: string }
+  | { page: 'settings' };
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const LS_ONBOARDED_KEY = 'kit_onboarded';
+
+// ---------------------------------------------------------------------------
+// Onboarding screen
+// ---------------------------------------------------------------------------
+
+function Onboarding({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <button
-      onClick={toggleTheme}
-      className="px-3 py-1.5 text-sm border border-border-dark dark:border-border-dark text-text-light dark:text-text-dark bg-surface-light dark:bg-surface-dark rounded"
-    >
-      {theme === 'dark' ? 'Light' : 'Dark'}
-    </button>
-  );
-}
-
-function AppInner() {
-  const { db, loading: dbLoading, error: dbError } = useDatabase();
-  const [studyDeckId, setStudyDeckId] = useState<string | null>(null);
-  const [seedError, setSeedError] = useState('');
-
-  function openDemo() {
-    if (!db) return;
-    const result = seedDemoData(db);
-    if (!result.success) {
-      setSeedError(result.error);
-      return;
-    }
-    setStudyDeckId(result.deckId);
-  }
-
-  if (studyDeckId) {
-    return (
-      <Study
-        db={db}
-        deckId={studyDeckId}
-        deckName="Medical Sciences"
-        onExit={() => setStudyDeckId(null)}
-      />
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
-      <div className="p-8 flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold tracking-widest uppercase">Kit</span>
-          <ThemeToggle />
+    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center px-6">
+      <div className="max-w-sm w-full flex flex-col items-center gap-6 text-center">
+        <PixelCat size={96} />
+        <h1 className="text-xl font-semibold">Welcome to Kit</h1>
+        <p className="text-sm text-[#737373] leading-relaxed">
+          Kit is a flashcard app that uses spaced repetition to help you
+          remember anything. Import your Anki .apkg decks and study on the go.
+        </p>
+        <div className="flex flex-col gap-2 text-xs text-[#A3A3A3] leading-relaxed">
+          <p>1. Tap <strong className="text-[#171717] dark:text-[#E5E5E5]">Import Deck</strong> to add an .apkg file</p>
+          <p>2. Tap a deck to start studying</p>
+          <p>3. Rate each card and Kit schedules your reviews</p>
         </div>
-
-        <div className="border border-[#E5E5E5] dark:border-[#262626] bg-white dark:bg-[#141414] p-6 rounded-md flex flex-col gap-3">
-          <p className="text-sm text-[#737373]">
-            {dbLoading ? 'Initialising database…' : 'Database ready'}
-          </p>
-
-          {dbError && (
-            <p className="text-xs text-red-500">{dbError}</p>
-          )}
-          {seedError && (
-            <p className="text-xs text-red-500">{seedError}</p>
-          )}
-
-          <button
-            disabled={dbLoading || !!dbError}
-            onClick={openDemo}
-            className="px-4 py-2 text-sm border border-[#E5E5E5] dark:border-[#262626] rounded-md text-[#171717] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {dbLoading ? 'Loading…' : 'Open Study (demo)'}
-          </button>
-        </div>
+        <button
+          onClick={onDismiss}
+          className="w-full py-3 text-sm font-semibold bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity mt-2"
+        >
+          Get Started
+        </button>
       </div>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// iCloud restore prompt
+// ---------------------------------------------------------------------------
+
+function ICloudRestorePrompt({
+  cardCount,
+  timestamp,
+  onRestore,
+  onSkip,
+}: {
+  cardCount: number;
+  timestamp: number;
+  onRestore: () => void;
+  onSkip: () => void;
+}) {
+  const date = new Date(timestamp * 1000);
+  const formatted = date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+
+  return (
+    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center px-6">
+      <div className="max-w-sm w-full bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
+        <h2 className="text-base font-semibold text-center">iCloud Backup Found</h2>
+        <p className="text-sm text-[#737373] text-center">
+          A backup with {cardCount} {cardCount === 1 ? 'card' : 'cards'} from {formatted} was
+          found in iCloud Drive. Would you like to restore it?
+        </p>
+        <button
+          onClick={onRestore}
+          className="w-full py-3 text-sm font-semibold bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
+        >
+          Restore Backup
+        </button>
+        <button
+          onClick={onSkip}
+          className="w-full py-3 text-sm text-[#737373] active:text-[#171717] dark:active:text-[#E5E5E5] transition-colors"
+        >
+          Start Fresh
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// App inner (has access to theme context)
+// ---------------------------------------------------------------------------
+
+function AppInner() {
+  const {
+    db,
+    loading: dbLoading,
+    error: dbError,
+    icloudBackupAvailable,
+    acceptRestore,
+    declineRestore,
+  } = useDatabase();
+
+  // Initialize the backup system — sets up the module-level _backupDb reference
+  // so that scheduleICloudBackup() works from any hook.
+  useBackup(db);
+
+  const [route, setRoute] = useState<Route>({ page: 'home' });
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Check if this is the first launch
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(LS_ONBOARDED_KEY)) {
+        setShowOnboarding(true);
+      }
+    } catch {
+      // localStorage unavailable — skip onboarding.
+    }
+  }, []);
+
+  const dismissOnboarding = useCallback(() => {
+    setShowOnboarding(false);
+    try {
+      localStorage.setItem(LS_ONBOARDED_KEY, '1');
+    } catch {
+      // Best effort.
+    }
+  }, []);
+
+  const goHome = useCallback(() => setRoute({ page: 'home' }), []);
+
+  const goStudy = useCallback((deckId: string, deckName: string) => {
+    setRoute({ page: 'study', deckId, deckName });
+  }, []);
+
+  const goBrowse = useCallback((deckId: string, deckName: string) => {
+    setRoute({ page: 'browse', deckId, deckName });
+  }, []);
+
+  const goStats = useCallback((deckId: string, deckName: string) => {
+    setRoute({ page: 'stats', deckId, deckName });
+  }, []);
+
+  const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
+
+  // ── Onboarding (first launch) ────────────────────────────────────────
+  if (showOnboarding) {
+    return <Onboarding onDismiss={dismissOnboarding} />;
+  }
+
+  // ── iCloud restore prompt (first launch only) ────────────────────────
+  if (icloudBackupAvailable && !db) {
+    return (
+      <ICloudRestorePrompt
+        cardCount={icloudBackupAvailable.cardCount}
+        timestamp={icloudBackupAvailable.timestamp}
+        onRestore={acceptRestore}
+        onSkip={declineRestore}
+      />
+    );
+  }
+
+  if (route.page === 'study') {
+    return (
+      <Study
+        db={db}
+        deckId={route.deckId}
+        deckName={route.deckName}
+        onExit={goHome}
+      />
+    );
+  }
+
+  if (route.page === 'browse') {
+    return (
+      <Browse
+        db={db}
+        deckId={route.deckId}
+        deckName={route.deckName}
+        onBack={goHome}
+      />
+    );
+  }
+
+  if (route.page === 'stats') {
+    return (
+      <DeckStats
+        db={db}
+        deckId={route.deckId}
+        deckName={route.deckName}
+        onBack={goHome}
+      />
+    );
+  }
+
+  if (route.page === 'settings') {
+    return <Settings db={db} onBack={goHome} />;
+  }
+
+  return (
+    <Home
+      db={db}
+      dbLoading={dbLoading}
+      dbError={dbError}
+      onStudy={goStudy}
+      onBrowse={goBrowse}
+      onStats={goStats}
+      onSettings={goSettings}
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Root
+// ---------------------------------------------------------------------------
 
 function App() {
   return (
