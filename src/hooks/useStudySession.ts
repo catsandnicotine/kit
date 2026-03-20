@@ -26,7 +26,7 @@ import {
   hapticUndo,
 } from '../lib/platform/haptics';
 import { initializeCard, reviewCard } from '../lib/srs/fsrs';
-import type { Card, CardState, CardWithState, Rating } from '../types';
+import type { Card, CardWithState, Rating } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
@@ -69,6 +69,10 @@ export interface UseStudySessionReturn {
   rate: (rating: Rating) => Promise<void>;
   /** Undo the last rating and return to the card that was just rated. */
   undo: () => Promise<void>;
+  /** Trigger the long-press edit flow for the current card. */
+  editCurrentCard: () => void;
+  /** Replace the current card in the queue after an edit; re-displays the card. */
+  updateCurrentCardInQueue: (updated: Card) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,16 +398,7 @@ export function useStudySession(
     flip,
     rate,
     undo,
-    // editCurrentCard and updateCurrentCardInQueue are used internally by
-    // Study.tsx — not part of the public interface type, but we cast below
-    // so the page can access them.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ...(({ editCurrentCard, updateCurrentCardInQueue } as any)),
+    editCurrentCard,
+    updateCurrentCardInQueue,
   };
 }
-
-export type UseStudySessionReturnExtended = UseStudySessionReturn & {
-  editCurrentCard: () => void;
-  /** Update the current card in the queue after an edit. Re-displays the card. */
-  updateCurrentCardInQueue: (updated: Card) => void;
-};

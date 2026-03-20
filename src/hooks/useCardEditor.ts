@@ -64,10 +64,13 @@ export function useCardEditor(
   const [contentDirty, setContentDirty] = useState(false);
 
   // Reset draft when a different card is opened.
+  // Serialize tags for stable dependency comparison (arrays differ by reference).
+  const tagsKey = JSON.stringify(card.tags);
   useEffect(() => {
     setTags(card.tags);
     setContentDirty(false);
-  }, [card.id, card.tags]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id, tagsKey]);
 
   const tagsDirty = JSON.stringify(tags) !== JSON.stringify(card.tags);
   const dirty = contentDirty || tagsDirty;

@@ -16,13 +16,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Card, Rating } from '../types';
-import {
-  useStudySession,
-  type UseStudySessionReturnExtended,
-} from '../hooks/useStudySession';
+import type { Card } from '../types';
+import { useStudySession } from '../hooks/useStudySession';
 import { useDeckMedia } from '../hooks/useDeckMedia';
-import { hapticLongPress, hapticTap, hapticNavigate } from '../lib/platform/haptics';
+import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
 import { getDeckStats } from '../lib/db/queries';
 import { CardEditor } from '../components/CardEditor';
 
@@ -97,6 +94,7 @@ function playAudioSequentially(audios: HTMLAudioElement[]): () => void {
   function playNext() {
     if (cancelled || currentIdx >= audios.length) return;
     const audio = audios[currentIdx];
+    if (!audio) return;
     const onEnded = () => {
       currentIdx++;
       playNext();
@@ -207,7 +205,12 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
   }, [visible, startPlayback, stopCurrent, getAudios]);
 
   return (
-    <div className={`card-face card-content w-full h-full overflow-auto p-6 ${visible ? '' : 'card-face-hidden'}`}>
+    <div
+      className={`card-face card-content w-full h-full min-h-0 overflow-auto ${visible ? '' : 'card-face-hidden'}`}
+      style={{
+        padding: 'max(1.5rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left))',
+      }}
+    >
       <div ref={containerRef} />
       {visible && hasAudio && (
         <button
@@ -328,8 +331,11 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
     setEditingCard(card);
   }, []);
 
-  const session = useStudySession(db, deckId, handleEditCard) as UseStudySessionReturnExtended;
-  const { phase, frontHtml, backHtml, stats, errorMessage, canUndo, flip, rate, undo } = session;
+  const session = useStudySession(db, deckId, handleEditCard);
+  const {
+    phase, frontHtml, backHtml, stats, errorMessage, canUndo,
+    flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
+  } = session;
   const { rewriteHtml } = useDeckMedia(db, deckId);
 
   // Compute next due label when session completes
@@ -359,10 +365,10 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   /** After the editor saves, update the card in the study queue and refresh. */
   const handleEditorSave = useCallback(
     (updated: Card) => {
-      session.updateCurrentCardInQueue(updated);
+      updateCurrentCardInQueue(updated);
       setEditingCard(null);
     },
-    [session],
+    [updateCurrentCardInQueue],
   );
 
   const handleEditorDelete = useCallback(() => {
@@ -384,7 +390,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
     }
   }, [phase, stats.studied, stats.remaining, totalCards]);
 
-  const longPressProps = useLongPress(session.editCurrentCard);
+  const longPressProps = useLongPress(editCurrentCard);
 
   // -------------------------------------------------------------------------
   // Render
@@ -392,9 +398,22 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'loading') {
     return (
-      <div className="flex flex-col h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <header className="px-4 pt-safe-top pb-2 shrink-0">
-          <button onClick={() => { hapticTap(); onExit?.(); }} className="text-xs text-text-muted">&larr; Back</button>
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
+          </button>
         </header>
         <div className="flex-1 flex items-center justify-center">
           <p className="text-text-muted text-sm">Loading…</p>
@@ -405,9 +424,22 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'error') {
     return (
-      <div className="flex flex-col h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <header className="px-4 pt-safe-top pb-2 shrink-0">
-          <button onClick={() => { hapticTap(); onExit?.(); }} className="text-xs text-text-muted">&larr; Back</button>
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
+          </button>
         </header>
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
           <p className="text-sm text-red-500">{errorMessage}</p>
@@ -418,16 +450,29 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'complete') {
     return (
-      <div className="flex flex-col h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <header className="px-4 pt-safe-top pb-2 shrink-0">
-          <button onClick={() => { hapticTap(); onExit?.(); }} className="text-xs text-text-muted">&larr; Back</button>
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
+          </button>
         </header>
-        <div className="flex-1">
+        <div className="flex-1 flex flex-col">
           <SessionComplete
             studied={stats.studied}
             elapsedSeconds={stats.elapsedSeconds}
             nextDueLabel={nextDueLabel}
-            onExit={onExit}
+            {...(onExit && { onExit })}
           />
         </div>
       </div>
@@ -438,17 +483,28 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const total = totalCards || studied + stats.remaining;
 
   return (
-    <div className="flex flex-col h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark select-none">
+    <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark select-none">
       {/* ── Header ── */}
-      <header className="flex items-center gap-3 px-4 pt-safe-top pb-2 shrink-0">
-        <button onClick={() => { hapticTap(); onExit?.(); }} className="text-xs text-text-muted shrink-0">
-          &larr; Back
+      <header
+        className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: '0.5rem',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
+        <button
+          onClick={() => { hapticTap(); onExit?.(); }}
+          className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+        >
+          ← Back
         </button>
-        <span className="text-xs text-text-muted truncate flex-1">
+        <span className="text-sm text-[#737373] dark:text-[#A3A3A3] truncate flex-1 text-center">
           {deckName ?? 'Study'}
         </span>
-        <span className="text-xs text-text-muted tabular-nums shrink-0">
-          {stats.remaining} left
+        <span className="text-xs text-[#737373] dark:text-[#A3A3A3] tabular-nums shrink-0">
+          {formatTime(stats.elapsedSeconds)} · {stats.remaining} left
         </span>
       </header>
 
@@ -457,7 +513,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
       {/* ── Card area ── */}
       <div
-        className="flex-1 relative overflow-hidden cursor-pointer"
+        className="flex-1 min-h-0 relative overflow-hidden cursor-pointer flex flex-col"
         role="button"
         tabIndex={0}
         aria-label={phase === 'front' ? 'Tap to reveal answer' : 'Card answer'}
@@ -490,15 +546,23 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         {/* Tap-to-flip prompt overlay (only on front) */}
         {phase === 'front' && (
           <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
-            <span className="text-xs text-text-muted px-3 py-1 border border-border-light dark:border-border-dark rounded-full">
+            <span className="text-xs text-[#737373] dark:text-[#A3A3A3] px-3 py-1 border border-[#E5E5E5] dark:border-[#404040] rounded-full">
               tap to flip
             </span>
           </div>
         )}
       </div>
 
-      {/* ── Bottom bar ── */}
-      <div className="shrink-0 px-4 pb-safe-bottom">
+      {/* ── Bottom bar (rating buttons) ── */}
+      <div
+        className="shrink-0"
+        style={{
+          paddingTop: '0.75rem',
+          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         {phase === 'back' ? (
           <div className="flex flex-col gap-2 py-3">
             {/* Rating buttons */}
@@ -512,7 +576,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             {/* Edit + Undo row */}
             <div className="flex items-center justify-between">
               <button
-                onClick={() => { hapticTap(); session.editCurrentCard(); }}
+                onClick={() => { hapticTap(); editCurrentCard(); }}
                 className="py-2 text-xs text-text-muted"
               >
                 Edit
@@ -535,13 +599,6 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             <div className="h-[52px]" />
           </div>
         )}
-      </div>
-
-      {/* ── Stats ticker (bottom-left) ── */}
-      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+4rem)] left-4 pointer-events-none">
-        <span className="text-[10px] text-text-muted tabular-nums">
-          {formatTime(stats.elapsedSeconds)}
-        </span>
       </div>
 
       {/* ── Card Editor overlay ── */}

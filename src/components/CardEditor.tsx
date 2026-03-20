@@ -121,6 +121,7 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
+    if (!touch) return;
     const rect = panelRef.current?.getBoundingClientRect();
     if (!rect) return;
     if (touch.clientY - rect.top > 48) return;
@@ -130,7 +131,9 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
   const onTouchEnd = useCallback(
     (e: React.TouchEvent) => {
       if (startYRef.current === null) return;
-      const dy = e.changedTouches[0].clientY - startYRef.current;
+      const changedTouch = e.changedTouches[0];
+      if (!changedTouch) return;
+      const dy = changedTouch.clientY - startYRef.current;
       startYRef.current = null;
       if (dy > 100) onDismiss();
     },
@@ -241,7 +244,10 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
       {/* Panel */}
       <div
         ref={panelRef}
-        className="card-editor-panel fixed inset-x-0 bottom-0 z-50 bg-background-light dark:bg-background-dark rounded-t-2xl shadow-2xl max-h-[85vh] flex flex-col"
+        className="card-editor-panel fixed left-0 right-0 bottom-0 z-50 bg-background-light dark:bg-background-dark rounded-t-2xl shadow-2xl max-h-[85dvh] flex flex-col"
+        style={{
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
       >
@@ -372,8 +378,7 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
           )}
         </div>
 
-        {/* Bottom safe area spacer */}
-        <div className="pb-safe-bottom shrink-0" />
+        {/* Bottom safe area built into panel padding */}
       </div>
     </>
   );
