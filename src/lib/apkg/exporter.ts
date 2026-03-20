@@ -37,7 +37,6 @@ import {
   getMediaByDeck,
   getNotesByDeck,
   getNoteTypesByDeck,
-  type MediaBlob,
 } from '../db/queries';
 import { getSqlJsLocator } from './parser';
 
@@ -499,8 +498,9 @@ function insertAnkiNotes(
     }
 
     // sfld = sort field (first field value, used for sorting/searching)
-    const sfld = nt
-      ? (note.fields[nt.fields[0]] ?? '')
+    const firstField = nt ? nt.fields[0] : undefined;
+    const sfld = firstField !== undefined
+      ? (note.fields[firstField] ?? '')
       : (Object.values(note.fields)[0] ?? '');
 
     // csum = checksum of first field (Anki uses fieldChecksum which is
@@ -545,7 +545,7 @@ function insertAnkiNotes(
 function insertAnkiCards(
   db: Database,
   cards: Card[],
-  notes: Note[],
+  _notes: Note[],
   noteIdMap: Map<string, number>,
   cardIdMap: Map<string, number>,
   ankiDeckId: number,

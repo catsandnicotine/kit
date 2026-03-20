@@ -228,11 +228,12 @@ export async function parseApkg(
     try {
       // 5. Read the col table
       const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
-      if (!colRows.length || !colRows[0].values.length) {
+      const firstRow = colRows[0];
+      if (!colRows.length || !firstRow || !firstRow.values.length) {
         return { success: false, error: 'Collection table is empty or corrupt' };
       }
 
-      const [modelsJson, decksJson] = colRows[0].values[0] as [string, string];
+      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
 
       let noteTypes: ParsedNoteType[];
       try {
@@ -313,11 +314,12 @@ export async function parseApkgLazy(
     const db = new SQL.Database(dbBytes);
     try {
       const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
-      if (!colRows.length || !colRows[0].values.length) {
+      const firstRow = colRows[0];
+      if (!colRows.length || !firstRow || !firstRow.values.length) {
         return { success: false, error: 'Collection table is empty or corrupt' };
       }
 
-      const [modelsJson, decksJson] = colRows[0].values[0] as [string, string];
+      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
 
       let noteTypes: ParsedNoteType[];
       try {
@@ -375,6 +377,7 @@ export async function extractMediaBatch(
 
   for (let i = startIdx; i < end; i++) {
     const entry = manifest[i];
+    if (!entry) continue;
     const file = zip.file(entry.zipKey);
     if (!file) continue;
 
@@ -549,9 +552,10 @@ async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
  */
 function extractNotes(db: Database): ParsedNote[] {
   const results = db.exec('SELECT id, mid, tags, flds FROM notes');
-  if (!results.length) return [];
+  const first = results[0];
+  if (!results.length || !first) return [];
 
-  const { columns, values } = results[0];
+  const { columns, values } = first;
   const iId   = columns.indexOf('id');
   const iMid  = columns.indexOf('mid');
   const iTags = columns.indexOf('tags');
@@ -584,9 +588,10 @@ function extractCards(db: Database): ParsedCard[] {
   const results = db.exec(
     'SELECT id, nid, did, ord, type, due, ivl, factor, reps, lapses FROM cards',
   );
-  if (!results.length) return [];
+  const first = results[0];
+  if (!results.length || !first) return [];
 
-  const { columns, values } = results[0];
+  const { columns, values } = first;
   const iId     = columns.indexOf('id');
   const iNid    = columns.indexOf('nid');
   const iDid    = columns.indexOf('did');

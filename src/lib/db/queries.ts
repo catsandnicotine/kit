@@ -183,7 +183,7 @@ function jsonNoteTemplates(row: Row, col: string): NoteTemplate[] {
   }
 }
 
-function toReviewLog(row: Row): ReviewLog {
+export function toReviewLog(row: Row): ReviewLog {
   return {
     id:            str(row, 'id'),
     cardId:        str(row, 'card_id'),

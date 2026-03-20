@@ -224,9 +224,9 @@ function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
 
     const primaryDeckId =
       deckIdMap.size === 1
-        ? [...deckIdMap.values()][0]
+        ? [...deckIdMap.values()][0]!
         : [...deckIdMap.entries()].find(([ankiId]) => ankiId !== '1')?.[1] ??
-          [...deckIdMap.values()][0];
+          [...deckIdMap.values()][0]!;
 
     // ── Note types ────────────────────────────────────────────────────────
     for (const pnt of parsed.noteTypes) {
@@ -277,7 +277,10 @@ function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
       const fields: Record<string, string> = {};
       if (noteType) {
         for (let i = 0; i < noteType.fields.length; i++) {
-          fields[noteType.fields[i]] = pn.fields[i] ?? '';
+          const fieldName = noteType.fields[i];
+          if (fieldName !== undefined) {
+            fields[fieldName] = pn.fields[i] ?? '';
+          }
         }
       }
 

@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 /**
  * Tests for the .apkg parser.
  *
@@ -207,7 +208,7 @@ describe('parseNoteTypesJson', () => {
     const types = parseNoteTypesJson(BASIC_MODELS_JSON);
     expect(types).toHaveLength(1);
 
-    const [t] = types;
+    const t = types[0]!;
     expect(t.id).toBe('1000000000000');
     expect(t.name).toBe('Basic');
     expect(t.fields).toEqual(['Front', 'Back']);
@@ -225,7 +226,7 @@ describe('parseNoteTypesJson', () => {
         tmpls: [],
       },
     });
-    const [t] = parseNoteTypesJson(json);
+    const t = parseNoteTypesJson(json)[0]!;
     expect(t.fields).toEqual(['First', 'Second']);
   });
 
@@ -240,15 +241,15 @@ describe('parseNoteTypesJson', () => {
         ],
       },
     });
-    const [t] = parseNoteTypesJson(json);
-    expect(t.templates[0].name).toBe('Card 1');
-    expect(t.templates[1].name).toBe('Card 2');
+    const t = parseNoteTypesJson(json)[0]!;
+    expect(t.templates[0]!.name).toBe('Card 1');
+    expect(t.templates[1]!.name).toBe('Card 2');
   });
 
   it('exposes qfmt and afmt on templates', () => {
-    const [t] = parseNoteTypesJson(BASIC_MODELS_JSON);
-    expect(t.templates[0].qfmt).toBe('{{Front}}');
-    expect(t.templates[0].afmt).toContain('{{Back}}');
+    const t = parseNoteTypesJson(BASIC_MODELS_JSON)[0]!;
+    expect(t.templates[0]!.qfmt).toBe('{{Front}}');
+    expect(t.templates[0]!.afmt).toContain('{{Back}}');
   });
 
   it('throws on invalid JSON', () => {
@@ -287,7 +288,7 @@ describe('parseDecksJson', () => {
 
   it('returns empty description when desc is absent', () => {
     const json = JSON.stringify({ '1': { id: 1, name: 'X' } });
-    const [d] = parseDecksJson(json);
+    const d = parseDecksJson(json)[0]!;
     expect(d.description).toBe('');
   });
 
@@ -445,7 +446,7 @@ describe('parseApkg — decks and note types', () => {
     const basic = result.data.noteTypes.find((t) => t.name === 'Basic');
     expect(basic).toBeDefined();
     expect(basic?.fields).toEqual(['Front', 'Back']);
-    expect(basic?.templates[0].qfmt).toBe('{{Front}}');
+    expect(basic?.templates[0]?.qfmt).toBe('{{Front}}');
     expect(basic?.css).toBeTruthy();
   });
 });
@@ -465,7 +466,7 @@ describe('parseApkg — note field splitting', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    const note = result.data.notes[0];
+    const note = result.data.notes[0]!;
     expect(note.fields).toEqual(['Hello', 'World']);
   });
 
@@ -477,7 +478,7 @@ describe('parseApkg — note field splitting', () => {
     const result = await parseApkg(buf);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.notes[0].noteTypeId).toBe('1000000000000');
+    expect(result.data.notes[0]!.noteTypeId).toBe('1000000000000');
   });
 
   it('splits tags on whitespace', async () => {
@@ -491,7 +492,7 @@ describe('parseApkg — note field splitting', () => {
     const result = await parseApkg(buf);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.notes[0].tags).toEqual(['alpha', 'beta', 'gamma']);
+    expect(result.data.notes[0]!.tags).toEqual(['alpha', 'beta', 'gamma']);
   });
 
   it('sets tags to [] when the tags column is blank', async () => {
@@ -502,7 +503,7 @@ describe('parseApkg — note field splitting', () => {
     const result = await parseApkg(buf);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.notes[0].tags).toEqual([]);
+    expect(result.data.notes[0]!.tags).toEqual([]);
   });
 
   it('derives createdAt from the note ID (ms → seconds)', async () => {
@@ -514,7 +515,7 @@ describe('parseApkg — note field splitting', () => {
     const result = await parseApkg(buf);
     expect(result.success).toBe(true);
     if (!result.success) return;
-    expect(result.data.notes[0].createdAt).toBe(Math.floor(noteId / 1000));
+    expect(result.data.notes[0]!.createdAt).toBe(Math.floor(noteId / 1000));
   });
 
   it('returns an empty notes array when the table has no rows', async () => {
@@ -546,7 +547,7 @@ describe('parseApkg — card scheduling data', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
 
-    const card = result.data.cards[0];
+    const card = result.data.cards[0]!;
     expect(card.noteId).toBe('1700000000010');
     expect(card.deckId).toBe('2000000000000');
     expect(card.templateOrd).toBe(0);
@@ -586,7 +587,7 @@ describe('parseApkg — media mapping', () => {
     if (!result.success) return;
 
     expect(result.data.media).toHaveLength(1);
-    const m = result.data.media[0];
+    const m = result.data.media[0]!;
     expect(m.filename).toBe('cat.png');
     expect(m.mimeType).toBe('image/png');
     expect(m.data).toEqual(imageData);

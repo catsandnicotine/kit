@@ -13,7 +13,7 @@
  * It has ZERO imports from React or UI code.
  */
 
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 const DB_FILENAME = 'kit.db';
 const LS_KEY = 'kit_db_snapshot';

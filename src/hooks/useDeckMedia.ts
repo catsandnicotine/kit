@@ -78,8 +78,9 @@ export function useDeckMedia(
 
     const map = new Map<string, string>();
     for (const blob of result.data) {
+      const buffer = blob.data.buffer.slice(blob.data.byteOffset, blob.data.byteOffset + blob.data.byteLength) as ArrayBuffer;
       const objectUrl = URL.createObjectURL(
-        new Blob([blob.data], { type: blob.mimeType }),
+        new Blob([buffer], { type: blob.mimeType }),
       );
       map.set(blob.filename, objectUrl);
     }

@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   calculateRetrievability,
@@ -85,7 +86,7 @@ describe('initializeCard', () => {
   it('Again → learning, stability = w[0], scheduledDays = 1', () => {
     const out = initializeCard('again');
     expect(out.state).toBe('learning');
-    expect(out.stability).toBeCloseTo(w[0], 6);
+    expect(out.stability).toBeCloseTo(w[0]!, 6);
     expect(out.scheduledDays).toBe(1);
     expect(out.reps).toBe(1);
     expect(out.lapses).toBe(0);
@@ -94,24 +95,24 @@ describe('initializeCard', () => {
   it('Hard → learning, stability = w[1], scheduledDays = 1', () => {
     const out = initializeCard('hard');
     expect(out.state).toBe('learning');
-    expect(out.stability).toBeCloseTo(w[1], 6);
+    expect(out.stability).toBeCloseTo(w[1]!, 6);
     expect(out.scheduledDays).toBe(1);
   });
 
   it('Good → review, stability = w[2], interval derived from stability', () => {
     const out = initializeCard('good');
     expect(out.state).toBe('review');
-    expect(out.stability).toBeCloseTo(w[2], 6);
+    expect(out.stability).toBeCloseTo(w[2]!, 6);
     // interval = 9 * w[2] * (1/0.9 - 1) = w[2] ≈ 3.1262 → round(3.1262) = 3
-    expect(out.scheduledDays).toBe(expectedInterval(w[2]));
+    expect(out.scheduledDays).toBe(expectedInterval(w[2]!));
   });
 
   it('Easy → review, stability = w[3], interval derived from stability', () => {
     const out = initializeCard('easy');
     expect(out.state).toBe('review');
-    expect(out.stability).toBeCloseTo(w[3], 6);
+    expect(out.stability).toBeCloseTo(w[3]!, 6);
     // w[3] = 15.4722 → round(15.4722) = 15
-    expect(out.scheduledDays).toBe(expectedInterval(w[3]));
+    expect(out.scheduledDays).toBe(expectedInterval(w[3]!));
   });
 
   it('difficulty is clamped to [1, 10] for every rating', () => {
@@ -221,10 +222,10 @@ describe('reviewCard — lapse (Again)', () => {
     const R = calculateRetrievability(s, elapsed);
 
     const expectedSf =
-      w[11] *
-      Math.pow(d, -w[12]) *
-      (Math.pow(s + 1, w[13]) - 1) *
-      Math.exp(w[14] * (1 - R));
+      w[11]! *
+      Math.pow(d, -w[12]!) *
+      (Math.pow(s + 1, w[13]!) - 1) *
+      Math.exp(w[14]! * (1 - R));
 
     const out = reviewCard(state, 'again', elapsed);
     expect(out.stability).toBeCloseTo(expectedSf, 8);
@@ -305,10 +306,10 @@ describe('stability after recall — formula verification', () => {
     const R = calculateRetrievability(s, elapsed);
 
     const base =
-      Math.exp(w[8]) *
+      Math.exp(w[8]!) *
       (11 - d) *
-      Math.pow(s, -w[9]) *
-      (Math.exp(w[10] * (1 - R)) - 1) +
+      Math.pow(s, -w[9]!) *
+      (Math.exp(w[10]! * (1 - R)) - 1) +
       1;
     const expectedS = s * base; // no hard/easy modifier for Good
 
