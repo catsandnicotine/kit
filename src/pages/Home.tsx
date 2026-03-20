@@ -372,9 +372,16 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+    <div className="min-h-[100dvh] bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-4 pt-safe-top pb-3 border-b border-[#E5E5E5] dark:border-[#262626]">
+      <header
+        className="flex items-center justify-between pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <span className="text-sm font-semibold tracking-widest uppercase">Kit</span>
         <div className="flex items-center gap-2">
           <button
@@ -401,7 +408,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
 
       {/* Deck list */}
       {!dbLoading && !dbError && (
-        <div className="flex flex-col">
+        <div className="flex flex-col flex-1 min-h-0 overflow-auto">
           {decks.length === 0 && importPhase === 'idle' && (
             <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
               <PixelCat size={80} className="opacity-30" />
@@ -476,7 +483,14 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       )}
 
       {/* Import button */}
-      <div className="px-4 py-4">
+      <div
+        className="px-4 py-4 shrink-0"
+        style={{
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <input
           ref={fileInputRef}
           type="file"

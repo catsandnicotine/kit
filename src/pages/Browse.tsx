@@ -155,9 +155,16 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
   }, [editingCard]);
 
   return (
-    <div className="min-h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-mono">
       {/* Header */}
-      <header className="flex items-center gap-3 px-4 pt-safe-top pb-3 border-b border-border-light dark:border-border-dark">
+      <header
+        className="flex items-center gap-3 pb-3 border-b border-border-light dark:border-border-dark shrink-0"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <button
           onClick={() => { hapticTap(); onBack(); }}
           className="text-sm text-text-muted shrink-0"
@@ -173,7 +180,13 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
       </header>
 
       {/* Search */}
-      <div className="px-4 py-2 border-b border-border-light dark:border-border-dark">
+      <div
+        className="py-2 border-b border-border-light dark:border-border-dark shrink-0"
+        style={{
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
@@ -183,7 +196,14 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
       </div>
 
       {/* Card list */}
-      <div className="flex flex-col">
+      <div
+        className="flex flex-col flex-1 min-h-0 overflow-auto"
+        style={{
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         {filtered.length === 0 && (
           <div className="px-4 py-12 text-center">
             <p className="text-sm text-text-muted">

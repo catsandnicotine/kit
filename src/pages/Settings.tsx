@@ -121,9 +121,16 @@ export default function Settings({ db, onBack }: SettingsProps) {
   const isBackingUp = phase === 'backing-up';
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
       {/* Header */}
-      <header className="flex items-center px-4 pt-safe-top pb-3 border-b border-[#E5E5E5] dark:border-[#262626]">
+      <header
+        className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <button
           onClick={() => { hapticTap(); onBack(); }}
           className="text-sm text-[#737373] hover:text-[#171717] dark:hover:text-[#E5E5E5] transition-colors mr-3"
@@ -136,7 +143,14 @@ export default function Settings({ db, onBack }: SettingsProps) {
       </header>
 
       {/* iCloud Backup section */}
-      <section className="px-4 py-4">
+      <section
+        className="py-4 flex-1 overflow-auto"
+        style={{
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <h2 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
           iCloud Backup
         </h2>

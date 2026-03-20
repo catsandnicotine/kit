@@ -138,8 +138,15 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
 
   if (!stats) {
     return (
-      <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
-        <header className="flex items-center px-4 pt-safe-top pb-3 border-b border-[#E5E5E5] dark:border-[#262626]">
+      <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+        <header
+          className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
           <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
           <span className="text-sm font-semibold truncate">{deckName}</span>
         </header>
@@ -151,13 +158,29 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
       {/* Header */}
-      <header className="flex items-center px-4 pt-safe-top pb-3 border-b border-[#E5E5E5] dark:border-[#262626]">
+      <header
+        className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
         <span className="text-sm font-semibold truncate">{deckName}</span>
       </header>
 
+      {/* Scrollable content with safe area */}
+      <div
+        className="flex-1 min-h-0 overflow-auto"
+        style={{
+          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
       {/* Stats grid */}
       <section className="px-4 py-4">
         <div className="grid grid-cols-2 gap-3">
@@ -247,6 +270,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
           </p>
         </section>
       )}
+      </div>
     </div>
   );
 }

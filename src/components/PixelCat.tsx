@@ -1,9 +1,12 @@
 /**
  * PixelCat — 8-bit stray cat mascot, minimal black and white.
  *
- * A simple pixel-art cat rendered as an inline SVG using small rectangles
- * to simulate pixel art. Respects dark mode.
+ * Fully inlined SVG (no external assets) so it renders reliably on iOS
+ * Capacitor. Uses theme context for fill color since Tailwind dark: can
+ * be unreliable in native WebViews.
  */
+
+import { useTheme } from '../hooks/useTheme';
 
 interface PixelCatProps {
   /** Width/height in pixels. Default 64. */
@@ -13,12 +16,15 @@ interface PixelCatProps {
 }
 
 /**
- * 8-bit pixel art stray cat.
+ * 8-bit pixel art stray cat. Inlined SVG — no file references.
  *
  * @param size      - Width/height in pixels (square).
  * @param className - Additional CSS classes.
  */
 export function PixelCat({ size = 64, className = '' }: PixelCatProps) {
+  const { theme } = useTheme();
+  const fill = theme === 'dark' ? '#E5E5E5' : '#171717';
+
   // 12x12 pixel grid. 1 = filled, 0 = empty.
   // Cat sitting with pointy ears, small body, tail curling up.
   const grid = [
@@ -56,7 +62,7 @@ export function PixelCat({ size = 64, className = '' }: PixelCatProps) {
               y={y * cellSize}
               width={cellSize}
               height={cellSize}
-              className="fill-[#171717] dark:fill-[#E5E5E5]"
+              fill={fill}
             />
           ) : null,
         ),

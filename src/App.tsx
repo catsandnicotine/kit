@@ -32,7 +32,15 @@ const LS_ONBOARDED_KEY = 'kit_onboarded';
 
 function Onboarding({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center px-6">
+    <div
+      className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'max(1.5rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1.5rem, env(safe-area-inset-right))',
+      }}
+    >
       <div className="max-w-sm w-full flex flex-col items-center gap-6 text-center">
         <PixelCat size={96} />
         <h1 className="text-xl font-semibold">Welcome to Kit</h1>
@@ -79,7 +87,15 @@ function ICloudRestorePrompt({
   });
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center px-6">
+    <div
+      className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center"
+      style={{
+        paddingTop: 'env(safe-area-inset-top)',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        paddingLeft: 'max(1.5rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1.5rem, env(safe-area-inset-right))',
+      }}
+    >
       <div className="max-w-sm w-full bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
         <h2 className="text-base font-semibold text-center">iCloud Backup Found</h2>
         <p className="text-sm text-[#737373] text-center">
