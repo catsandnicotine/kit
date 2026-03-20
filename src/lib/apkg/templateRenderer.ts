@@ -72,7 +72,7 @@ export function renderTemplate(
     };
   }
 
-  const template  = noteType.templates[templateIndex];
+  const template  = noteType.templates[templateIndex]!;
   const fieldMap  = buildFieldMap(note, noteType);
   const clozeNum  = templateIndex + 1; // cloze numbers are 1-based
   const styleTag  = noteType.css ? `<style>${noteType.css}</style>` : '';
@@ -105,7 +105,10 @@ export function renderTemplate(
 export function buildFieldMap(note: ParsedNote, noteType: ParsedNoteType): FieldMap {
   const map: FieldMap = {};
   for (let i = 0; i < noteType.fields.length; i++) {
-    map[noteType.fields[i]] = note.fields[i] ?? '';
+    const fieldName = noteType.fields[i];
+    if (fieldName !== undefined) {
+      map[fieldName] = note.fields[i] ?? '';
+    }
   }
   // Special pseudo-fields
   map['Tags']    = note.tags.join(' ');

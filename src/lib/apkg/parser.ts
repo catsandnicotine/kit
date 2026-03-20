@@ -113,6 +113,32 @@ export interface ParsedApkg {
   media: ParsedMedia[];
 }
 
+/** Lightweight media manifest entry — metadata only, no binary data. */
+export interface MediaManifestEntry {
+  /** Numeric key inside the ZIP archive (e.g. "0", "1"). */
+  zipKey: string;
+  /** Original filename (e.g. "cat.jpg"). */
+  filename: string;
+  /** Guessed MIME type. */
+  mimeType: string;
+}
+
+/**
+ * Lazy parse result: structural data + a media manifest without blob data.
+ * The caller extracts media blobs in batches via {@link extractMediaBatch}
+ * to avoid holding 1-2 GB of media in memory at once.
+ */
+export interface ParsedApkgLazy {
+  decks: ParsedAnkiDeck[];
+  noteTypes: ParsedNoteType[];
+  notes: ParsedNote[];
+  cards: ParsedCard[];
+  /** Metadata-only media manifest (no Uint8Array data). */
+  mediaManifest: MediaManifestEntry[];
+  /** The open JSZip instance — needed by {@link extractMediaBatch}. */
+  zip: JSZip;
+}
+
 // ---------------------------------------------------------------------------
 // sql.js path configuration
 // ---------------------------------------------------------------------------
@@ -136,6 +162,16 @@ let wasmLocator: (filename: string) => string = (f) => f;
  */
 export function configureSqlJsPath(locateFile: (filename: string) => string): void {
   wasmLocator = locateFile;
+}
+
+/**
+ * Get the currently configured WASM locator function.
+ * Used by the exporter to reuse the same configuration.
+ *
+ * @returns The current locateFile function.
+ */
+export function getSqlJsLocator(): (filename: string) => string {
+  return wasmLocator;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +228,12 @@ export async function parseApkg(
     try {
       // 5. Read the col table
       const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
-      if (!colRows.length || !colRows[0].values.length) {
+      const firstRow = colRows[0];
+      if (!colRows.length || !firstRow || !firstRow.values.length) {
         return { success: false, error: 'Collection table is empty or corrupt' };
       }
 
-      const [modelsJson, decksJson] = colRows[0].values[0] as [string, string];
+      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
 
       let noteTypes: ParsedNoteType[];
       try {
@@ -228,6 +265,135 @@ export async function parseApkg(
   } catch (e) {
     return { success: false, error: `Unexpected error parsing .apkg: ${String(e)}` };
   }
+}
+
+/**
+ * Parse an .apkg file without loading media blobs into memory.
+ *
+ * Returns all structural data (decks, note types, notes, cards) plus a
+ * lightweight media manifest. The caller should then use
+ * {@link extractMediaBatch} to stream blobs into the database in chunks,
+ * avoiding the 1-2 GB memory spike that happens when a large deck's media
+ * is materialised all at once.
+ *
+ * @param input - The raw .apkg bytes.
+ * @returns Lazy parse result with media manifest, or a descriptive error.
+ */
+export async function parseApkgLazy(
+  input: File | ArrayBuffer,
+): Promise<Result<ParsedApkgLazy>> {
+  try {
+    const buffer: ArrayBuffer =
+      input instanceof File ? await input.arrayBuffer() : input;
+
+    let zip: JSZip;
+    try {
+      zip = await JSZip.loadAsync(buffer);
+    } catch (e) {
+      return { success: false, error: `Could not unzip file: ${String(e)}` };
+    }
+
+    const dbEntry =
+      zip.file('collection.anki21') ?? zip.file('collection.anki2');
+    if (!dbEntry) {
+      return {
+        success: false,
+        error: 'No collection database found — expected collection.anki2 or collection.anki21',
+      };
+    }
+
+    const dbBytes = await dbEntry.async('uint8array');
+
+    let SQL: Awaited<ReturnType<typeof initSqlJs>>;
+    try {
+      SQL = await initSqlJs({ locateFile: wasmLocator });
+    } catch (e) {
+      return { success: false, error: `Failed to load sql.js WASM: ${String(e)}` };
+    }
+
+    const db = new SQL.Database(dbBytes);
+    try {
+      const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
+      const firstRow = colRows[0];
+      if (!colRows.length || !firstRow || !firstRow.values.length) {
+        return { success: false, error: 'Collection table is empty or corrupt' };
+      }
+
+      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
+
+      let noteTypes: ParsedNoteType[];
+      try {
+        noteTypes = parseNoteTypesJson(modelsJson);
+      } catch (e) {
+        return { success: false, error: `Could not parse note types: ${String(e)}` };
+      }
+
+      let decks: ParsedAnkiDeck[];
+      try {
+        decks = parseDecksJson(decksJson);
+      } catch (e) {
+        return { success: false, error: `Could not parse decks: ${String(e)}` };
+      }
+
+      const notes = extractNotes(db);
+      const cards = extractCards(db);
+
+      // Build media manifest without extracting blob data
+      const mediaManifest = await buildMediaManifest(zip);
+
+      return {
+        success: true,
+        data: { decks, noteTypes, notes, cards, mediaManifest, zip },
+      };
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    return { success: false, error: `Unexpected error parsing .apkg: ${String(e)}` };
+  }
+}
+
+/**
+ * Extract a batch of media blobs from a previously-parsed .apkg ZIP.
+ *
+ * Call this in a loop with increasing `startIdx` to stream media into the
+ * database without holding the entire media set in memory.
+ *
+ * @param zip       - The JSZip instance from {@link ParsedApkgLazy}.
+ * @param manifest  - The full media manifest from {@link ParsedApkgLazy}.
+ * @param startIdx  - Index into `manifest` to start extracting from.
+ * @param batchSize - Maximum number of blobs to extract in this batch.
+ * @returns Array of extracted media (may be shorter than batchSize if
+ *          entries are missing or unreadable).
+ */
+export async function extractMediaBatch(
+  zip: JSZip,
+  manifest: MediaManifestEntry[],
+  startIdx: number,
+  batchSize: number,
+): Promise<ParsedMedia[]> {
+  const end = Math.min(startIdx + batchSize, manifest.length);
+  const results: ParsedMedia[] = [];
+
+  for (let i = startIdx; i < end; i++) {
+    const entry = manifest[i];
+    if (!entry) continue;
+    const file = zip.file(entry.zipKey);
+    if (!file) continue;
+
+    try {
+      const data = await file.async('uint8array');
+      results.push({
+        filename: entry.filename,
+        data,
+        mimeType: entry.mimeType,
+      });
+    } catch {
+      // Individual blob unreadable — skip, don't fail the batch
+    }
+  }
+
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +516,34 @@ export function guessMimeType(filename: string): string {
 type Row = (number | string | null | Uint8Array | bigint)[];
 
 /**
+ * Build a lightweight media manifest from the ZIP's `media` JSON file.
+ * Returns metadata only — no binary data is extracted.
+ *
+ * @param zip - Loaded JSZip instance.
+ * @returns Manifest entries sorted by zip key.
+ */
+async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
+  const mediaEntry = zip.file('media');
+  if (!mediaEntry) return [];
+
+  try {
+    const raw = await mediaEntry.async('text');
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return [];
+    }
+    const mapping = parsed as Record<string, string>;
+    return Object.entries(mapping).map(([zipKey, filename]) => ({
+      zipKey,
+      filename,
+      mimeType: guessMimeType(filename),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Extract all notes from the open collection database.
  * Fields are split on the \x1f separator.
  *
@@ -358,9 +552,10 @@ type Row = (number | string | null | Uint8Array | bigint)[];
  */
 function extractNotes(db: Database): ParsedNote[] {
   const results = db.exec('SELECT id, mid, tags, flds FROM notes');
-  if (!results.length) return [];
+  const first = results[0];
+  if (!results.length || !first) return [];
 
-  const { columns, values } = results[0];
+  const { columns, values } = first;
   const iId   = columns.indexOf('id');
   const iMid  = columns.indexOf('mid');
   const iTags = columns.indexOf('tags');
@@ -393,9 +588,10 @@ function extractCards(db: Database): ParsedCard[] {
   const results = db.exec(
     'SELECT id, nid, did, ord, type, due, ivl, factor, reps, lapses FROM cards',
   );
-  if (!results.length) return [];
+  const first = results[0];
+  if (!results.length || !first) return [];
 
-  const { columns, values } = results[0];
+  const { columns, values } = first;
   const iId     = columns.indexOf('id');
   const iNid    = columns.indexOf('nid');
   const iDid    = columns.indexOf('did');

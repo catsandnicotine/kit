@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 /**
  * Tests for the Anki template renderer.
  *

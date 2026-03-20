@@ -98,6 +98,38 @@ export const CREATE_MEDIA_TABLE = `
   );
 `;
 
+/** Per-deck settings (new cards/day limit, etc.). */
+export const CREATE_DECK_SETTINGS_TABLE = `
+  CREATE TABLE IF NOT EXISTS deck_settings (
+    deck_id         TEXT    PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
+    new_cards_per_day INTEGER NOT NULL DEFAULT 20
+  );
+`;
+
+// ---------------------------------------------------------------------------
+// Indexes
+// ---------------------------------------------------------------------------
+
+/**
+ * Index on cards.deck_id — used by getCardsByDeck, getCardsDueForDeck,
+ * and getAllDeckCardCounts. Without this, every deck-scoped query does a
+ * full table scan on cards (catastrophic at 30K+ rows).
+ */
+export const CREATE_IDX_CARDS_DECK = `
+  CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
+`;
+
+/**
+ * Composite index on card_states(state, due) — lets getCardsDueForDeck
+ * filter by state and sort by due without a temp B-tree sort. The LEFT JOIN
+ * in that query starts from cards (filtered by deck_id via idx_cards_deck_id),
+ * then probes card_states by PK (card_id); this index further speeds the
+ * WHERE/ORDER BY evaluation on the joined rows.
+ */
+export const CREATE_IDX_CARD_STATES_STATE_DUE = `
+  CREATE INDEX IF NOT EXISTS idx_card_states_state_due ON card_states(state, due);
+`;
+
 /**
  * Must be executed on every new SQLite connection before any reads or writes.
  * SQLite disables foreign key enforcement by default; without this, ON DELETE
@@ -105,7 +137,7 @@ export const CREATE_MEDIA_TABLE = `
  */
 export const ENABLE_FOREIGN_KEYS = 'PRAGMA foreign_keys = ON;';
 
-/** Tables in dependency order: parent tables first. */
+/** Tables and indexes in dependency order: parent tables first, then indexes. */
 export const ALL_TABLES = [
   CREATE_DECKS_TABLE,
   CREATE_NOTE_TYPES_TABLE,
@@ -114,4 +146,7 @@ export const ALL_TABLES = [
   CREATE_CARD_STATES_TABLE,
   CREATE_REVIEW_LOGS_TABLE,
   CREATE_MEDIA_TABLE,
+  CREATE_DECK_SETTINGS_TABLE,
+  CREATE_IDX_CARDS_DECK,
+  CREATE_IDX_CARD_STATES_STATE_DUE,
 ];

@@ -14,14 +14,14 @@
  *  └──────────────────────────┘
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Card, Rating } from '../types';
-import {
-  useStudySession,
-  type UseStudySessionReturnExtended,
-} from '../hooks/useStudySession';
-import { hapticLongPress } from '../lib/platform/haptics';
+import type { Card } from '../types';
+import { useStudySession } from '../hooks/useStudySession';
+import { useDeckMedia } from '../hooks/useDeckMedia';
+import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
+import { getDeckStats } from '../lib/db/queries';
+import { CardEditor } from '../components/CardEditor';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -31,7 +31,6 @@ interface StudyProps {
   db: Database | null;
   deckId: string;
   deckName?: string;
-  onEditCard?: (card: Card) => void;
   onExit?: () => void;
 }
 
@@ -79,15 +78,150 @@ function RatingButton({
   );
 }
 
-/** Card content rendered from HTML string. */
+/**
+ * Play an ordered list of audio elements one at a time. The first starts
+ * immediately; each subsequent track begins when the previous one ends.
+ *
+ * @returns Cleanup function that stops playback and removes listeners.
+ */
+function playAudioSequentially(audios: HTMLAudioElement[]): () => void {
+  if (audios.length === 0) return () => {};
+
+  let currentIdx = 0;
+  let cancelled = false;
+  const cleanups: (() => void)[] = [];
+
+  function playNext() {
+    if (cancelled || currentIdx >= audios.length) return;
+    const audio = audios[currentIdx];
+    if (!audio) return;
+    const onEnded = () => {
+      currentIdx++;
+      playNext();
+    };
+    audio.addEventListener('ended', onEnded, { once: true });
+    cleanups.push(() => audio.removeEventListener('ended', onEnded));
+
+    audio.currentTime = 0;
+    audio.play().catch(() => {
+      // Autoplay blocked — the user can tap the native controls instead.
+      // Still chain to the next so a manual play→end still advances.
+    });
+  }
+
+  playNext();
+
+  return () => {
+    cancelled = true;
+    for (const fn of cleanups) fn();
+    for (const audio of audios) audio.pause();
+  };
+}
+
+/**
+ * Card content rendered from HTML string.
+ *
+ * Uses a ref to only update innerHTML when the html prop *value* actually
+ * changes — not on every React re-render. This prevents timer-driven
+ * re-renders (the 1-second elapsed-time ticker) from tearing down and
+ * recreating the DOM, which would restart any in-progress <audio> playback.
+ *
+ * Audio playback:
+ *  - Multiple audio files play sequentially, not simultaneously.
+ *  - Only the first track auto-plays; the rest wait for the previous to end.
+ *  - A "Replay" button appears when there is audio, letting the user replay
+ *    the full sequence.
+ */
 function CardContent({ html, visible }: { html: string; visible: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const currentHtmlRef = useRef('');
+  const stopPlaybackRef = useRef<(() => void) | null>(null);
+  const [hasAudio, setHasAudio] = useState(false);
+
+  /** Collect audio elements from the container in DOM order. */
+  const getAudios = useCallback((): HTMLAudioElement[] => {
+    const el = containerRef.current;
+    if (!el) return [];
+    return Array.from(el.querySelectorAll<HTMLAudioElement>('audio'));
+  }, []);
+
+  /** Stop any in-progress sequential playback. */
+  const stopCurrent = useCallback(() => {
+    stopPlaybackRef.current?.();
+    stopPlaybackRef.current = null;
+  }, []);
+
+  /** Start sequential playback of all audio in this card face. */
+  const startPlayback = useCallback(() => {
+    stopCurrent();
+    const audios = getAudios();
+    if (audios.length === 0) return;
+    stopPlaybackRef.current = playAudioSequentially(audios);
+  }, [getAudios, stopCurrent]);
+
+  // -- HTML injection & initial playback --
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    if (currentHtmlRef.current === html) return;
+    currentHtmlRef.current = html;
+
+    // Stop & clean up old audio before replacing DOM.
+    stopCurrent();
+    const oldAudios = el.querySelectorAll<HTMLAudioElement>('audio');
+    for (const audio of oldAudios) {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    }
+
+    el.innerHTML = html;
+
+    const audios = getAudios();
+    setHasAudio(audios.length > 0);
+
+    if (visible && audios.length > 0) {
+      stopPlaybackRef.current = playAudioSequentially(audios);
+    }
+
+    return stopCurrent;
+  }, [html, visible, getAudios, stopCurrent]);
+
+  // -- Visibility transitions --
+  const prevVisibleRef = useRef(visible);
+  useEffect(() => {
+    const wasVisible = prevVisibleRef.current;
+    prevVisibleRef.current = visible;
+
+    if (visible && !wasVisible) {
+      // Face just became visible — start sequential playback.
+      startPlayback();
+    } else if (!visible && wasVisible) {
+      // Face hidden — silence everything.
+      stopCurrent();
+      for (const audio of getAudios()) audio.pause();
+    }
+  }, [visible, startPlayback, stopCurrent, getAudios]);
+
   return (
     <div
-      className={`card-face card-content w-full h-full overflow-auto p-6 ${visible ? '' : 'card-face-hidden'}`}
-      // The HTML comes from the Anki template renderer — a sandboxed, trusted source.
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+      className={`card-face card-content w-full h-full min-h-0 overflow-auto ${visible ? '' : 'card-face-hidden'}`}
+      style={{
+        padding: 'max(1.5rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left))',
+      }}
+    >
+      <div ref={containerRef} />
+      {visible && hasAudio && (
+        <button
+          type="button"
+          onClick={startPlayback}
+          className="anki-replay-btn"
+        >
+          Replay Audio
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -95,10 +229,12 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
 function SessionComplete({
   studied,
   elapsedSeconds,
+  nextDueLabel,
   onExit,
 }: {
   studied: number;
   elapsedSeconds: number;
+  nextDueLabel: string | null;
   onExit?: () => void;
 }) {
   const mins = Math.floor(elapsedSeconds / 60);
@@ -110,14 +246,25 @@ function SessionComplete({
     <div className="flex flex-col items-center justify-center h-full gap-6 px-8 text-center">
       <p className="text-4xl">🐱</p>
       <h2 className="text-xl font-semibold text-text-light dark:text-text-dark">
-        Session complete
+        {studied > 0 ? 'Session complete' : 'No cards due'}
       </h2>
-      <p className="text-sm text-text-muted">
-        {studied} {studied === 1 ? 'card' : 'cards'} reviewed in {timeStr}
-      </p>
+      {studied > 0 ? (
+        <p className="text-sm text-text-muted">
+          {studied} {studied === 1 ? 'card' : 'cards'} reviewed in {timeStr}
+        </p>
+      ) : (
+        <p className="text-sm text-text-muted">
+          You're all caught up!
+        </p>
+      )}
+      {nextDueLabel && (
+        <p className="text-xs text-text-muted">
+          Next review {nextDueLabel}
+        </p>
+      )}
       {onExit && (
         <button
-          onClick={onExit}
+          onClick={() => { hapticTap(); onExit(); }}
           className="mt-4 px-6 py-2 border border-border-light dark:border-border-dark text-text-light dark:text-text-dark text-sm rounded-md"
         >
           Done
@@ -176,9 +323,64 @@ function useLongPress(onLongPress: () => void) {
  * @param onEditCard - Called when the user long-presses the card.
  * @param onExit    - Called when the user dismisses the session-complete screen.
  */
-export default function Study({ db, deckId, deckName, onEditCard, onExit }: StudyProps) {
-  const session = useStudySession(db, deckId, onEditCard) as UseStudySessionReturnExtended;
-  const { phase, frontHtml, backHtml, stats, errorMessage, canUndo, flip, rate, undo } = session;
+export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
+  const [editingCard, setEditingCard] = useState<Card | null>(null);
+  const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
+
+  const handleEditCard = useCallback((card: Card) => {
+    setEditingCard(card);
+  }, []);
+
+  const session = useStudySession(db, deckId, handleEditCard);
+  const {
+    phase, frontHtml, backHtml, stats, errorMessage, canUndo,
+    flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
+  } = session;
+  const { rewriteHtml } = useDeckMedia(db, deckId);
+
+  // Compute next due label when session completes
+  useEffect(() => {
+    if (phase !== 'complete' || !db) return;
+    const now = Math.floor(Date.now() / 1000);
+    const result = getDeckStats(db, deckId, now);
+    if (result.success && result.data.nextDue) {
+      const diff = result.data.nextDue - now;
+      if (diff <= 0) {
+        setNextDueLabel('now');
+      } else if (diff < 60) {
+        setNextDueLabel('in less than a minute');
+      } else if (diff < 3600) {
+        const mins = Math.round(diff / 60);
+        setNextDueLabel(`in ${mins} ${mins === 1 ? 'minute' : 'minutes'}`);
+      } else if (diff < 86400) {
+        const hours = Math.round(diff / 3600);
+        setNextDueLabel(`in ${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+      } else {
+        const days = Math.round(diff / 86400);
+        setNextDueLabel(`in ${days} ${days === 1 ? 'day' : 'days'}`);
+      }
+    }
+  }, [phase, db, deckId]);
+
+  /** After the editor saves, update the card in the study queue and refresh. */
+  const handleEditorSave = useCallback(
+    (updated: Card) => {
+      updateCurrentCardInQueue(updated);
+      setEditingCard(null);
+    },
+    [updateCurrentCardInQueue],
+  );
+
+  const handleEditorDelete = useCallback(() => {
+    setEditingCard(null);
+    // Card was deleted — exit back to home since the queue is now stale.
+    onExit?.();
+  }, [onExit]);
+
+  // Rewrite media src attributes (e.g. src="cat.jpg") to blob: object URLs.
+  // Memoized so the 1-second elapsed-time ticker doesn't re-run the regex work.
+  const resolvedFront = useMemo(() => rewriteHtml(frontHtml), [rewriteHtml, frontHtml]);
+  const resolvedBack = useMemo(() => rewriteHtml(backHtml), [rewriteHtml, backHtml]);
 
   // Track total cards for the progress bar (set once on load).
   const [totalCards, setTotalCards] = useState(0);
@@ -188,11 +390,7 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
     }
   }, [phase, stats.studied, stats.remaining, totalCards]);
 
-  const longPressProps = useLongPress(session.editCurrentCard);
-
-  // ── DEBUG ──────────────────────────────────────────────────────────────────
-  console.debug('[Study] render — phase:', phase, '| frontHtml length:', frontHtml.length, '| backHtml length:', backHtml.length);
-  // ────────────────────────────────────────────────────────────────────────────
+  const longPressProps = useLongPress(editCurrentCard);
 
   // -------------------------------------------------------------------------
   // Render
@@ -200,33 +398,83 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
 
   if (phase === 'loading') {
     return (
-      <div className="flex items-center justify-center h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <p className="text-text-muted text-sm">Loading…</p>
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
+          </button>
+        </header>
+        <div className="flex-1 flex items-center justify-center">
+          <p className="text-text-muted text-sm">Loading…</p>
+        </div>
       </div>
     );
   }
 
   if (phase === 'error') {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-4 px-8 text-center bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <p className="text-sm text-red-500">{errorMessage}</p>
-        {onExit && (
-          <button onClick={onExit} className="text-sm text-text-muted underline">
-            Go back
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
           </button>
-        )}
+        </header>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
+          <p className="text-sm text-red-500">{errorMessage}</p>
+        </div>
       </div>
     );
   }
 
   if (phase === 'complete') {
     return (
-      <div className="h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
-        <SessionComplete
-          studied={stats.studied}
-          elapsedSeconds={stats.elapsedSeconds}
-          onExit={onExit}
-        />
+      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+        <header
+          className="flex items-center gap-3 shrink-0"
+          style={{
+            paddingTop: 'env(safe-area-inset-top)',
+            paddingBottom: '0.5rem',
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <button
+            onClick={() => { hapticTap(); onExit?.(); }}
+            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          >
+            ← Back
+          </button>
+        </header>
+        <div className="flex-1 flex flex-col">
+          <SessionComplete
+            studied={stats.studied}
+            elapsedSeconds={stats.elapsedSeconds}
+            nextDueLabel={nextDueLabel}
+            {...(onExit && { onExit })}
+          />
+        </div>
       </div>
     );
   }
@@ -235,14 +483,28 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
   const total = totalCards || studied + stats.remaining;
 
   return (
-    <div className="flex flex-col h-screen bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark select-none">
+    <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark select-none">
       {/* ── Header ── */}
-      <header className="flex items-center justify-between px-4 pt-safe-top pb-2 shrink-0">
-        <span className="text-xs text-text-muted truncate max-w-[60%]">
+      <header
+        className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
+        style={{
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: '0.5rem',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
+        <button
+          onClick={() => { hapticTap(); onExit?.(); }}
+          className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+        >
+          ← Back
+        </button>
+        <span className="text-sm text-[#737373] dark:text-[#A3A3A3] truncate flex-1 text-center">
           {deckName ?? 'Study'}
         </span>
-        <span className="text-xs text-text-muted tabular-nums">
-          {stats.remaining} left
+        <span className="text-xs text-[#737373] dark:text-[#A3A3A3] tabular-nums shrink-0">
+          {formatTime(stats.elapsedSeconds)} · {stats.remaining} left
         </span>
       </header>
 
@@ -251,7 +513,7 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
 
       {/* ── Card area ── */}
       <div
-        className="flex-1 relative overflow-hidden cursor-pointer"
+        className="flex-1 min-h-0 relative overflow-hidden cursor-pointer flex flex-col"
         role="button"
         tabIndex={0}
         aria-label={phase === 'front' ? 'Tap to reveal answer' : 'Card answer'}
@@ -261,7 +523,7 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
             if (phase === 'front') flip();
           }
         }}
-        {...(phase !== 'back' ? longPressProps : {})}
+        {...longPressProps}
       >
         {/* Front */}
         <div
@@ -269,7 +531,7 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
             phase === 'front' ? '' : 'card-face-hidden'
           }`}
         >
-          <CardContent html={frontHtml} visible={phase === 'front'} />
+          <CardContent html={resolvedFront} visible={phase === 'front'} />
         </div>
 
         {/* Back */}
@@ -278,21 +540,29 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
             phase === 'back' ? '' : 'card-face-hidden'
           }`}
         >
-          <CardContent html={backHtml} visible={phase === 'back'} />
+          <CardContent html={resolvedBack} visible={phase === 'back'} />
         </div>
 
         {/* Tap-to-flip prompt overlay (only on front) */}
         {phase === 'front' && (
           <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
-            <span className="text-xs text-text-muted px-3 py-1 border border-border-light dark:border-border-dark rounded-full">
+            <span className="text-xs text-[#737373] dark:text-[#A3A3A3] px-3 py-1 border border-[#E5E5E5] dark:border-[#404040] rounded-full">
               tap to flip
             </span>
           </div>
         )}
       </div>
 
-      {/* ── Bottom bar ── */}
-      <div className="shrink-0 px-4 pb-safe-bottom">
+      {/* ── Bottom bar (rating buttons) ── */}
+      <div
+        className="shrink-0"
+        style={{
+          paddingTop: '0.75rem',
+          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+          paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        }}
+      >
         {phase === 'back' ? (
           <div className="flex flex-col gap-2 py-3">
             {/* Rating buttons */}
@@ -303,15 +573,25 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
               <RatingButton label="Easy" onClick={() => rate('easy')} color="blue" />
             </div>
 
-            {/* Undo */}
-            {canUndo && (
+            {/* Edit + Undo row */}
+            <div className="flex items-center justify-between">
               <button
-                onClick={undo}
-                className="w-full py-2 text-xs text-text-muted"
+                onClick={() => { hapticTap(); editCurrentCard(); }}
+                className="py-2 text-xs text-text-muted"
               >
-                Undo last rating
+                Edit
               </button>
-            )}
+              {canUndo ? (
+                <button
+                  onClick={undo}
+                  className="py-2 text-xs text-text-muted"
+                >
+                  Undo
+                </button>
+              ) : (
+                <span />
+              )}
+            </div>
           </div>
         ) : (
           /* Spacer so layout doesn't shift */
@@ -321,12 +601,16 @@ export default function Study({ db, deckId, deckName, onEditCard, onExit }: Stud
         )}
       </div>
 
-      {/* ── Stats ticker (bottom-left) ── */}
-      <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+4rem)] left-4 pointer-events-none">
-        <span className="text-[10px] text-text-muted tabular-nums">
-          {formatTime(stats.elapsedSeconds)}
-        </span>
-      </div>
+      {/* ── Card Editor overlay ── */}
+      {editingCard && (
+        <CardEditor
+          db={db}
+          card={editingCard}
+          onSave={handleEditorSave}
+          onDelete={handleEditorDelete}
+          onDismiss={() => setEditingCard(null)}
+        />
+      )}
     </div>
   );
 }

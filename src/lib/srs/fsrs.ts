@@ -86,7 +86,7 @@ export function initializeCard(
   const { w, requestRetention, maximumInterval } = params;
   const g = ORDINAL[rating];
 
-  const stability = w[g - 1];
+  const stability = w[g - 1]!;
   const difficulty = clampDifficulty(initialDifficulty(g, w));
 
   // Cards rated Again or Hard enter a short learning cycle (1 day).
@@ -99,10 +99,10 @@ export function initializeCard(
     scheduledDays = 1;
   } else {
     state = 'review';
-    scheduledDays = fuzzedInterval(optimalInterval(stability, requestRetention), maximumInterval);
+    scheduledDays = fuzzedInterval(optimalInterval(stability!, requestRetention), maximumInterval);
   }
 
-  return { stability, difficulty, scheduledDays, state, reps: 1, lapses: 0 };
+  return { stability: stability!, difficulty, scheduledDays, state, reps: 1, lapses: 0 };
 }
 
 /**
@@ -200,7 +200,7 @@ function fuzzedInterval(interval: number, maximumInterval: number): number {
  * @returns Raw difficulty (not yet clamped).
  */
 function initialDifficulty(g: number, w: readonly number[]): number {
-  return w[4] - Math.exp(w[5] * (g - 1)) + 1;
+  return w[4]! - Math.exp(w[5]! * (g - 1)) + 1;
 }
 
 /**
@@ -216,8 +216,8 @@ function initialDifficulty(g: number, w: readonly number[]): number {
  */
 function nextDifficulty(d: number, g: number, w: readonly number[]): number {
   const d0Easy = initialDifficulty(4, w);
-  const dPrime = d - w[6] * (g - 3);
-  return w[7] * d0Easy + (1 - w[7]) * dPrime;
+  const dPrime = d - w[6]! * (g - 3);
+  return w[7]! * d0Easy + (1 - w[7]!) * dPrime;
 }
 
 /**
@@ -252,13 +252,13 @@ function stabilityAfterRecall(
   g: number,
   w: readonly number[],
 ): number {
-  const hardPenalty = g === ORDINAL.hard ? w[15] : 1;
-  const easyBonus   = g === ORDINAL.easy ? w[16] : 1;
+  const hardPenalty = g === ORDINAL.hard ? w[15]! : 1;
+  const easyBonus   = g === ORDINAL.easy ? w[16]! : 1;
   const base =
-    Math.exp(w[8]) *
+    Math.exp(w[8]!) *
     (11 - d) *
-    Math.pow(s, -w[9]) *
-    (Math.exp(w[10] * (1 - R)) - 1) +
+    Math.pow(s, -w[9]!) *
+    (Math.exp(w[10]! * (1 - R)) - 1) +
     1;
   return s * base * hardPenalty * easyBonus;
 }
@@ -281,9 +281,9 @@ function stabilityAfterForgetting(
   w: readonly number[],
 ): number {
   return (
-    w[11] *
-    Math.pow(d, -w[12]) *
-    (Math.pow(s + 1, w[13]) - 1) *
-    Math.exp(w[14] * (1 - R))
+    w[11]! *
+    Math.pow(d, -w[12]!) *
+    (Math.pow(s + 1, w[13]!) - 1) *
+    Math.exp(w[14]! * (1 - R))
   );
 }
