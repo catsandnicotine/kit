@@ -11,10 +11,13 @@
 /**
  * Rewrite media references in card HTML to use object URLs.
  *
- * Handles three patterns that appear in Anki-generated HTML:
+ * Handles patterns that appear in Anki-generated HTML:
  *  1. `src="filename.ext"` — images, audio, video elements
  *  2. `src='filename.ext'` — single-quoted variant
- *  3. `[sound:filename.ext]` — Anki's audio shorthand (converted to <audio>)
+ *  3. `href="filename.ext"` — SVG <image> elements (Image Occlusion cards)
+ *  4. `xlink:href="filename.ext"` — older SVG <image> elements
+ *  5. `url("filename")` — CSS background-image
+ *  6. `[sound:filename.ext]` — Anki's audio shorthand (converted to <audio>)
  *
  * Only filenames that exist in `urlMap` are rewritten; unknown references
  * are left unchanged so external URLs (https://…) pass through untouched.
@@ -43,7 +46,32 @@ export function rewriteMediaUrls(
     },
   );
 
-  // Pattern 3: [sound:filename.ext] — Anki's audio syntax.
+  // Pattern 3 & 4: href="filename" or xlink:href="filename"
+  // SVG <image> elements use href (or xlink:href in older SVGs) to
+  // reference the underlying image. Image Occlusion cards embed the
+  // base image this way. Only rewrite bare filenames found in urlMap
+  // to avoid breaking external links or anchor hrefs (#, http, etc).
+  result = result.replace(
+    /\b(xlink:)?href=(["'])((?:(?!\2)[^\\])*?)\2/g,
+    (match: string, prefix: string | undefined, quote: string, filename: string) => {
+      const url = urlMap.get(filename);
+      if (url) return `${prefix ?? ''}href=${quote}${url}${quote}`;
+      return match;
+    },
+  );
+
+  // Pattern 5: url("filename") or url('filename') or url(filename)
+  // Used by CSS background-image and image occlusion cards.
+  result = result.replace(
+    /\burl\((['"]?)((?:(?!\1)[^)\\])*?)\1\)/g,
+    (match: string, quote: string, filename: string) => {
+      const url = urlMap.get(filename);
+      if (url) return `url(${quote}${url}${quote})`;
+      return match;
+    },
+  );
+
+  // Pattern 6: [sound:filename.ext] — Anki's audio syntax.
   // Converted to an <audio> element with controls. No autoplay attribute —
   // playback is triggered imperatively by CardContent after DOM insertion
   // so that timer-driven re-renders don't restart the audio.

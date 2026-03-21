@@ -19,11 +19,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../lib/db';
+import { runMigrations } from '../lib/db/migrations';
 import { configureSqlJsPath } from '../lib/apkg';
 import {
   loadDatabaseSnapshot,
   saveDatabaseSnapshot,
 } from '../lib/platform/persistence';
+import { seedWelcomeDeck } from '../lib/db/welcomeDeck';
 import {
   checkForBackup,
   restoreDatabase as restoreICloudBackup,
@@ -142,6 +144,7 @@ export function useDatabase(): UseDatabaseReturn {
           for (const ddl of ALL_TABLES) {
             database.run(ddl);
           }
+          runMigrations(database);
           _db = database;
           setDb(database);
           setLoading(false);
@@ -165,6 +168,8 @@ export function useDatabase(): UseDatabaseReturn {
         for (const ddl of ALL_TABLES) {
           database.run(ddl);
         }
+        runMigrations(database);
+        seedWelcomeDeck(database);
         _db = database;
         setDb(database);
       } catch (e) {
@@ -202,6 +207,7 @@ export function useDatabase(): UseDatabaseReturn {
       for (const ddl of ALL_TABLES) {
         database.run(ddl);
       }
+      runMigrations(database);
 
       _db = database;
       setDb(database);
@@ -229,6 +235,8 @@ export function useDatabase(): UseDatabaseReturn {
     for (const ddl of ALL_TABLES) {
       database.run(ddl);
     }
+    runMigrations(database);
+    seedWelcomeDeck(database);
 
     _db = database;
     setDb(database);

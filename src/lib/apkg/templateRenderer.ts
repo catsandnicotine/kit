@@ -268,6 +268,30 @@ function processTemplate(
     },
   );
 
+  // Step 5.5 — Image Occlusion: inject raw occlusion data as hidden element.
+  // On the front, cloze rendering replaces coordinates with "[...]", losing the
+  // rect data needed to draw masks. We preserve it in a hidden div so the IO
+  // renderer can read it on both sides.
+  if (result.includes('image-occlusion-container')) {
+    // Find a field that contains image-occlusion rect data
+    for (const value of Object.values(fieldMap)) {
+      if (value.includes('image-occlusion:rect:')) {
+        // Extract just the rect specifications, stripping cloze markers and HTML
+        const rectSpecs: string[] = [];
+        const ioRegex = /image-occlusion:rect:left=[\d.]+:top=[\d.]+:width=[\d.]+:height=[\d.]+(?::oi=\d+)?/g;
+        let ioMatch: RegExpExecArray | null;
+        while ((ioMatch = ioRegex.exec(value)) !== null) {
+          rectSpecs.push(ioMatch[0]);
+        }
+        if (rectSpecs.length > 0) {
+          const data = rectSpecs.join('|');
+          result += `<div class="io-data" style="display:none" data-io-rects="${data}"></div>`;
+        }
+        break;
+      }
+    }
+  }
+
   // Step 6 — {{FieldName}} plain substitution
   // At this point all special {{…}} tokens have been consumed.
   // Anything remaining in {{ }} is a field name (or unknown → empty string).

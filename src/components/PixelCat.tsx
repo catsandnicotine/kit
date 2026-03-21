@@ -22,8 +22,8 @@ interface PixelCatProps {
  * @param className - Additional CSS classes.
  */
 export function PixelCat({ size = 64, className = '' }: PixelCatProps) {
-  const { theme } = useTheme();
-  const fill = theme === 'dark' ? '#E5E5E5' : '#171717';
+  const { resolvedTheme } = useTheme();
+  const fill = resolvedTheme === 'dark' ? '#E5E5E5' : '#171717';
 
   // 12x12 pixel grid. 1 = filled, 0 = empty.
   // Cat sitting with pointy ears, small body, tail curling up.

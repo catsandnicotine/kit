@@ -234,6 +234,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
         <CardEditor
           db={db}
           card={editingCard}
+          rewriteHtml={rewriteHtml}
           onSave={handleEditorSave}
           onDelete={handleEditorDelete}
           onDismiss={() => setEditingCard(null)}

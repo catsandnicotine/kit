@@ -2,14 +2,19 @@
  * Anki .apkg file parser.
  *
  * .apkg files are ZIP archives containing:
- *   collection.anki2  / collection.anki21 — SQLite database
+ *   collection.anki21b / collection.anki21 / collection.anki2 — SQLite database
  *   media                                 — JSON mapping: "0" → "filename.jpg"
  *   0, 1, 2 …                             — binary media blobs
+ *
+ * Newer exports (Anki 2.1.50+) include a `meta` protobuf file. When
+ * meta.version >= 1 the database is zstd-compressed; when >= 2 media
+ * blobs are individually zstd-compressed too.
  *
  * This module has ZERO imports from React, UI, or platform code.
  */
 
 import JSZip from 'jszip';
+import { decompress as zstdDecompress } from 'fzstd';
 import initSqlJs from 'sql.js';
 import type { Database } from 'sql.js';
 import type { Result } from '../../types';
@@ -137,6 +142,8 @@ export interface ParsedApkgLazy {
   mediaManifest: MediaManifestEntry[];
   /** The open JSZip instance — needed by {@link extractMediaBatch}. */
   zip: JSZip;
+  /** True when media blobs are individually zstd-compressed (meta version >= 2). */
+  mediaIsCompressed: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,20 +210,7 @@ export async function parseApkg(
       return { success: false, error: `Could not unzip file: ${String(e)}` };
     }
 
-    // 3. Locate the collection database (anki21 takes precedence)
-    const dbEntry =
-      zip.file('collection.anki21') ??
-      zip.file('collection.anki2');
-    if (!dbEntry) {
-      return {
-        success: false,
-        error: 'No collection database found — expected collection.anki2 or collection.anki21',
-      };
-    }
-
-    const dbBytes = await dbEntry.async('uint8array');
-
-    // 4. Load into sql.js
+    // 3. Load sql.js
     let SQL: Awaited<ReturnType<typeof initSqlJs>>;
     try {
       SQL = await initSqlJs({ locateFile: wasmLocator });
@@ -224,38 +218,39 @@ export async function parseApkg(
       return { success: false, error: `Failed to load sql.js WASM: ${String(e)}` };
     }
 
-    const db = new SQL.Database(dbBytes);
+    // 4. Try each collection database in priority order.
+    // collection.anki21b may be pure protobuf (not SQLite) in some Anki
+    // versions, so we gracefully fall back if sql.js can't open it.
+    const candidates = [
+      'collection.anki21b',
+      'collection.anki21',
+      'collection.anki2',
+    ];
+
+    const { db, dbName } = await openFirstDatabase(zip, SQL, candidates);
+    if (!db) {
+      if (dbName === 'stub') {
+        return {
+          success: false,
+          error: 'This deck was exported with a newer Anki format that Kit can\'t read yet. Please re-export from Anki with the "Support older Anki versions" option checked, or use "Anki Deck Package (.apkg)" with compatibility mode.',
+        };
+      }
+      return {
+        success: false,
+        error: 'No readable collection database found in this .apkg file.',
+      };
+    }
+
     try {
-      // 5. Read the col table
-      const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
-      const firstRow = colRows[0];
-      if (!colRows.length || !firstRow || !firstRow.values.length) {
-        return { success: false, error: 'Collection table is empty or corrupt' };
-      }
+      const struct = extractStructure(db, dbName);
+      if (!struct.success) return struct;
+      const { noteTypes, decks } = struct.data;
 
-      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
-
-      let noteTypes: ParsedNoteType[];
-      try {
-        noteTypes = parseNoteTypesJson(modelsJson);
-      } catch (e) {
-        return { success: false, error: `Could not parse note types: ${String(e)}` };
-      }
-
-      let decks: ParsedAnkiDeck[];
-      try {
-        decks = parseDecksJson(decksJson);
-      } catch (e) {
-        return { success: false, error: `Could not parse decks: ${String(e)}` };
-      }
-
-      // 6. Extract notes
+      // 5. Extract notes and cards (same schema in both formats)
       const notes = extractNotes(db);
-
-      // 7. Extract cards
       const cards = extractCards(db);
 
-      // 8. Parse media
+      // 6. Parse media
       const media = await extractMedia(zip);
 
       return { success: true, data: { decks, noteTypes, notes, cards, media } };
@@ -293,17 +288,7 @@ export async function parseApkgLazy(
       return { success: false, error: `Could not unzip file: ${String(e)}` };
     }
 
-    const dbEntry =
-      zip.file('collection.anki21') ?? zip.file('collection.anki2');
-    if (!dbEntry) {
-      return {
-        success: false,
-        error: 'No collection database found — expected collection.anki2 or collection.anki21',
-      };
-    }
-
-    const dbBytes = await dbEntry.async('uint8array');
-
+    // Load sql.js
     let SQL: Awaited<ReturnType<typeof initSqlJs>>;
     try {
       SQL = await initSqlJs({ locateFile: wasmLocator });
@@ -311,29 +296,32 @@ export async function parseApkgLazy(
       return { success: false, error: `Failed to load sql.js WASM: ${String(e)}` };
     }
 
-    const db = new SQL.Database(dbBytes);
+    // Try each collection database in priority order.
+    // collection.anki21b may be pure protobuf (not SQLite) in some versions.
+    const candidates = [
+      'collection.anki21b',
+      'collection.anki21',
+      'collection.anki2',
+    ];
+
+    const { db, dbName } = await openFirstDatabase(zip, SQL, candidates);
+    if (!db) {
+      if (dbName === 'stub') {
+        return {
+          success: false,
+          error: 'This deck was exported with a newer Anki format that Kit can\'t read yet. Please re-export from Anki with the "Support older Anki versions" option checked, or use "Anki Deck Package (.apkg)" with compatibility mode.',
+        };
+      }
+      return {
+        success: false,
+        error: 'No readable collection database found in this .apkg file.',
+      };
+    }
+
     try {
-      const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
-      const firstRow = colRows[0];
-      if (!colRows.length || !firstRow || !firstRow.values.length) {
-        return { success: false, error: 'Collection table is empty or corrupt' };
-      }
-
-      const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
-
-      let noteTypes: ParsedNoteType[];
-      try {
-        noteTypes = parseNoteTypesJson(modelsJson);
-      } catch (e) {
-        return { success: false, error: `Could not parse note types: ${String(e)}` };
-      }
-
-      let decks: ParsedAnkiDeck[];
-      try {
-        decks = parseDecksJson(decksJson);
-      } catch (e) {
-        return { success: false, error: `Could not parse decks: ${String(e)}` };
-      }
+      const struct = extractStructure(db, dbName);
+      if (!struct.success) return struct;
+      const { noteTypes, decks } = struct.data;
 
       const notes = extractNotes(db);
       const cards = extractCards(db);
@@ -341,9 +329,13 @@ export async function parseApkgLazy(
       // Build media manifest without extracting blob data
       const mediaManifest = await buildMediaManifest(zip);
 
+      // Check if media blobs are zstd-compressed (meta version >= 2)
+      const metaVersion = await readMetaVersion(zip);
+      const mediaIsCompressed = metaVersion >= 2;
+
       return {
         success: true,
-        data: { decks, noteTypes, notes, cards, mediaManifest, zip },
+        data: { decks, noteTypes, notes, cards, mediaManifest, zip, mediaIsCompressed },
       };
     } finally {
       db.close();
@@ -359,10 +351,11 @@ export async function parseApkgLazy(
  * Call this in a loop with increasing `startIdx` to stream media into the
  * database without holding the entire media set in memory.
  *
- * @param zip       - The JSZip instance from {@link ParsedApkgLazy}.
- * @param manifest  - The full media manifest from {@link ParsedApkgLazy}.
- * @param startIdx  - Index into `manifest` to start extracting from.
- * @param batchSize - Maximum number of blobs to extract in this batch.
+ * @param zip              - The JSZip instance from {@link ParsedApkgLazy}.
+ * @param manifest         - The full media manifest from {@link ParsedApkgLazy}.
+ * @param startIdx         - Index into `manifest` to start extracting from.
+ * @param batchSize        - Maximum number of blobs to extract in this batch.
+ * @param mediaCompressed  - True if media blobs are zstd-compressed (meta v2+).
  * @returns Array of extracted media (may be shorter than batchSize if
  *          entries are missing or unreadable).
  */
@@ -371,6 +364,7 @@ export async function extractMediaBatch(
   manifest: MediaManifestEntry[],
   startIdx: number,
   batchSize: number,
+  _mediaCompressed = false,
 ): Promise<ParsedMedia[]> {
   const end = Math.min(startIdx + batchSize, manifest.length);
   const results: ParsedMedia[] = [];
@@ -382,7 +376,11 @@ export async function extractMediaBatch(
     if (!file) continue;
 
     try {
-      const data = await file.async('uint8array');
+      let data = await file.async('uint8array');
+      // Always try zstd decompression — some exports compress media blobs
+      // even when the meta version doesn't indicate it.
+      const decompressed = tryZstdDecompress(data);
+      if (decompressed) data = decompressed;
       results.push({
         filename: entry.filename,
         data,
@@ -509,11 +507,467 @@ export function guessMimeType(filename: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// New-schema helpers (Anki 2.1.50+ / collection.anki21b)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the database uses the newer Anki schema with separate
+ * `notetypes`, `fields`, and `templates` tables instead of the legacy
+ * `col.models` JSON blob.
+ *
+ * @param db - Open sql.js Database.
+ * @returns `true` if the `notetypes` table exists.
+ */
+export function hasNewSchema(db: Database): boolean {
+  const result = db.exec(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='notetypes'",
+  );
+  const first = result[0];
+  return !!first && first.values.length > 0;
+}
+
+/**
+ * Decode a single protobuf field 3 (length-delimited string) from a raw
+ * `NoteTypeConfig` protobuf blob. Field 3 contains the CSS stylesheet.
+ *
+ * Protobuf wire format refresher:
+ *   tag byte = (fieldNumber << 3) | wireType
+ *   wireType 2 = length-delimited (varint length + bytes)
+ *
+ * @param blob - Raw protobuf bytes from the notetypes.config column.
+ * @returns The CSS string, or empty string if field 3 is absent.
+ */
+export function extractCssFromProtobuf(blob: Uint8Array): string {
+  let offset = 0;
+
+  /** Read a varint at the current offset, advancing `offset`. */
+  const readVarint = (): number => {
+    let value = 0;
+    let shift = 0;
+    while (offset < blob.length) {
+      const byte = blob[offset]!;
+      offset++;
+      value |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value;
+      shift += 7;
+    }
+    return value;
+  };
+
+  while (offset < blob.length) {
+    const tag = readVarint();
+    const fieldNumber = tag >>> 3;
+    const wireType = tag & 0x07;
+
+    if (wireType === 2) {
+      // Length-delimited
+      const length = readVarint();
+      if (fieldNumber === 3) {
+        const cssBytes = blob.slice(offset, offset + length);
+        return new TextDecoder().decode(cssBytes);
+      }
+      offset += length;
+    } else if (wireType === 0) {
+      // Varint — consume it
+      readVarint();
+    } else if (wireType === 5) {
+      // 32-bit fixed
+      offset += 4;
+    } else if (wireType === 1) {
+      // 64-bit fixed
+      offset += 8;
+    } else {
+      // Unknown wire type — bail out
+      break;
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Extract note types from the new Anki schema (`notetypes`, `fields`,
+ * `templates` tables).
+ *
+ * @param db - Open sql.js Database using the new schema.
+ * @returns Array of ParsedNoteType.
+ */
+export function extractNoteTypesNewSchema(db: Database): ParsedNoteType[] {
+  // --- note types ---
+  const ntRows = db.exec('SELECT id, name, config FROM notetypes');
+  const ntFirst = ntRows[0];
+  if (!ntFirst || ntFirst.values.length === 0) return [];
+
+  /** Map from notetype id -> partial ParsedNoteType (fields/templates filled below) */
+  const noteTypeMap = new Map<string, ParsedNoteType>();
+  for (const row of ntFirst.values as Row[]) {
+    const id = String(row[0]);
+    const name = String(row[1] ?? '');
+    const configBlob = row[2];
+    const css =
+      configBlob instanceof Uint8Array
+        ? extractCssFromProtobuf(configBlob)
+        : '';
+    noteTypeMap.set(id, { id, name, fields: [], templates: [], css });
+  }
+
+  // --- fields ---
+  const fldRows = db.exec('SELECT ntid, ord, name FROM fields ORDER BY ntid, ord');
+  const fldFirst = fldRows[0];
+  if (fldFirst) {
+    for (const row of fldFirst.values as Row[]) {
+      const ntid = String(row[0]);
+      const fieldName = String(row[2] ?? '');
+      const nt = noteTypeMap.get(ntid);
+      if (nt) {
+        nt.fields.push(fieldName);
+      }
+    }
+  }
+
+  // --- templates ---
+  // In some Anki versions qfmt/afmt are TEXT columns; in others they're
+  // inside the protobuf config blob. Try with columns first, fall back
+  // to config-only.
+  const hasQfmtColumn = tableHasColumn(db, 'templates', 'qfmt');
+
+  if (hasQfmtColumn) {
+    const tmplRows = db.exec(
+      'SELECT ntid, ord, name, qfmt, afmt FROM templates ORDER BY ntid, ord',
+    );
+    const tmplFirst = tmplRows[0];
+    if (tmplFirst) {
+      for (const row of tmplFirst.values as Row[]) {
+        const ntid = String(row[0]);
+        const nt = noteTypeMap.get(ntid);
+        if (nt) {
+          nt.templates.push({
+            name: String(row[2] ?? ''),
+            ord: Number(row[1] ?? 0),
+            qfmt: String(row[3] ?? ''),
+            afmt: String(row[4] ?? ''),
+          });
+        }
+      }
+    }
+  } else {
+    // qfmt/afmt are inside the protobuf config blob
+    const tmplRows = db.exec(
+      'SELECT ntid, ord, name, config FROM templates ORDER BY ntid, ord',
+    );
+    const tmplFirst = tmplRows[0];
+    if (tmplFirst) {
+      for (const row of tmplFirst.values as Row[]) {
+        const ntid = String(row[0]);
+        const nt = noteTypeMap.get(ntid);
+        if (nt) {
+          const configBlob = row[3];
+          const { qfmt, afmt } =
+            configBlob instanceof Uint8Array
+              ? extractTemplateFromProtobuf(configBlob)
+              : { qfmt: '', afmt: '' };
+          nt.templates.push({
+            name: String(row[2] ?? ''),
+            ord: Number(row[1] ?? 0),
+            qfmt,
+            afmt,
+          });
+        }
+      }
+    }
+  }
+
+  return Array.from(noteTypeMap.values());
+}
+
+/**
+ * Extract decks from the new Anki schema (`decks` table with `id`, `name`,
+ * `common` columns).
+ *
+ * @param db - Open sql.js Database using the new schema.
+ * @returns Array of ParsedAnkiDeck.
+ */
+export function extractDecksNewSchema(db: Database): ParsedAnkiDeck[] {
+  const rows = db.exec('SELECT id, name FROM decks');
+  const first = rows[0];
+  if (!first || first.values.length === 0) return [];
+
+  return (first.values as Row[]).map((row) => ({
+    id: String(row[0]),
+    name: String(row[1] ?? ''),
+    description: '',
+  }));
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 /** Anki SqlValue row type (columns are string-keyed). */
 type Row = (number | string | null | Uint8Array | bigint)[];
+
+/**
+ * Try to open the first valid SQLite database from a list of ZIP entry names.
+ *
+ * Some Anki versions write `collection.anki21b` as pure protobuf (not SQLite).
+ * This function gracefully skips non-SQLite entries and returns the first one
+ * that opens successfully.
+ *
+ * @param zip        - Loaded JSZip instance.
+ * @param SQL        - Initialized sql.js module.
+ * @param candidates - Ordered list of ZIP entry names to try.
+ * @returns The opened Database and entry name, or null db if none worked.
+ */
+async function openFirstDatabase(
+  zip: JSZip,
+  SQL: Awaited<ReturnType<typeof initSqlJs>>,
+  candidates: string[],
+): Promise<{ db: Database | null; dbName: string }> {
+  let hadAnki21b = false;
+
+  for (const name of candidates) {
+    const entry = zip.file(name);
+    if (!entry) continue;
+
+    if (name === 'collection.anki21b') hadAnki21b = true;
+
+    try {
+      let bytes = await entry.async('uint8array');
+
+      // Try opening as-is first; if that fails and this is anki21b,
+      // try zstd decompression (newer Anki exports compress the DB).
+      let db: Database;
+      try {
+        db = new SQL.Database(bytes);
+        db.exec('SELECT 1');
+      } catch {
+        // Possibly zstd-compressed — try decompressing
+        const decompressed = tryZstdDecompress(bytes);
+        if (!decompressed) throw new Error('not a database');
+        bytes = decompressed;
+        db = new SQL.Database(bytes);
+        db.exec('SELECT 1');
+      }
+
+      // If we skipped anki21b and fell back to anki2, check for stub DB.
+      // Newer Anki exports include a fake collection.anki2 with a single
+      // "please update" note — the real data is in anki21b (protobuf).
+      if (hadAnki21b && name !== 'collection.anki21b' && isStubDatabase(db)) {
+        db.close();
+        return { db: null, dbName: 'stub' };
+      }
+
+      return { db, dbName: name };
+    } catch {
+      // Not a valid SQLite file even after decompression — try next candidate
+    }
+  }
+  return { db: null, dbName: '' };
+}
+
+/**
+ * Check whether a table has a specific column.
+ *
+ * @param db    - Open sql.js Database.
+ * @param table - Table name.
+ * @param col   - Column name to check for.
+ * @returns True if the column exists.
+ */
+function tableHasColumn(db: Database, table: string, col: string): boolean {
+  try {
+    const result = db.exec(`PRAGMA table_info('${table}')`);
+    const first = result[0];
+    if (!first) return false;
+    const nameIdx = first.columns.indexOf('name');
+    return first.values.some((row) => String(row[nameIdx]) === col);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract qfmt and afmt from a CardTemplateConfig protobuf blob.
+ *
+ * Protobuf schema (from Anki source):
+ *   message CardTemplateConfig {
+ *     string qfmt = 1;  // tag 0x0a
+ *     string afmt = 2;  // tag 0x12
+ *     ...
+ *   }
+ *
+ * @param blob - Raw protobuf bytes from templates.config column.
+ * @returns The question and answer format strings.
+ */
+function extractTemplateFromProtobuf(blob: Uint8Array): { qfmt: string; afmt: string } {
+  let offset = 0;
+  let qfmt = '';
+  let afmt = '';
+
+  const readVarint = (): number => {
+    let value = 0;
+    let shift = 0;
+    while (offset < blob.length) {
+      const byte = blob[offset]!;
+      offset++;
+      value |= (byte & 0x7f) << shift;
+      if ((byte & 0x80) === 0) return value;
+      shift += 7;
+    }
+    return value;
+  };
+
+  while (offset < blob.length) {
+    const tag = readVarint();
+    const fieldNumber = tag >>> 3;
+    const wireType = tag & 0x07;
+
+    if (wireType === 2) {
+      const length = readVarint();
+      if (fieldNumber === 1) {
+        qfmt = new TextDecoder().decode(blob.slice(offset, offset + length));
+      } else if (fieldNumber === 2) {
+        afmt = new TextDecoder().decode(blob.slice(offset, offset + length));
+      }
+      offset += length;
+    } else if (wireType === 0) {
+      readVarint();
+    } else if (wireType === 5) {
+      offset += 4;
+    } else if (wireType === 1) {
+      offset += 8;
+    } else {
+      break;
+    }
+  }
+
+  return { qfmt, afmt };
+}
+
+/**
+ * Attempt zstd decompression of a buffer.
+ *
+ * @param data - Possibly zstd-compressed bytes.
+ * @returns Decompressed bytes, or null if decompression fails.
+ */
+function tryZstdDecompress(data: Uint8Array): Uint8Array | null {
+  // Zstd magic number: 0x28 0xB5 0x2F 0xFD
+  if (data.length < 4 || data[0] !== 0x28 || data[1] !== 0xB5 || data[2] !== 0x2F || data[3] !== 0xFD) {
+    return null;
+  }
+  try {
+    return zstdDecompress(data);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the `meta` protobuf file from the ZIP to determine the package version.
+ *
+ * Anki's `PackageMeta` protobuf:
+ *   message PackageMeta { uint32 version = 1; }
+ *
+ * - version 0: no compression
+ * - version 1: database is zstd-compressed
+ * - version 2: database AND media blobs are zstd-compressed
+ *
+ * @param zip - Loaded JSZip instance.
+ * @returns The package version number, or 0 if no meta file.
+ */
+async function readMetaVersion(zip: JSZip): Promise<number> {
+  const metaEntry = zip.file('meta');
+  if (!metaEntry) return 0;
+
+  try {
+    const bytes = await metaEntry.async('uint8array');
+    if (bytes.length === 0) return 0;
+
+    // Parse protobuf field 1 (varint): tag = (1 << 3 | 0) = 0x08
+    if (bytes[0] === 0x08 && bytes.length >= 2) {
+      return bytes[1]!;
+    }
+    return 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Detect Anki's stub "please update" database.
+ *
+ * Newer Anki exports include a fake collection.anki2 containing a single
+ * note whose content tells users to update Anki. We detect this by checking
+ * if the notes table has exactly one row with "update" and "Anki" in the fields.
+ *
+ * @param db - Open sql.js Database.
+ * @returns True if this is a stub placeholder database.
+ */
+function isStubDatabase(db: Database): boolean {
+  try {
+    const result = db.exec('SELECT flds FROM notes');
+    const first = result[0];
+    if (!first || first.values.length !== 1) return false;
+    const row = first.values[0] as Row;
+    const flds = String(row[0] ?? '');
+    return flds.includes('update') && flds.includes('Anki');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extract note types and decks from a collection database, auto-detecting
+ * whether it uses the new schema (separate tables) or legacy schema (JSON in col).
+ *
+ * @param db     - Open sql.js Database.
+ * @param dbName - ZIP entry name (used for diagnostics only).
+ * @returns Note types and decks, or an error.
+ */
+function extractStructure(
+  db: Database,
+  _dbName: string,
+): Result<{ noteTypes: ParsedNoteType[]; decks: ParsedAnkiDeck[] }> {
+  if (hasNewSchema(db)) {
+    // New schema (Anki 2.1.50+): notetypes/fields/templates tables
+    let noteTypes: ParsedNoteType[];
+    let decks: ParsedAnkiDeck[];
+    try {
+      noteTypes = extractNoteTypesNewSchema(db);
+    } catch (e) {
+      return { success: false, error: `Could not parse note types: ${String(e)}` };
+    }
+    try {
+      decks = extractDecksNewSchema(db);
+    } catch (e) {
+      return { success: false, error: `Could not parse decks: ${String(e)}` };
+    }
+    return { success: true, data: { noteTypes, decks } };
+  }
+
+  // Legacy schema: col.models / col.decks JSON blobs
+  const colRows = db.exec('SELECT models, decks FROM col LIMIT 1');
+  const firstRow = colRows[0];
+  if (!colRows.length || !firstRow || !firstRow.values.length) {
+    return { success: false, error: 'Collection table is empty or corrupt' };
+  }
+
+  const [modelsJson, decksJson] = firstRow.values[0] as [string, string];
+
+  let noteTypes: ParsedNoteType[];
+  let decks: ParsedAnkiDeck[];
+  try {
+    noteTypes = parseNoteTypesJson(modelsJson);
+  } catch (e) {
+    return { success: false, error: `Could not parse note types: ${String(e)}` };
+  }
+  try {
+    decks = parseDecksJson(decksJson);
+  } catch (e) {
+    return { success: false, error: `Could not parse decks: ${String(e)}` };
+  }
+
+  return { success: true, data: { noteTypes, decks } };
+}
 
 /**
  * Build a lightweight media manifest from the ZIP's `media` JSON file.
@@ -524,23 +978,166 @@ type Row = (number | string | null | Uint8Array | bigint)[];
  */
 async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
   const mediaEntry = zip.file('media');
-  if (!mediaEntry) return [];
+  if (mediaEntry) {
+    // Get the raw bytes first — needed for both JSON and protobuf paths
+    const rawBytes = await mediaEntry.async('uint8array');
 
-  try {
-    const raw = await mediaEntry.async('text');
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return [];
+    // Decompress if zstd-compressed
+    const bytes = tryZstdDecompress(rawBytes) ?? rawBytes;
+
+    // Try JSON manifest first (older Anki format: {"0": "filename.png", ...})
+    try {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+        const mapping = parsed as Record<string, string>;
+        const entries = Object.entries(mapping).map(([zipKey, filename]) => ({
+          zipKey,
+          filename,
+          mimeType: guessMimeType(filename),
+        }));
+        if (entries.length > 0) return entries;
+      }
+    } catch {
+      // Not JSON — try protobuf
     }
-    const mapping = parsed as Record<string, string>;
-    return Object.entries(mapping).map(([zipKey, filename]) => ({
-      zipKey,
-      filename,
-      mimeType: guessMimeType(filename),
-    }));
-  } catch {
-    return [];
+
+    // Try protobuf manifest (newer Anki: repeated MediaEntry messages)
+    // message MediaEntries { repeated MediaEntry entries = 1; }
+    // message MediaEntry { string name = 1; uint64 size = 2; bytes sha1 = 3; }
+    // Zip keys are sequential indices: "0", "1", "2", ...
+    try {
+      const entries = parseMediaProtobuf(bytes);
+      if (entries.length > 0) return entries;
+    } catch {
+      // Fall through to ZIP scan
+    }
   }
+
+  // Fallback: scan the ZIP for numbered files (0, 1, 2, …) that aren't
+  // known structural files. This handles cases where the media manifest
+  // is missing or empty but media blobs are present.
+  const results: MediaManifestEntry[] = [];
+  const skipNames = new Set([
+    'media', 'meta', 'collection.anki2', 'collection.anki21',
+    'collection.anki21b',
+  ]);
+  zip.forEach((relativePath, file) => {
+    if (file.dir || skipNames.has(relativePath)) return;
+    if (/^\d+$/.test(relativePath)) {
+      results.push({
+        zipKey: relativePath,
+        filename: relativePath,
+        mimeType: 'application/octet-stream',
+      });
+    }
+  });
+  return results;
+}
+
+/**
+ * Parse the protobuf-format media manifest used by newer Anki exports.
+ *
+ * Wire format:
+ *   repeated field 1 (MediaEntry, length-delimited):
+ *     field 1: string name (the real filename)
+ *     field 2: varint size
+ *     field 3: bytes sha1 hash
+ *
+ * The zip key for entry N is simply its 0-based index as a string ("0", "1", ...).
+ *
+ * @param data - Raw (decompressed) protobuf bytes.
+ * @returns Array of manifest entries.
+ */
+function parseMediaProtobuf(data: Uint8Array): MediaManifestEntry[] {
+  const entries: MediaManifestEntry[] = [];
+  let pos = 0;
+  let index = 0;
+
+  while (pos < data.length) {
+    // Read tag byte
+    const tag = data[pos]!;
+    pos++;
+    const fieldNum = tag >> 3;
+    const wireType = tag & 0x07;
+
+    if (wireType === 2) {
+      // Length-delimited: read varint length, then bytes
+      let length = 0;
+      let shift = 0;
+      while (pos < data.length) {
+        const b = data[pos]!;
+        pos++;
+        length |= (b & 0x7f) << shift;
+        shift += 7;
+        if (!(b & 0x80)) break;
+      }
+      const sub = data.subarray(pos, pos + length);
+      pos += length;
+
+      if (fieldNum === 1) {
+        // This is a MediaEntry sub-message — extract the filename
+        const filename = parseMediaEntryFilename(sub);
+        if (filename) {
+          entries.push({
+            zipKey: String(index),
+            filename,
+            mimeType: guessMimeType(filename),
+          });
+        }
+        index++;
+      }
+    } else if (wireType === 0) {
+      // Varint: skip
+      while (pos < data.length && (data[pos]! & 0x80)) pos++;
+      pos++;
+    } else {
+      // Unknown wire type — bail
+      break;
+    }
+  }
+
+  return entries;
+}
+
+/**
+ * Extract the filename (field 1) from a MediaEntry protobuf sub-message.
+ *
+ * @param sub - Raw bytes of the sub-message.
+ * @returns The filename string, or null if not found.
+ */
+function parseMediaEntryFilename(sub: Uint8Array): string | null {
+  let pos = 0;
+  while (pos < sub.length) {
+    const tag = sub[pos]!;
+    pos++;
+    const fieldNum = tag >> 3;
+    const wireType = tag & 0x07;
+
+    if (wireType === 2) {
+      let length = 0;
+      let shift = 0;
+      while (pos < sub.length) {
+        const b = sub[pos]!;
+        pos++;
+        length |= (b & 0x7f) << shift;
+        shift += 7;
+        if (!(b & 0x80)) break;
+      }
+      const val = sub.subarray(pos, pos + length);
+      pos += length;
+
+      if (fieldNum === 1) {
+        return new TextDecoder().decode(val);
+      }
+    } else if (wireType === 0) {
+      while (pos < sub.length && (sub[pos]! & 0x80)) pos++;
+      pos++;
+    } else {
+      break;
+    }
+  }
+  return null;
 }
 
 /**

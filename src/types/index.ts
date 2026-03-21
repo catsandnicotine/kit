@@ -112,7 +112,7 @@ export interface StudySession {
   cardsRemaining: number;
 }
 
-export type Theme = 'light' | 'dark';
+export type Theme = 'light' | 'dark' | 'system';
 
 /** Output produced by the FSRS scheduling functions. */
 export interface FSRSOutput {
