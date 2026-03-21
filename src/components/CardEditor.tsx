@@ -3,13 +3,13 @@
  *
  * Features:
  *  - Contenteditable rich fields for front/back with B/I/U toolbar.
+ *  - Media inventory showing images and audio referenced by the card.
  *  - Tag chips with tap-to-remove and input-to-add.
- *  - "Add Image" button: Capacitor photo picker on native, file input in browser.
  *  - "Delete Card" with a confirmation dialog.
  *  - Swipe-down gesture or Cancel button to dismiss.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { useCardEditor } from '../hooks/useCardEditor';
@@ -21,12 +21,76 @@ import { useCardEditor } from '../hooks/useCardEditor';
 interface CardEditorProps {
   db: Database | null;
   card: Card;
+  /** Rewrite media references in HTML to blob: URLs for display. */
+  rewriteHtml?: (html: string) => string;
   /** Called after a successful save with the updated card. */
   onSave: (updated: Card) => void;
   /** Called after a successful delete. */
   onDelete: () => void;
   /** Called when the editor is dismissed without saving. */
   onDismiss: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — extract media references from HTML
+// ---------------------------------------------------------------------------
+
+interface MediaRef {
+  filename: string;
+  type: 'image' | 'sound';
+}
+
+/** Extract all media references from card HTML. */
+function extractMediaRefs(html: string): MediaRef[] {
+  const refs: MediaRef[] = [];
+  const seen = new Set<string>();
+
+  // Images: src="...", href="...", xlink:href="..."
+  const imgRegex = /\b(?:src|(?:xlink:)?href)=["']([^"']+)["']/g;
+  let m: RegExpExecArray | null;
+  while ((m = imgRegex.exec(html)) !== null) {
+    const src = m[1];
+    if (!src) continue;
+    if (src.startsWith('data:') || src.startsWith('http') || src.startsWith('blob:') || src.startsWith('#')) continue;
+    if (!seen.has(src)) {
+      seen.add(src);
+      refs.push({ filename: src, type: 'image' });
+    }
+  }
+
+  // Sounds: [sound:filename]
+  const sndRegex = /\[sound:([^\]]+)\]/g;
+  while ((m = sndRegex.exec(html)) !== null) {
+    if (m[1] && !seen.has(m[1])) {
+      seen.add(m[1]);
+      refs.push({ filename: m[1], type: 'sound' });
+    }
+  }
+
+  return refs;
+}
+
+/** Strip [sound:...] tags from HTML (shown in dedicated audio section). */
+function stripSounds(html: string): string {
+  return html.replace(/\[sound:[^\]]+\]/g, '');
+}
+
+/**
+ * Reverse-map blob: URLs back to original filenames.
+ * After editing in contenteditable, blob URLs need to be converted back
+ * so the card HTML stores portable filenames, not ephemeral blob refs.
+ */
+function unrewriteHtml(
+  html: string,
+  reverseMap: ReadonlyMap<string, string>,
+): string {
+  if (reverseMap.size === 0) return html;
+  let result = html;
+  for (const [blobUrl, filename] of reverseMap) {
+    // Replace all occurrences of this blob URL with the original filename
+    result = result.split(blobUrl).join(filename);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,17 +105,14 @@ interface RichFieldProps {
 }
 
 function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) {
-  // Set initial HTML once on mount.
   useEffect(() => {
     if (contentRef.current && contentRef.current.innerHTML !== initialHtml) {
       contentRef.current.innerHTML = initialHtml;
     }
-    // Only on mount / when initialHtml identity changes (new card).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialHtml]);
 
   const execCommand = useCallback((cmd: string) => {
-    // Focus the contenteditable first so execCommand targets it.
     contentRef.current?.focus();
     document.execCommand(cmd, false);
   }, [contentRef]);
@@ -61,7 +122,6 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
       <label className="block text-xs font-medium text-text-muted mb-1">
         {label}
       </label>
-      {/* Toolbar */}
       <div className="flex gap-1 mb-1">
         <button
           type="button"
@@ -88,7 +148,6 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
           U
         </button>
       </div>
-      {/* Editable area */}
       <div
         ref={contentRef}
         contentEditable
@@ -100,10 +159,96 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
 }
 
 // ---------------------------------------------------------------------------
+// MediaInventory — read-only list of referenced media files
+// ---------------------------------------------------------------------------
+
+function MediaInventory({
+  refs,
+  side,
+  rewriteHtml,
+}: {
+  refs: MediaRef[];
+  side: string;
+  rewriteHtml: ((html: string) => string) | undefined;
+}) {
+  const images = refs.filter(r => r.type === 'image');
+  const sounds = refs.filter(r => r.type === 'sound');
+
+  if (images.length === 0 && sounds.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {/* Images */}
+      {images.length > 0 && (
+        <div>
+          <label className="block text-xs font-medium text-text-muted mb-1">
+            {side} Images ({images.length})
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {images.map((img, i) => {
+              let src = img.filename;
+              if (rewriteHtml) {
+                const resolved = rewriteHtml(`<img src="${img.filename}">`);
+                const match = /src="([^"]+)"/.exec(resolved);
+                if (match?.[1]) src = match[1];
+              }
+              return (
+                <div key={`${img.filename}-${i}`}>
+                  <img
+                    src={src}
+                    alt={img.filename}
+                    className="w-16 h-16 object-cover rounded-lg border border-border-light dark:border-border-dark"
+                  />
+                  <p className="text-[10px] text-text-muted truncate w-16 mt-0.5" title={img.filename}>
+                    {img.filename}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Audio */}
+      {sounds.length > 0 && (
+        <div>
+          <label className="block text-xs font-medium text-text-muted mb-1">
+            {side} Audio ({sounds.length})
+          </label>
+          <div className="space-y-1.5">
+            {sounds.map((snd, i) => {
+              let audioSrc: string | null = null;
+              if (rewriteHtml) {
+                const resolved = rewriteHtml(`[sound:${snd.filename}]`);
+                const match = /src="([^"]+)"/.exec(resolved);
+                if (match?.[1]) audioSrc = match[1];
+              }
+              return (
+                <div
+                  key={`${snd.filename}-${i}`}
+                  className="p-2 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg"
+                >
+                  <p className="text-xs text-text-light dark:text-text-dark truncate">
+                    {snd.filename}
+                  </p>
+                  {audioSrc && (
+                    <audio src={audioSrc} controls preload="auto" className="w-full mt-1 h-8" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditorProps) {
+export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss }: CardEditorProps) {
   const editor = useCardEditor(db, card);
   const [tagInput, setTagInput] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -112,8 +257,50 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
   const frontRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  /** Track which field ('front' | 'back') should receive the inserted image. */
   const imageTargetRef = useRef<'front' | 'back'>('back');
+
+  // ── Media references ────────────────────────────────────────────────────
+
+  const frontRefs = useMemo(() => extractMediaRefs(card.front), [card.front]);
+  const backRefs = useMemo(() => extractMediaRefs(card.back), [card.back]);
+
+  // Build a reverse map: blob URL → original filename, so we can undo
+  // the rewriting when saving the HTML back to the database.
+  const reverseMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!rewriteHtml) return map;
+    const allRefs = [...frontRefs, ...backRefs];
+    for (const ref of allRefs) {
+      if (ref.type === 'image') {
+        const resolved = rewriteHtml(`<img src="${ref.filename}">`);
+        const match = /src="([^"]+)"/.exec(resolved);
+        if (match?.[1] && match[1] !== ref.filename) {
+          map.set(match[1], ref.filename);
+        }
+      }
+      // Also handle href= for SVG <image> elements
+      if (ref.type === 'image') {
+        const resolved = rewriteHtml(`<image href="${ref.filename}">`);
+        const match = /href="([^"]+)"/.exec(resolved);
+        if (match?.[1] && match[1] !== ref.filename) {
+          map.set(match[1], ref.filename);
+        }
+      }
+    }
+    return map;
+  }, [rewriteHtml, frontRefs, backRefs]);
+
+  // Prepare display HTML: rewrite media refs for display, strip [sound:] tags
+  // (sounds are shown in the inventory instead).
+  const displayFrontHtml = useMemo(() => {
+    let html = stripSounds(card.front);
+    return rewriteHtml ? rewriteHtml(html) : html;
+  }, [card.front, rewriteHtml]);
+
+  const displayBackHtml = useMemo(() => {
+    let html = stripSounds(card.back);
+    return rewriteHtml ? rewriteHtml(html) : html;
+  }, [card.back, rewriteHtml]);
 
   // ── Swipe-down dismiss ──────────────────────────────────────────────────
   const startYRef = useRef<number | null>(null);
@@ -142,22 +329,6 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
 
   // ── Image insertion ─────────────────────────────────────────────────────
 
-  /** Insert an <img> tag into the currently-focused contenteditable field. */
-  const insertImageDataUrl = useCallback(
-    (dataUrl: string) => {
-      const target = imageTargetRef.current === 'front' ? frontRef.current : backRef.current;
-      if (!target) return;
-      target.focus();
-      // Insert at end
-      const img = document.createElement('img');
-      img.src = dataUrl;
-      img.style.maxWidth = '100%';
-      target.appendChild(img);
-      editor.markContentDirty();
-    },
-    [editor],
-  );
-
   const handleImageFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -167,20 +338,24 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
       const reader = new FileReader();
       reader.onload = () => {
         if (typeof reader.result === 'string') {
-          insertImageDataUrl(reader.result);
+          const target = imageTargetRef.current === 'front' ? frontRef.current : backRef.current;
+          if (!target) return;
+          target.focus();
+          const img = document.createElement('img');
+          img.src = reader.result;
+          img.style.maxWidth = '100%';
+          target.appendChild(img);
+          editor.markContentDirty();
         }
       };
       reader.readAsDataURL(file);
     },
-    [insertImageDataUrl],
+    [editor],
   );
 
   const handleAddImage = useCallback(
-    (target: 'front' | 'back') => {
-      imageTargetRef.current = target;
-      // Uses a standard file input. On native Capacitor builds, this opens the
-      // system photo picker. A dedicated @capacitor/camera integration can be
-      // added later when the plugin is installed.
+    (side: 'front' | 'back') => {
+      imageTargetRef.current = side;
       imageInputRef.current?.click();
     },
     [],
@@ -188,15 +363,30 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
 
   // ── Handlers ────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
-    const front = frontRef.current?.innerHTML ?? card.front;
-    const back = backRef.current?.innerHTML ?? card.back;
+    let front = frontRef.current?.innerHTML ?? card.front;
+    let back = backRef.current?.innerHTML ?? card.back;
+
+    // Convert blob: URLs back to original filenames for storage
+    front = unrewriteHtml(front, reverseMap);
+    back = unrewriteHtml(back, reverseMap);
+
+    // Re-inject [sound:] tags that were stripped for display
+    const frontSounds = frontRefs.filter(r => r.type === 'sound');
+    const backSounds = backRefs.filter(r => r.type === 'sound');
+    if (frontSounds.length > 0) {
+      front += frontSounds.map(s => `[sound:${s.filename}]`).join('');
+    }
+    if (backSounds.length > 0) {
+      back += backSounds.map(s => `[sound:${s.filename}]`).join('');
+    }
+
     const result = editor.save(front, back);
     if (result.success) {
       onSave(result.data);
     } else {
       setError(result.error);
     }
-  }, [editor, card.front, card.back, onSave]);
+  }, [editor, card.front, card.back, reverseMap, frontRefs, backRefs, onSave]);
 
   const handleDelete = useCallback(() => {
     const result = editor.remove();
@@ -232,7 +422,7 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
         onClick={onDismiss}
       />
 
-      {/* Hidden file input for image picker fallback */}
+      {/* Hidden file input for image picker */}
       <input
         ref={imageInputRef}
         type="file"
@@ -290,7 +480,7 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
           {/* Front */}
           <RichField
             label="Front"
-            initialHtml={card.front}
+            initialHtml={displayFrontHtml}
             contentRef={frontRef}
             onInput={editor.markContentDirty}
           />
@@ -299,13 +489,16 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
             onClick={() => handleAddImage('front')}
             className="w-full py-1.5 text-xs text-text-muted border border-dashed border-border-light dark:border-border-dark rounded-lg"
           >
-            Add Image to Front…
+            Add Image to Front...
           </button>
+
+          {/* Front Media Inventory */}
+          <MediaInventory refs={frontRefs} side="Front" rewriteHtml={rewriteHtml} />
 
           {/* Back */}
           <RichField
             label="Back"
-            initialHtml={card.back}
+            initialHtml={displayBackHtml}
             contentRef={backRef}
             onInput={editor.markContentDirty}
           />
@@ -314,8 +507,11 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
             onClick={() => handleAddImage('back')}
             className="w-full py-1.5 text-xs text-text-muted border border-dashed border-border-light dark:border-border-dark rounded-lg"
           >
-            Add Image to Back…
+            Add Image to Back...
           </button>
+
+          {/* Back Media Inventory */}
+          <MediaInventory refs={backRefs} side="Back" rewriteHtml={rewriteHtml} />
 
           {/* Tags */}
           <div>
@@ -339,7 +535,7 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
                 value={tagInput}
                 onChange={e => setTagInput(e.target.value)}
                 onKeyDown={handleTagKeyDown}
-                placeholder="Add tag…"
+                placeholder="Add tag..."
                 className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
               />
               <button
@@ -377,8 +573,6 @@ export function CardEditor({ db, card, onSave, onDelete, onDismiss }: CardEditor
             </div>
           )}
         </div>
-
-        {/* Bottom safe area built into panel padding */}
       </div>
     </>
   );

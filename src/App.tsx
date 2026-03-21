@@ -8,6 +8,7 @@ import Study from './pages/Study';
 import Browse from './pages/Browse';
 import Settings from './pages/Settings';
 import DeckStats from './pages/DeckStats';
+import DeckSettings from './pages/DeckSettings';
 
 // ---------------------------------------------------------------------------
 // Route state
@@ -18,6 +19,7 @@ type Route =
   | { page: 'study'; deckId: string; deckName: string }
   | { page: 'browse'; deckId: string; deckName: string }
   | { page: 'stats'; deckId: string; deckName: string }
+  | { page: 'deck-settings'; deckId: string; deckName: string }
   | { page: 'settings' };
 
 // ---------------------------------------------------------------------------
@@ -174,6 +176,10 @@ function AppInner() {
     setRoute({ page: 'stats', deckId, deckName });
   }, []);
 
+  const goDeckSettings = useCallback((deckId: string, deckName: string) => {
+    setRoute({ page: 'deck-settings', deckId, deckName });
+  }, []);
+
   const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
 
   // ── Onboarding (first launch) ────────────────────────────────────────
@@ -226,6 +232,17 @@ function AppInner() {
     );
   }
 
+  if (route.page === 'deck-settings') {
+    return (
+      <DeckSettings
+        db={db}
+        deckId={route.deckId}
+        deckName={route.deckName}
+        onBack={goHome}
+      />
+    );
+  }
+
   if (route.page === 'settings') {
     return <Settings db={db} onBack={goHome} />;
   }
@@ -238,6 +255,7 @@ function AppInner() {
       onStudy={goStudy}
       onBrowse={goBrowse}
       onStats={goStats}
+      onDeckSettings={goDeckSettings}
       onSettings={goSettings}
     />
   );

@@ -16,6 +16,19 @@
 
   body {
     overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Allow selection inside card content and editable fields */
+  .card-content, .rich-field, input, textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Prevent iOS from zooming into inputs (requires font-size >= 16px) */
+  input, textarea, select {
+    font-size: 16px;
   }
 
   /* Theme-aware root for overscroll and minimal UI consistency */
@@ -53,10 +66,51 @@
     margin: 0.5rem auto;
   }
 
+  /* Dark mode: override Anki's hardcoded dark-on-dark text colours */
+  .dark .card-content {
+    color: #E5E5E5 !important;
+  }
+  .dark .card-content b,
+  .dark .card-content strong,
+  .dark .card-content span,
+  .dark .card-content p,
+  .dark .card-content div,
+  .dark .card-content td,
+  .dark .card-content th,
+  .dark .card-content li,
+  .dark .card-content h1,
+  .dark .card-content h2,
+  .dark .card-content h3,
+  .dark .card-content h4 {
+    color: inherit !important;
+  }
+  .dark .card-content table {
+    border-color: #404040 !important;
+  }
+  .dark .card-content td,
+  .dark .card-content th {
+    border-color: #404040 !important;
+  }
+
   /* Cloze highlight */
   .card-content .cloze {
     color: #3b82f6;
     font-weight: 600;
+  }
+
+  /* Image Occlusion: make sure the container and image work with overlays */
+  .card-content #image-occlusion-container {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    font-size: 0;
+    line-height: 0;
+    overflow: hidden;
+  }
+  .card-content #image-occlusion-container img {
+    display: block;
+    width: 100%;
+    height: auto;
   }
 
   /* Audio controls: compact, centered, full-width */
@@ -127,6 +181,44 @@
   }
   .dark .browse-card-fade {
     background: linear-gradient(transparent, #1a1a1a);
+  }
+
+  /* Cat bounce animation (header tap) */
+  @keyframes cat-bounce {
+    0%   { transform: scale(1) translateY(0); }
+    30%  { transform: scale(1.15) translateY(-3px); }
+    60%  { transform: scale(0.95) translateY(1px); }
+    100% { transform: scale(1) translateY(0); }
+  }
+  .cat-bounce {
+    animation: cat-bounce 0.4s ease-out;
+  }
+
+  /* MiniCat 2-frame walk animation — alternates between frame1 and frame2 */
+  .minicat-walking .minicat-frame1 {
+    animation: minicat-show 0.4s steps(1) infinite;
+  }
+  .minicat-walking .minicat-frame2 {
+    animation: minicat-hide 0.4s steps(1) infinite;
+  }
+  @keyframes minicat-show {
+    0%, 50% { opacity: 1; }
+    50.01%, 100% { opacity: 0; }
+  }
+  @keyframes minicat-hide {
+    0%, 50% { opacity: 0; }
+    50.01%, 100% { opacity: 1; }
+  }
+
+  /* Deck progress bar */
+  .deck-progress-track {
+    height: 3px;
+    border-radius: 1.5px;
+  }
+  .deck-progress-fill {
+    height: 100%;
+    border-radius: 1.5px;
+    transition: width 0.3s ease;
   }
 
   /* Rich field (contenteditable) in card editor */

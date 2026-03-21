@@ -98,11 +98,22 @@ export const CREATE_MEDIA_TABLE = `
   );
 `;
 
-/** Per-deck settings (new cards/day limit, etc.). */
+/** Per-deck settings (new cards/day limit, learning steps, etc.). */
 export const CREATE_DECK_SETTINGS_TABLE = `
   CREATE TABLE IF NOT EXISTS deck_settings (
-    deck_id         TEXT    PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
-    new_cards_per_day INTEGER NOT NULL DEFAULT 20
+    deck_id              TEXT    PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
+    new_cards_per_day    INTEGER NOT NULL DEFAULT 20,
+    again_steps          TEXT    NOT NULL DEFAULT '[1,10]',
+    graduating_interval  INTEGER NOT NULL DEFAULT 1,
+    easy_interval        INTEGER NOT NULL DEFAULT 4
+  );
+`;
+
+/** Global app settings (key-value store). */
+export const CREATE_APP_SETTINGS_TABLE = `
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
   );
 `;
 
@@ -137,6 +148,16 @@ export const CREATE_IDX_CARD_STATES_STATE_DUE = `
  */
 export const ENABLE_FOREIGN_KEYS = 'PRAGMA foreign_keys = ON;';
 
+/**
+ * Migration: add learning-step columns to deck_settings for existing DBs.
+ * Uses ALTER TABLE IF NOT EXISTS pattern via try/catch in the runner.
+ */
+export const MIGRATE_DECK_SETTINGS_STEPS = [
+  `ALTER TABLE deck_settings ADD COLUMN again_steps TEXT NOT NULL DEFAULT '[1,10]'`,
+  `ALTER TABLE deck_settings ADD COLUMN graduating_interval INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE deck_settings ADD COLUMN easy_interval INTEGER NOT NULL DEFAULT 4`,
+];
+
 /** Tables and indexes in dependency order: parent tables first, then indexes. */
 export const ALL_TABLES = [
   CREATE_DECKS_TABLE,
@@ -147,6 +168,7 @@ export const ALL_TABLES = [
   CREATE_REVIEW_LOGS_TABLE,
   CREATE_MEDIA_TABLE,
   CREATE_DECK_SETTINGS_TABLE,
+  CREATE_APP_SETTINGS_TABLE,
   CREATE_IDX_CARDS_DECK,
   CREATE_IDX_CARD_STATES_STATE_DUE,
 ];

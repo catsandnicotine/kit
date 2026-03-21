@@ -14,16 +14,12 @@
  *  └──────────────────────────┘
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import {
   getDeckStats,
-  getDeckSettings,
-  setNewCardsPerDay,
   type DeckStats as DeckStatsType,
-  type DeckSettings,
 } from '../lib/db/queries';
-import { persistDatabase } from '../hooks/useDatabase';
 import { hapticTap } from '../lib/platform/haptics';
 
 // ---------------------------------------------------------------------------
@@ -107,34 +103,13 @@ function ReviewChart({ data }: { data: number[] }) {
  */
 export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsProps) {
   const [stats, setStats] = useState<DeckStatsType | null>(null);
-  const [settings, setSettings] = useState<DeckSettings | null>(null);
-  const [draftLimit, setDraftLimit] = useState('20');
 
   useEffect(() => {
     if (!db) return;
     const now = Math.floor(Date.now() / 1000);
-
     const statsResult = getDeckStats(db, deckId, now);
     if (statsResult.success) setStats(statsResult.data);
-
-    const settingsResult = getDeckSettings(db, deckId);
-    if (settingsResult.success) {
-      setSettings(settingsResult.data);
-      setDraftLimit(String(settingsResult.data.newCardsPerDay));
-    }
   }, [db, deckId]);
-
-  const handleSaveLimit = useCallback(() => {
-    if (!db) return;
-    const val = Math.max(0, Math.round(Number(draftLimit) || 0));
-    const result = setNewCardsPerDay(db, deckId, val);
-    if (result.success) {
-      setSettings((prev) => prev ? { ...prev, newCardsPerDay: val } : prev);
-      setDraftLimit(String(val));
-      persistDatabase();
-      hapticTap();
-    }
-  }, [db, deckId, draftLimit]);
 
   if (!stats) {
     return (
@@ -233,32 +208,6 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
             Reviews — Last 7 Days
           </h3>
           <ReviewChart data={stats.reviewsPerDay} />
-        </div>
-      </section>
-
-      {/* New cards per day setting */}
-      <section className="px-4 pb-4">
-        <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
-            Daily Limit
-          </h3>
-          <div className="flex items-center justify-between">
-            <span className="text-sm">New cards per day</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min="0"
-                value={draftLimit}
-                onChange={(e) => setDraftLimit(e.target.value)}
-                onBlur={handleSaveLimit}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleSaveLimit(); }}
-                className="w-16 text-sm text-center bg-transparent border border-[#D4D4D4] dark:border-[#404040] rounded px-2 py-1 text-[#171717] dark:text-[#E5E5E5] outline-none"
-              />
-            </div>
-          </div>
-          {settings && settings.newCardsPerDay !== Number(draftLimit) && (
-            <p className="text-xs text-[#A3A3A3] mt-2">Press Enter or tap away to save</p>
-          )}
         </div>
       </section>
 

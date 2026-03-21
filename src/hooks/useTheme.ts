@@ -1,8 +1,14 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { Theme } from '../types';
 
+/** The resolved (applied) theme: always 'light' or 'dark'. */
+type ResolvedTheme = 'light' | 'dark';
+
 export interface ThemeContextValue {
+  /** The user's theme preference (may be 'system'). */
   theme: Theme;
+  /** The actually applied theme ('light' or 'dark'). */
+  resolvedTheme: ResolvedTheme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
 }
@@ -19,21 +25,32 @@ export function useTheme(): ThemeContextValue {
   return ctx;
 }
 
+const LS_THEME_KEY = 'kit_theme';
+
 /**
  * Detects the system color scheme preference.
  * @returns 'dark' | 'light'
  */
-function getSystemTheme(): Theme {
+function getSystemTheme(): ResolvedTheme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
 /**
- * Applies the theme class to the html element.
- * @param theme - The theme to apply
+ * Resolve the effective theme from the preference.
+ * @param pref - The theme preference.
+ * @returns The resolved theme.
  */
-function applyTheme(theme: Theme): void {
+function resolve(pref: Theme): ResolvedTheme {
+  return pref === 'system' ? getSystemTheme() : pref;
+}
+
+/**
+ * Applies the theme class to the html element.
+ * @param resolved - The resolved theme to apply.
+ */
+function applyTheme(resolved: ResolvedTheme): void {
   const root = document.documentElement;
-  if (theme === 'dark') {
+  if (resolved === 'dark') {
     root.classList.add('dark');
   } else {
     root.classList.remove('dark');
@@ -41,33 +58,57 @@ function applyTheme(theme: Theme): void {
 }
 
 /**
+ * Load persisted theme preference from localStorage.
+ * @returns The saved Theme or 'system' as default.
+ */
+function loadThemePref(): Theme {
+  try {
+    const saved = localStorage.getItem(LS_THEME_KEY);
+    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+  } catch { /* ignore */ }
+  return 'system';
+}
+
+/**
  * Creates the theme state and handlers for use in ThemeProvider.
  * @returns ThemeContextValue
  */
 export function useThemeState(): ThemeContextValue {
-  const [theme, setThemeState] = useState<Theme>(getSystemTheme);
+  const [theme, setThemeState] = useState<Theme>(loadThemePref);
+  const [resolvedTheme, setResolved] = useState<ResolvedTheme>(() => resolve(theme));
 
   useEffect(() => {
-    applyTheme(theme);
+    const r = resolve(theme);
+    setResolved(r);
+    applyTheme(r);
   }, [theme]);
 
-  // Sync with system preference changes when no manual override has diverged
+  // Sync with system preference changes when in 'system' mode
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => {
-      setThemeState(e.matches ? 'dark' : 'light');
+      if (theme === 'system') {
+        const r: ResolvedTheme = e.matches ? 'dark' : 'light';
+        setResolved(r);
+        applyTheme(r);
+      }
     };
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
-  }, []);
+  }, [theme]);
 
   const setTheme = (next: Theme) => {
     setThemeState(next);
+    try { localStorage.setItem(LS_THEME_KEY, next); } catch { /* ignore */ }
   };
 
   const toggleTheme = () => {
-    setThemeState(prev => (prev === 'dark' ? 'light' : 'dark'));
+    setThemeState(prev => {
+      const next = resolve(prev) === 'dark' ? 'light' : 'dark';
+      try { localStorage.setItem(LS_THEME_KEY, next); } catch { /* ignore */ }
+      return next;
+    });
   };
 
-  return { theme, setTheme, toggleTheme };
+  return { theme, resolvedTheme, setTheme, toggleTheme };
 }

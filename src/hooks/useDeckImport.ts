@@ -55,6 +55,8 @@ export interface UseDeckImportReturn {
   phase: ImportPhase;
   /** User-friendly error message when phase is 'error'. */
   errorMessage: string;
+  /** Summary of what was imported (shown on success). */
+  importInfo: string;
   /** Start importing a .apkg File. */
   importFile: (file: File) => Promise<void>;
   /** Reset back to idle so the user can import again. */
@@ -85,11 +87,13 @@ export function useDeckImport(
 ): UseDeckImportReturn {
   const [phase, setPhase] = useState<ImportPhase>('idle');
   const [errorMessage, setErrorMessage] = useState('');
+  const [importInfo, setImportInfo] = useState('');
   const busyRef = useRef(false);
 
   const reset = useCallback(() => {
     setPhase('idle');
     setErrorMessage('');
+    setImportInfo('');
     busyRef.current = false;
   }, []);
 
@@ -122,7 +126,9 @@ export function useDeckImport(
 
         // ── Phase 2: Storing cards ────────────────────────────────────────
         // Entire entity graph is inserted inside one transaction.
+        // Yield to let React paint the phase indicator before blocking.
         setPhase('storing-cards');
+        await new Promise((r) => setTimeout(r, 0));
 
         const storeResult = storeEntities(db, parsed);
         if (!storeResult.success) {
@@ -137,6 +143,7 @@ export function useDeckImport(
         // ── Phase 3: Storing media in batches ─────────────────────────────
         // Each batch: extract N blobs from the ZIP → insert → release.
         setPhase('storing-media');
+        await new Promise((r) => setTimeout(r, 0));
 
         const mediaResult = await storeMediaBatched(db, parsed, deckId);
         if (!mediaResult.success) {
@@ -147,6 +154,16 @@ export function useDeckImport(
         }
 
         // ── Done ──────────────────────────────────────────────────────────
+        const cardCount = parsed.cards.length;
+        const { storedCount, totalBytes } = mediaResult.data;
+        const sizeStr = totalBytes > 1024 * 1024
+          ? `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`
+          : `${Math.round(totalBytes / 1024)} KB`;
+        setImportInfo(
+          storedCount > 0
+            ? `${cardCount} cards, ${storedCount} media files (${sizeStr})`
+            : `${cardCount} cards, no media`,
+        );
         setPhase('done');
         persistDatabase();
         scheduleICloudBackup();
@@ -162,7 +179,7 @@ export function useDeckImport(
     [db, onComplete],
   );
 
-  return { phase, errorMessage, importFile, reset };
+  return { phase, errorMessage, importInfo, importFile, reset };
 }
 
 // ---------------------------------------------------------------------------
@@ -194,18 +211,22 @@ function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
     const noteIdMap = new Map<string, string>();
 
     // ── Decks ─────────────────────────────────────────────────────────────
+    // Only import decks that actually have cards (skip empty parents from
+    // Anki's hierarchical "A::B::C" naming scheme).
     const usedDeckIds = new Set(parsed.cards.map((c) => c.deckId));
-    const decksToInsert = parsed.decks.filter(
-      (d) => d.id !== '1' || usedDeckIds.has('1'),
-    );
+    const decksToInsert = parsed.decks.filter((d) => usedDeckIds.has(d.id));
 
-    for (const pd of decksToInsert) {
+    // Strip hierarchical prefixes ("A::B::C" → "C"), resolving collisions
+    const leafNames = resolveLeafNames(decksToInsert.map((d) => d.name));
+
+    for (let i = 0; i < decksToInsert.length; i++) {
+      const pd = decksToInsert[i]!;
       const kitId = uuidv4();
       deckIdMap.set(pd.id, kitId);
 
       const deck: Deck = {
         id: kitId,
-        name: pd.name,
+        name: leafNames[i] ?? pd.name,
         description: pd.description,
         createdAt: now,
         updatedAt: now,
@@ -384,17 +405,24 @@ function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
  * @param deckId  - Kit deck UUID to associate media with.
  * @returns void on success, or an error.
  */
+interface MediaStoreResult {
+  storedCount: number;
+  totalBytes: number;
+}
+
 async function storeMediaBatched(
   db: Database,
   parsed: ParsedApkgLazy,
   deckId: string,
-): Promise<Result<void>> {
-  const { mediaManifest, zip } = parsed;
+): Promise<Result<MediaStoreResult>> {
+  const { mediaManifest, zip, mediaIsCompressed } = parsed;
   if (mediaManifest.length === 0) {
-    return { success: true, data: undefined };
+    return { success: true, data: { storedCount: 0, totalBytes: 0 } };
   }
 
   const now = Math.floor(Date.now() / 1000);
+  let storedCount = 0;
+  let totalBytes = 0;
 
   // Wrap all media inserts in a single transaction
   const txn = beginTransaction(db);
@@ -402,7 +430,7 @@ async function storeMediaBatched(
 
   try {
     for (let i = 0; i < mediaManifest.length; i += MEDIA_BATCH_SIZE) {
-      const batch = await extractMediaBatch(zip, mediaManifest, i, MEDIA_BATCH_SIZE);
+      const batch = await extractMediaBatch(zip, mediaManifest, i, MEDIA_BATCH_SIZE, mediaIsCompressed);
 
       for (const pm of batch) {
         const media: Media = {
@@ -418,6 +446,8 @@ async function storeMediaBatched(
           rollbackTransaction(db);
           return r;
         }
+        storedCount++;
+        totalBytes += pm.data.byteLength;
       }
       // Batch references go out of scope here → GC can reclaim blob memory
     }
@@ -425,7 +455,7 @@ async function storeMediaBatched(
     const commit = commitTransaction(db);
     if (!commit.success) return commit;
 
-    return { success: true, data: undefined };
+    return { success: true, data: { storedCount, totalBytes } };
   } catch (e) {
     rollbackTransaction(db);
     return { success: false, error: `Failed to store media: ${String(e)}` };
@@ -443,6 +473,9 @@ async function storeMediaBatched(
  * @returns User-friendly error message.
  */
 function friendlyParseError(raw: string): string {
+  if (raw.includes('newer Anki') || raw.includes('protobuf') || raw.includes('compatibility')) {
+    return raw; // Already user-friendly from the parser
+  }
   if (raw.includes('unzip')) {
     return 'This file doesn\u2019t appear to be a valid .apkg file. Make sure you\u2019re selecting an Anki export.';
   }
@@ -453,4 +486,44 @@ function friendlyParseError(raw: string): string {
     return 'Failed to load the database engine. Please reload the app and try again.';
   }
   return `Import error: ${raw}`;
+}
+
+/**
+ * Strip Anki's hierarchical `::` prefixes from deck names, keeping the leaf.
+ * If stripping creates duplicates, keep enough parent context to disambiguate.
+ *
+ * "A::B::C" → "C"
+ * If both "A::B::Cards" and "X::Y::Cards" exist → "B > Cards" and "Y > Cards"
+ *
+ * @param names - Full hierarchical deck names.
+ * @returns Array of display names in the same order.
+ */
+function resolveLeafNames(names: string[]): string[] {
+  // Start with just the leaf segment
+  const leaves = names.map((n) => {
+    const parts = n.split('::');
+    return parts[parts.length - 1]?.trim() ?? n;
+  });
+
+  // Check for duplicates and add parent context where needed
+  const seen = new Map<string, number[]>();
+  for (let i = 0; i < leaves.length; i++) {
+    const leaf = leaves[i]!;
+    const indices = seen.get(leaf) ?? [];
+    indices.push(i);
+    seen.set(leaf, indices);
+  }
+
+  for (const [, indices] of seen) {
+    if (indices.length <= 1) continue;
+    // Collision — use "Parent > Leaf" format
+    for (const idx of indices) {
+      const parts = names[idx]!.split('::');
+      if (parts.length >= 2) {
+        leaves[idx] = `${parts[parts.length - 2]!.trim()} > ${parts[parts.length - 1]!.trim()}`;
+      }
+    }
+  }
+
+  return leaves;
 }

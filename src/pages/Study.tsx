@@ -21,7 +21,9 @@ import { useStudySession } from '../hooks/useStudySession';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
 import { getDeckStats } from '../lib/db/queries';
+import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { CardEditor } from '../components/CardEditor';
+import { MiniCat } from '../components/MiniCat';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -38,28 +40,58 @@ interface StudyProps {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Thin progress bar at the top of the study view. */
+/** Progress bar with walking MiniCat. */
 function ProgressBar({ studied, total }: { studied: number; total: number }) {
-  const pct = total === 0 ? 100 : Math.round((studied / total) * 100);
+  const progress = total === 0 ? 1 : studied / total;
+  const pct = Math.round(progress * 100);
   return (
-    <div className="w-full h-0.5 bg-border-light dark:bg-border-dark">
+    <div className="relative px-4 py-1">
+      <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
+        <div
+          className="deck-progress-fill bg-[#171717] dark:bg-[#E5E5E5]"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
       <div
-        className="h-full bg-accent-light dark:bg-accent-dark transition-all duration-300"
-        style={{ width: `${pct}%` }}
-      />
+        className="absolute -top-[6px]"
+        style={{ left: `calc(1rem + ${pct}% - 9px)` }}
+      >
+        <MiniCat progress={progress} size={12} />
+      </div>
     </div>
   );
 }
 
-/** Rating button with colour coding. */
+/**
+ * Format a scheduled interval in days to a human-readable short string.
+ *
+ * @param days - Interval in days.
+ * @returns Formatted string like "<1m", "10m", "1h", "1d", "3d", "2w", "2mo".
+ */
+function formatInterval(days: number): string {
+  const minutes = days * 24 * 60;
+  if (minutes < 1) return '<1m';
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.round(hours)}h`;
+  if (days < 14) return `${Math.round(days)}d`;
+  const weeks = days / 7;
+  if (weeks < 8) return `${Math.round(weeks)}w`;
+  const months = days / 30;
+  return `${Math.round(months)}mo`;
+}
+
+/** Rating button with colour coding and optional interval display. */
 function RatingButton({
   label,
   onClick,
   color,
+  interval,
 }: {
   label: string;
   onClick: () => void;
   color: 'red' | 'orange' | 'green' | 'blue';
+  interval?: string | undefined;
 }) {
   const colorMap: Record<string, string> = {
     red: 'border-red-500 text-red-500 dark:border-red-400 dark:text-red-400',
@@ -71,9 +103,10 @@ function RatingButton({
   return (
     <button
       onClick={onClick}
-      className={`rating-btn flex-1 py-3 text-sm font-semibold tracking-wide border rounded-md transition-colors active:opacity-70 ${colorMap[color]}`}
+      className={`rating-btn flex-1 py-2 text-sm font-semibold tracking-wide border rounded-md transition-colors active:opacity-70 flex flex-col items-center gap-0.5 ${colorMap[color]}`}
     >
-      {label}
+      <span>{label}</span>
+      {interval && <span className="text-xs font-normal opacity-70">{interval}</span>}
     </button>
   );
 }
@@ -225,17 +258,24 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
   );
 }
 
+/** Study-ahead limit options. */
+const STUDY_AHEAD_OPTIONS = [10, 25, 50, 100] as const;
+
 /** Session complete view. */
 function SessionComplete({
   studied,
   elapsedSeconds,
   nextDueLabel,
   onExit,
+  onStudyAhead,
+  isStudyAhead,
 }: {
   studied: number;
   elapsedSeconds: number;
   nextDueLabel: string | null;
   onExit?: () => void;
+  onStudyAhead?: (limit: number) => void;
+  isStudyAhead: boolean;
 }) {
   const mins = Math.floor(elapsedSeconds / 60);
   const secs = elapsedSeconds % 60;
@@ -262,14 +302,32 @@ function SessionComplete({
           Next review {nextDueLabel}
         </p>
       )}
-      {onExit && (
-        <button
-          onClick={() => { hapticTap(); onExit(); }}
-          className="mt-4 px-6 py-2 border border-border-light dark:border-border-dark text-text-light dark:text-text-dark text-sm rounded-md"
-        >
-          Done
-        </button>
-      )}
+      <div className="flex flex-col gap-3 mt-4">
+        {!isStudyAhead && onStudyAhead && (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-text-muted">Study ahead</p>
+            <div className="flex gap-2">
+              {STUDY_AHEAD_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  onClick={() => { hapticTap(); onStudyAhead(n); }}
+                  className="px-3 py-1.5 bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-xs font-medium rounded-md"
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {onExit && (
+          <button
+            onClick={() => { hapticTap(); onExit(); }}
+            className="px-6 py-2 border border-border-light dark:border-border-dark text-text-light dark:text-text-dark text-sm rounded-md"
+          >
+            Done
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -326,14 +384,15 @@ function useLongPress(onLongPress: () => void) {
 export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
+  const [studyAheadLimit, setStudyAheadLimit] = useState(0);
 
   const handleEditCard = useCallback((card: Card) => {
     setEditingCard(card);
   }, []);
 
-  const session = useStudySession(db, deckId, handleEditCard);
+  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit);
   const {
-    phase, frontHtml, backHtml, stats, errorMessage, canUndo,
+    phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
     flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
   const { rewriteHtml } = useDeckMedia(db, deckId);
@@ -377,10 +436,17 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
     onExit?.();
   }, [onExit]);
 
-  // Rewrite media src attributes (e.g. src="cat.jpg") to blob: object URLs.
+  // Rewrite media src attributes (e.g. src="cat.jpg") to blob: object URLs,
+  // then render Image Occlusion masks if present.
   // Memoized so the 1-second elapsed-time ticker doesn't re-run the regex work.
-  const resolvedFront = useMemo(() => rewriteHtml(frontHtml), [rewriteHtml, frontHtml]);
-  const resolvedBack = useMemo(() => rewriteHtml(backHtml), [rewriteHtml, backHtml]);
+  const resolvedFront = useMemo(
+    () => renderImageOcclusion(rewriteHtml(frontHtml), 'front'),
+    [rewriteHtml, frontHtml],
+  );
+  const resolvedBack = useMemo(
+    () => renderImageOcclusion(rewriteHtml(backHtml), 'back'),
+    [rewriteHtml, backHtml],
+  );
 
   // Track total cards for the progress bar (set once on load).
   const [totalCards, setTotalCards] = useState(0);
@@ -472,6 +538,8 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             studied={stats.studied}
             elapsedSeconds={stats.elapsedSeconds}
             nextDueLabel={nextDueLabel}
+            isStudyAhead={studyAheadLimit > 0}
+            onStudyAhead={(limit: number) => setStudyAheadLimit(limit)}
             {...(onExit && { onExit })}
           />
         </div>
@@ -567,10 +635,10 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
           <div className="flex flex-col gap-2 py-3">
             {/* Rating buttons */}
             <div className="flex gap-2">
-              <RatingButton label="Again" onClick={() => rate('again')} color="red" />
-              <RatingButton label="Hard" onClick={() => rate('hard')} color="orange" />
-              <RatingButton label="Good" onClick={() => rate('good')} color="green" />
-              <RatingButton label="Easy" onClick={() => rate('easy')} color="blue" />
+              <RatingButton label="Again" onClick={() => rate('again')} color="red" interval={ratingPreviews ? formatInterval(ratingPreviews.again.scheduledDays) : undefined} />
+              <RatingButton label="Hard" onClick={() => rate('hard')} color="orange" interval={ratingPreviews ? formatInterval(ratingPreviews.hard.scheduledDays) : undefined} />
+              <RatingButton label="Good" onClick={() => rate('good')} color="green" interval={ratingPreviews ? formatInterval(ratingPreviews.good.scheduledDays) : undefined} />
+              <RatingButton label="Easy" onClick={() => rate('easy')} color="blue" interval={ratingPreviews ? formatInterval(ratingPreviews.easy.scheduledDays) : undefined} />
             </div>
 
             {/* Edit + Undo row */}
@@ -606,6 +674,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         <CardEditor
           db={db}
           card={editingCard}
+          rewriteHtml={rewriteHtml}
           onSave={handleEditorSave}
           onDelete={handleEditorDelete}
           onDismiss={() => setEditingCard(null)}

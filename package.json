@@ -10,13 +10,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@capacitor-community/sqlite": "^8.0.1",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/core": "^8.2.0",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/haptics": "^8.0.1",
     "@capacitor/ios": "^8.2.0",
     "@capacitor/share": "^8.0.1",
+    "fzstd": "^0.1.1",
     "jszip": "^3.10.1",
     "katex": "^0.16.38",
     "konva": "^10.2.0",

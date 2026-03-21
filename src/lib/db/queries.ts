@@ -452,6 +452,52 @@ export function getCardsDueForDeck(
 }
 
 /**
+ * Fetch reviewed cards that are not yet due, for study-ahead mode.
+ * Returns cards ordered by soonest-due first, limited to `limit` cards.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @param now    - Current Unix timestamp (seconds).
+ * @param limit  - Maximum number of cards to return.
+ * @returns Cards with state, or an error.
+ */
+export function getCardsForStudyAhead(
+  db: Database,
+  deckId: string,
+  now: number,
+  limit = 50,
+): Result<CardWithState[]> {
+  try {
+    const stmt = db.prepare(`
+      SELECT
+        c.id,  c.deck_id,  c.note_id,  c.front,  c.back,
+        c.tags, c.created_at, c.updated_at,
+        cs.due,            cs.stability,   cs.difficulty,
+        cs.elapsed_days,   cs.scheduled_days,
+        cs.reps,           cs.lapses,
+        cs.state,          cs.last_review
+      FROM cards c
+      JOIN card_states cs ON c.id = cs.card_id
+      WHERE c.deck_id = ?
+        AND cs.state = 'review'
+        AND cs.due > ?
+      ORDER BY cs.due ASC
+      LIMIT ?
+    `);
+    stmt.bind([deckId, now, limit]);
+    const results: CardWithState[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      results.push({ card: toCard(row), state: toCardState(row, str(row, 'id')) });
+    }
+    stmt.free();
+    return { success: true, data: results };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Insert a new card.
  * @param db   - sql.js Database instance.
  * @param card - Fully-formed card (caller provides UUID).
@@ -838,12 +884,13 @@ export interface MediaBlob {
  * @param deckId - Deck UUID.
  * @returns Array of media blobs, or an error.
  */
-export function getMediaByDeck(db: Database, deckId: string): Result<MediaBlob[]> {
+export function getMediaByDeck(db: Database, _deckId: string): Result<MediaBlob[]> {
   try {
-    const stmt = db.prepare(
-      'SELECT filename, data, mime_type FROM media WHERE deck_id = ?',
-    );
-    stmt.bind([deckId]);
+    // Load ALL media regardless of deck_id. Media is stored under the
+    // primaryDeckId during import, but cards may belong to sub-decks.
+    // Filenames are unique per import so there's no collision risk.
+    // The map is keyed by filename, not deck_id.
+    const stmt = db.prepare('SELECT filename, data, mime_type FROM media');
     const results: MediaBlob[] = [];
     while (stmt.step()) {
       const row = stmt.getAsObject() as Row;
@@ -856,6 +903,60 @@ export function getMediaByDeck(db: Database, deckId: string): Result<MediaBlob[]
     }
     stmt.free();
     return { success: true, data: results };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Fetch the set of all media filenames in the database (no blob data).
+ * Used for lazy media loading — only filenames are fetched upfront.
+ *
+ * @param db - sql.js Database instance.
+ * @returns Set of media filenames.
+ */
+export function getMediaFilenames(db: Database): Result<Set<string>> {
+  try {
+    const stmt = db.prepare('SELECT filename FROM media');
+    const names = new Set<string>();
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      names.add(str(row, 'filename'));
+    }
+    stmt.free();
+    return { success: true, data: names };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Fetch a single media blob by filename.
+ * Used for on-demand media loading.
+ *
+ * @param db       - sql.js Database instance.
+ * @param filename - The media filename to fetch.
+ * @returns The media blob, or null if not found.
+ */
+export function getMediaBlobByFilename(db: Database, filename: string): Result<MediaBlob | null> {
+  try {
+    const stmt = db.prepare('SELECT filename, data, mime_type FROM media WHERE filename = ?');
+    stmt.bind([filename]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const data = row['data'];
+      stmt.free();
+      return {
+        success: true,
+        data: {
+          filename: str(row, 'filename'),
+          data: data instanceof Uint8Array ? data : new Uint8Array(),
+          mimeType: str(row, 'mime_type'),
+        },
+      };
+    }
+    stmt.free();
+    return { success: true, data: null };
   } catch (e) {
     return { success: false, error: String(e) };
   }
@@ -1068,6 +1169,12 @@ export function getTotalCardCount(db: Database): Result<number> {
 export interface DeckSettings {
   deckId: string;
   newCardsPerDay: number;
+  /** JSON array of step intervals in minutes, e.g. [1, 10]. */
+  againSteps: number[];
+  /** Graduating interval in days. */
+  graduatingInterval: number;
+  /** Easy interval in days. */
+  easyInterval: number;
 }
 
 /**
@@ -1080,19 +1187,32 @@ export interface DeckSettings {
 export function getDeckSettings(db: Database, deckId: string): Result<DeckSettings> {
   try {
     const stmt = db.prepare(
-      'SELECT new_cards_per_day FROM deck_settings WHERE deck_id = ?',
+      'SELECT new_cards_per_day, again_steps, graduating_interval, easy_interval FROM deck_settings WHERE deck_id = ?',
     );
     stmt.bind([deckId]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Row;
       stmt.free();
+      let againSteps: number[];
+      try {
+        const parsed = JSON.parse(str(row, 'again_steps'));
+        againSteps = Array.isArray(parsed) ? parsed.map(Number) : [1, 10];
+      } catch {
+        againSteps = [1, 10];
+      }
       return {
         success: true,
-        data: { deckId, newCardsPerDay: num(row, 'new_cards_per_day') },
+        data: {
+          deckId,
+          newCardsPerDay: num(row, 'new_cards_per_day'),
+          againSteps,
+          graduatingInterval: num(row, 'graduating_interval') || 1,
+          easyInterval: num(row, 'easy_interval') || 4,
+        },
       };
     }
     stmt.free();
-    return { success: true, data: { deckId, newCardsPerDay: 20 } };
+    return { success: true, data: { deckId, newCardsPerDay: 20, againSteps: [1, 10], graduatingInterval: 1, easyInterval: 4 } };
   } catch (e) {
     return { success: false, error: String(e) };
   }
@@ -1279,6 +1399,185 @@ export function getDeckStats(
         nextDue,
       },
     };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Update the learning steps for a deck.
+ *
+ * @param db                  - sql.js Database instance.
+ * @param deckId              - Deck UUID.
+ * @param againSteps          - Learning step intervals in minutes.
+ * @param graduatingInterval  - Graduating interval in days.
+ * @param easyInterval        - Easy interval in days.
+ * @returns void on success, or an error.
+ */
+export function setDeckLearningSteps(
+  db: Database,
+  deckId: string,
+  againSteps: number[],
+  graduatingInterval: number,
+  easyInterval: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT INTO deck_settings (deck_id, new_cards_per_day, again_steps, graduating_interval, easy_interval)
+       VALUES (?, 20, ?, ?, ?)
+       ON CONFLICT(deck_id) DO UPDATE SET
+         again_steps = excluded.again_steps,
+         graduating_interval = excluded.graduating_interval,
+         easy_interval = excluded.easy_interval`,
+      [deckId, JSON.stringify(againSteps), Math.max(1, Math.round(graduatingInterval)), Math.max(1, Math.round(easyInterval))],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Apply learning steps to all existing decks.
+ *
+ * @param db                  - sql.js Database instance.
+ * @param againSteps          - Learning step intervals in minutes.
+ * @param graduatingInterval  - Graduating interval in days.
+ * @param easyInterval        - Easy interval in days.
+ * @returns void on success, or an error.
+ */
+export function applyLearningStepsToAllDecks(
+  db: Database,
+  againSteps: number[],
+  graduatingInterval: number,
+  easyInterval: number,
+): Result<void> {
+  try {
+    const stepsJson = JSON.stringify(againSteps);
+    const gradInt = Math.max(1, Math.round(graduatingInterval));
+    const easyInt = Math.max(1, Math.round(easyInterval));
+    // First update existing rows
+    db.run(
+      `UPDATE deck_settings SET again_steps = ?, graduating_interval = ?, easy_interval = ?`,
+      [stepsJson, gradInt, easyInt],
+    );
+    // Then insert for any decks that don't have a settings row yet
+    db.run(
+      `INSERT OR IGNORE INTO deck_settings (deck_id, new_cards_per_day, again_steps, graduating_interval, easy_interval)
+       SELECT id, 20, ?, ?, ? FROM decks WHERE id NOT IN (SELECT deck_id FROM deck_settings)`,
+      [stepsJson, gradInt, easyInt],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App settings queries
+// ---------------------------------------------------------------------------
+
+/**
+ * Get a value from the app_settings key-value store.
+ *
+ * @param db  - sql.js Database instance.
+ * @param key - Setting key.
+ * @returns The value string, or null if not set.
+ */
+export function getAppSetting(db: Database, key: string): Result<string | null> {
+  try {
+    const stmt = db.prepare('SELECT value FROM app_settings WHERE key = ?');
+    stmt.bind([key]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      stmt.free();
+      return { success: true, data: str(row, 'value') };
+    }
+    stmt.free();
+    return { success: true, data: null };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Set a value in the app_settings key-value store.
+ *
+ * @param db    - sql.js Database instance.
+ * @param key   - Setting key.
+ * @param value - Value to store.
+ * @returns void on success, or an error.
+ */
+export function setAppSetting(db: Database, key: string, value: string): Result<void> {
+  try {
+    db.run(
+      `INSERT INTO app_settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [key, value],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get global statistics across all decks.
+ *
+ * @param db  - sql.js Database instance.
+ * @param now - Current Unix timestamp in seconds.
+ * @returns Global stats.
+ */
+export function getGlobalStats(
+  db: Database,
+  now: number,
+): Result<{ totalCards: number; totalReviews: number; retentionRate: number; longestStreak: number }> {
+  try {
+    const cardStmt = db.prepare('SELECT COUNT(*) AS cnt FROM cards');
+    cardStmt.step();
+    const totalCards = num(cardStmt.getAsObject() as Row, 'cnt');
+    cardStmt.free();
+
+    const reviewStmt = db.prepare(`
+      SELECT
+        COUNT(*)                                          AS total_reviews,
+        SUM(CASE WHEN rating != 'again' THEN 1 ELSE 0 END) AS correct
+      FROM review_logs
+    `);
+    reviewStmt.step();
+    const reviewRow = reviewStmt.getAsObject() as Row;
+    const totalReviews = num(reviewRow, 'total_reviews');
+    const correct = num(reviewRow, 'correct');
+    const retentionRate = totalReviews > 0 ? Math.round((correct / totalReviews) * 100) : 0;
+    reviewStmt.free();
+
+    // Longest streak across all decks
+    const daySeconds = 86400;
+    const streakStmt = db.prepare(`
+      SELECT DISTINCT CAST(reviewed_at / 86400 AS INTEGER) AS day
+      FROM review_logs
+      ORDER BY day DESC
+    `);
+    const todayDay = Math.floor(now / daySeconds);
+    let longestStreak = 0;
+    let currentStreak = 0;
+    let expectedDay = todayDay;
+    while (streakStmt.step()) {
+      const row = streakStmt.getAsObject() as Row;
+      const day = num(row, 'day');
+      if (day === expectedDay) {
+        currentStreak++;
+        expectedDay--;
+      } else if (day === expectedDay + 1) {
+        continue;
+      } else {
+        break;
+      }
+    }
+    longestStreak = currentStreak;
+    streakStmt.free();
+
+    return { success: true, data: { totalCards, totalReviews, retentionRate, longestStreak } };
   } catch (e) {
     return { success: false, error: String(e) };
   }

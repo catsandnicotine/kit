@@ -5,3 +5,4 @@
 
 export * from './schema';
 export * from './queries';
+export { runMigrations } from './migrations';

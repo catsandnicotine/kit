@@ -15,6 +15,7 @@ import {
   deleteCardState,
   deleteReviewLog,
   getCardsDueForDeck,
+  getCardsForStudyAhead,
   insertReviewLog,
   setCardState,
   updateCardAfterReview,
@@ -51,6 +52,11 @@ export type StudyPhase =
   | 'complete' // no cards left
   | 'error';
 
+/** Pre-computed scheduling preview for a single rating. */
+export interface RatingPreview {
+  scheduledDays: number;
+}
+
 export interface UseStudySessionReturn {
   phase: StudyPhase;
   /** HTML string for the card front (rendered by templateRenderer or raw). */
@@ -63,6 +69,8 @@ export interface UseStudySessionReturn {
   errorMessage: string;
   /** Whether there is a rating in history that can be undone. */
   canUndo: boolean;
+  /** Pre-computed FSRS scheduling for all 4 ratings (available when phase='back'). */
+  ratingPreviews: Record<Rating, RatingPreview> | null;
   /** Flip the current card from front to back. */
   flip: () => void;
   /** Rate the current card; moves to the next card in the queue. */
@@ -111,6 +119,7 @@ export function useStudySession(
   db: Database | null,
   deckId: string,
   onEditCard?: (card: Card) => void,
+  studyAheadLimit = 0,
 ): UseStudySessionReturn {
   // -------------------------------------------------------------------------
   // State
@@ -126,6 +135,8 @@ export function useStudySession(
     remaining: 0,
     elapsedSeconds: 0,
   });
+
+  const [ratingPreviews, setRatingPreviews] = useState<Record<Rating, RatingPreview> | null>(null);
 
   /** Mutable queue — we push "again" cards to the end without re-rendering. */
   const queueRef = useRef<CardWithState[]>([]);
@@ -163,6 +174,7 @@ export function useStudySession(
     if (!cws) return;
     setFrontHtml(cws.card.front);
     setBackHtml(cws.card.back);
+    setRatingPreviews(null);
     setStats(prev => ({
       ...prev,
       remaining: queue.length - index,
@@ -181,7 +193,8 @@ export function useStudySession(
     startedAtRef.current = Date.now();
     undoRef.current = null;
 
-    const result = getCardsDueForDeck(db, deckId, Math.floor(Date.now() / 1000));
+    const now = Math.floor(Date.now() / 1000);
+    const result = getCardsDueForDeck(db, deckId, now);
 
     if (!result.success) {
       setErrorMessage(result.error);
@@ -189,7 +202,14 @@ export function useStudySession(
       return;
     }
 
-    const queue = result.data;
+    let queue = result.data;
+
+    // If no due cards and study-ahead mode, load upcoming review cards
+    if (queue.length === 0 && studyAheadLimit > 0) {
+      const aheadResult = getCardsForStudyAhead(db, deckId, now, studyAheadLimit);
+      if (aheadResult.success) queue = aheadResult.data;
+    }
+
     queueRef.current = queue;
 
     if (queue.length === 0) {
@@ -205,7 +225,7 @@ export function useStudySession(
 
     return () => stopTimer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, deckId]);
+  }, [db, deckId, studyAheadLimit]);
 
   // -------------------------------------------------------------------------
   // flip
@@ -214,7 +234,27 @@ export function useStudySession(
   const flip = useCallback(() => {
     if (phase !== 'front') return;
     hapticFlip();
-    setBackHtml(queueRef.current[currentIndex]?.card.back ?? '');
+    const cws = queueRef.current[currentIndex];
+    if (!cws) return;
+    setBackHtml(cws.card.back);
+
+    // Pre-compute FSRS outputs for all 4 ratings (pure math, safe to call speculatively)
+    const { state } = cws;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const wasFirstReview = state.reps === 0;
+    const elapsedDays = state.lastReview
+      ? Math.max(0, Math.floor((nowSec - state.lastReview) / 86400))
+      : 0;
+
+    const ratings: Rating[] = ['again', 'hard', 'good', 'easy'];
+    const previews = {} as Record<Rating, RatingPreview>;
+    for (const r of ratings) {
+      const output = wasFirstReview
+        ? initializeCard(r)
+        : reviewCard(state, r, elapsedDays);
+      previews[r] = { scheduledDays: output.scheduledDays };
+    }
+    setRatingPreviews(previews);
     setPhase('back');
   }, [phase, currentIndex]);
 
@@ -395,6 +435,7 @@ export function useStudySession(
     stats,
     errorMessage,
     canUndo: undoRef.current !== null,
+    ratingPreviews,
     flip,
     rate,
     undo,
