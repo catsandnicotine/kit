@@ -14,7 +14,6 @@ import type {
   CardState,
   CardWithState,
   Deck,
-  FSRSOutput,
   LearningState,
   Media,
   Note,
@@ -24,6 +23,7 @@ import type {
   Result,
   ReviewLog,
 } from '../../types';
+import type { ResolvedCardSchedule } from '../srs/scheduleWithLearningSteps';
 
 // ---------------------------------------------------------------------------
 // Internal row type
@@ -110,16 +110,18 @@ function toCard(row: Row): Card {
 
 function toCardState(row: Row, cardId: string): CardState {
   return {
-    cardId:        cardId,
-    due:           num(row, 'due'),
-    stability:     num(row, 'stability'),
-    difficulty:    num(row, 'difficulty'),
-    elapsedDays:   num(row, 'elapsed_days'),
-    scheduledDays: num(row, 'scheduled_days'),
-    reps:          num(row, 'reps'),
-    lapses:        num(row, 'lapses'),
-    state:         str(row, 'state') as LearningState,
-    lastReview:    maybeNum(row, 'last_review'),
+    cardId:            cardId,
+    due:               num(row, 'due'),
+    stability:         num(row, 'stability'),
+    difficulty:        num(row, 'difficulty'),
+    elapsedDays:       num(row, 'elapsed_days'),
+    scheduledDays:     num(row, 'scheduled_days'),
+    reps:              num(row, 'reps'),
+    lapses:            num(row, 'lapses'),
+    state:             str(row, 'state') as LearningState,
+    lastReview:        maybeNum(row, 'last_review'),
+    learningStepIndex: num(row, 'learning_step_index'),
+    suspended:         num(row, 'suspended') === 1,
   };
 }
 
@@ -131,15 +133,17 @@ function toCardState(row: Row, cardId: string): CardState {
 function defaultCardState(cardId: string): CardState {
   return {
     cardId,
-    due:           0,
-    stability:     0,
-    difficulty:    0,
-    elapsedDays:   0,
-    scheduledDays: 0,
-    reps:          0,
-    lapses:        0,
-    state:         'new',
-    lastReview:    null,
+    due:               0,
+    stability:         0,
+    difficulty:        0,
+    elapsedDays:       0,
+    scheduledDays:     0,
+    reps:              0,
+    lapses:            0,
+    state:             'new',
+    lastReview:        null,
+    learningStepIndex: 0,
+    suspended:         false,
   };
 }
 
@@ -379,7 +383,7 @@ export function getCardsByDeck(db: Database, deckId: string): Result<Card[]> {
  *
  * Returns three categories in priority order:
  *  1. New cards (no state row, or state = 'new') — limited by newCardsPerDay setting
- *  2. Cards in learning or relearning (due any time — these should not be skipped)
+ *  2. Cards in learning or relearning with due ≤ now (minute steps respected)
  *  3. Review cards whose due timestamp ≤ now
  *
  * @param db     - sql.js Database instance.
@@ -393,9 +397,10 @@ export function getCardsDueForDeck(
   now: number,
 ): Result<CardWithState[]> {
   try {
-    // Get the new cards per day limit
     const settingsResult = getDeckSettings(db, deckId);
-    const newCardsLimit = settingsResult.success ? settingsResult.data.newCardsPerDay : 20;
+    const settings = settingsResult.success ? settingsResult.data : null;
+    const newCardsLimit = settings?.newCardsPerDay ?? 20;
+    const maxReviews = settings?.maxReviewsPerDay ?? 200;
 
     // Count how many new cards were already studied today
     const todayResult = getNewCardsStudiedToday(db, deckId, now);
@@ -409,14 +414,16 @@ export function getCardsDueForDeck(
         cs.due,            cs.stability,   cs.difficulty,
         cs.elapsed_days,   cs.scheduled_days,
         cs.reps,           cs.lapses,
-        cs.state,          cs.last_review
+        cs.state,          cs.last_review, cs.learning_step_index,
+        COALESCE(cs.suspended, 0) AS suspended
       FROM cards c
       LEFT JOIN card_states cs ON c.id = cs.card_id
       WHERE c.deck_id = ?
+        AND COALESCE(cs.suspended, 0) = 0
         AND (
               cs.card_id IS NULL
-           OR cs.state IN ('new', 'learning', 'relearning')
-           OR cs.due <= ?
+           OR cs.state = 'new'
+           OR (cs.state IN ('learning', 'relearning', 'review') AND cs.due <= ?)
         )
       ORDER BY
         CASE
@@ -429,6 +436,7 @@ export function getCardsDueForDeck(
     stmt.bind([deckId, now]);
     const results: CardWithState[] = [];
     let newCardsSeen = 0;
+    let reviewCardsSeen = 0;
     while (stmt.step()) {
       const row = stmt.getAsObject() as Row;
       const card  = toCard(row);
@@ -436,10 +444,16 @@ export function getCardsDueForDeck(
         ? toCardState(row, card.id)
         : defaultCardState(card.id);
 
-      // Enforce new cards per day limit
       if (state.state === 'new') {
         newCardsSeen++;
         if (newCardsSeen > newCardsRemaining) continue;
+      }
+
+      // Enforce max reviews per day (learning/relearning always pass through).
+      // Review cards are last in the ORDER BY, so once capped we can stop.
+      if (state.state === 'review') {
+        reviewCardsSeen++;
+        if (reviewCardsSeen > maxReviews) break;
       }
 
       results.push({ card, state });
@@ -475,7 +489,7 @@ export function getCardsForStudyAhead(
         cs.due,            cs.stability,   cs.difficulty,
         cs.elapsed_days,   cs.scheduled_days,
         cs.reps,           cs.lapses,
-        cs.state,          cs.last_review
+        cs.state,          cs.last_review, cs.learning_step_index
       FROM cards c
       JOIN card_states cs ON c.id = cs.card_id
       WHERE c.deck_id = ?
@@ -631,14 +645,14 @@ function getCardsByAll(db: Database): Result<Card[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Persist the FSRS scheduling output after a card review.
+ * Persist scheduling after a card review (FSRS + learning-step due times).
  *
  * Uses INSERT OR REPLACE so the function works for both the first review of a
  * new card and subsequent reviews.
  *
  * @param db          - sql.js Database instance.
  * @param cardId      - Card UUID.
- * @param fsrsOutput  - Scheduling output from {@link reviewCard} or {@link initializeCard}.
+ * @param schedule    - Resolved schedule from {@link resolveSchedule} in `scheduleWithLearningSteps`.
  * @param reviewedAt  - Unix timestamp (seconds) when the review occurred.
  * @param elapsedDays - Days elapsed since the previous review (0 for first review).
  * @returns The newly persisted CardState, or an error.
@@ -646,41 +660,43 @@ function getCardsByAll(db: Database): Result<Card[]> {
 export function updateCardAfterReview(
   db: Database,
   cardId: string,
-  fsrsOutput: FSRSOutput,
+  schedule: ResolvedCardSchedule,
   reviewedAt: number,
   elapsedDays: number,
 ): Result<CardState> {
   try {
-    const due = reviewedAt + fsrsOutput.scheduledDays * 86400;
     db.run(
       `INSERT OR REPLACE INTO card_states
          (card_id, due, stability, difficulty, elapsed_days, scheduled_days,
-          reps, lapses, state, last_review)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          reps, lapses, state, last_review, learning_step_index)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         cardId,
-        due,
-        fsrsOutput.stability,
-        fsrsOutput.difficulty,
+        schedule.due,
+        schedule.stability,
+        schedule.difficulty,
         elapsedDays,
-        fsrsOutput.scheduledDays,
-        fsrsOutput.reps,
-        fsrsOutput.lapses,
-        fsrsOutput.state,
+        schedule.scheduledDays,
+        schedule.reps,
+        schedule.lapses,
+        schedule.state,
         reviewedAt,
+        schedule.learningStepIndex,
       ],
     );
     const state: CardState = {
       cardId,
-      due,
-      stability:     fsrsOutput.stability,
-      difficulty:    fsrsOutput.difficulty,
+      due:               schedule.due,
+      stability:         schedule.stability,
+      difficulty:        schedule.difficulty,
       elapsedDays,
-      scheduledDays: fsrsOutput.scheduledDays,
-      reps:          fsrsOutput.reps,
-      lapses:        fsrsOutput.lapses,
-      state:         fsrsOutput.state,
-      lastReview:    reviewedAt,
+      scheduledDays:     schedule.scheduledDays,
+      reps:              schedule.reps,
+      lapses:            schedule.lapses,
+      state:             schedule.state,
+      lastReview:        reviewedAt,
+      learningStepIndex: schedule.learningStepIndex,
+      suspended:         false,
     };
     return { success: true, data: state };
   } catch (e) {
@@ -1026,8 +1042,8 @@ export function setCardState(db: Database, state: CardState): Result<void> {
     db.run(
       `INSERT OR REPLACE INTO card_states
          (card_id, due, stability, difficulty, elapsed_days, scheduled_days,
-          reps, lapses, state, last_review)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          reps, lapses, state, last_review, learning_step_index, suspended)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         state.cardId,
         state.due,
@@ -1039,12 +1055,43 @@ export function setCardState(db: Database, state: CardState): Result<void> {
         state.lapses,
         state.state,
         state.lastReview ?? null,
+        state.learningStepIndex,
+        state.suspended ? 1 : 0,
       ],
     );
     return { success: true, data: undefined };
   } catch (e) {
     return { success: false, error: String(e) };
   }
+}
+
+/**
+ * Suspend or unsuspend a card (excluded from study queues).
+ *
+ * @param db       - sql.js Database instance.
+ * @param cardId   - Card UUID.
+ * @param suspend  - True to suspend, false to unsuspend.
+ * @returns void on success, or an error.
+ */
+export function setCardSuspended(db: Database, cardId: string, suspend: boolean): Result<void> {
+  try {
+    db.run(`UPDATE card_states SET suspended = ? WHERE card_id = ?`, [suspend ? 1 : 0, cardId]);
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Check if a card has reached the leech threshold.
+ *
+ * @param lapses         - Current lapse count after this review.
+ * @param leechThreshold - Deck's configured threshold (0 = disabled).
+ * @returns True if the card just became a leech (exactly at threshold or every threshold multiple).
+ */
+export function isLeech(lapses: number, leechThreshold: number): boolean {
+  if (leechThreshold <= 0) return false;
+  return lapses >= leechThreshold && lapses % leechThreshold === 0;
 }
 
 /**
@@ -1115,13 +1162,13 @@ export function getAllDeckCardCounts(
         c.deck_id,
         COUNT(*)                                                              AS total,
         SUM(CASE WHEN cs.card_id IS NULL OR cs.state = 'new' THEN 1 ELSE 0 END) AS new_count,
-        SUM(CASE WHEN cs.state IN ('learning', 'relearning')  THEN 1 ELSE 0 END) AS learning_count,
+        SUM(CASE WHEN cs.state IN ('learning', 'relearning') AND cs.due <= ? THEN 1 ELSE 0 END) AS learning_count,
         SUM(CASE WHEN cs.state = 'review' AND cs.due <= ?     THEN 1 ELSE 0 END) AS review_count
       FROM cards c
       LEFT JOIN card_states cs ON c.id = cs.card_id
       GROUP BY c.deck_id
     `);
-    stmt.bind([now]);
+    stmt.bind([now, now]);
 
     const result: Record<string, DeckCardCounts> = {};
     while (stmt.step()) {
@@ -1169,12 +1216,17 @@ export function getTotalCardCount(db: Database): Result<number> {
 export interface DeckSettings {
   deckId: string;
   newCardsPerDay: number;
+  maxReviewsPerDay: number;
   /** JSON array of step intervals in minutes, e.g. [1, 10]. */
   againSteps: number[];
   /** Graduating interval in days. */
   graduatingInterval: number;
   /** Easy interval in days. */
   easyInterval: number;
+  /** Maximum interval in days before a card is shown again. */
+  maxInterval: number;
+  /** Number of lapses before a card is flagged as a leech. */
+  leechThreshold: number;
 }
 
 /**
@@ -1187,7 +1239,9 @@ export interface DeckSettings {
 export function getDeckSettings(db: Database, deckId: string): Result<DeckSettings> {
   try {
     const stmt = db.prepare(
-      'SELECT new_cards_per_day, again_steps, graduating_interval, easy_interval FROM deck_settings WHERE deck_id = ?',
+      `SELECT new_cards_per_day, max_reviews_per_day, again_steps,
+              graduating_interval, easy_interval, max_interval, leech_threshold
+       FROM deck_settings WHERE deck_id = ?`,
     );
     stmt.bind([deckId]);
     if (stmt.step()) {
@@ -1205,14 +1259,21 @@ export function getDeckSettings(db: Database, deckId: string): Result<DeckSettin
         data: {
           deckId,
           newCardsPerDay: num(row, 'new_cards_per_day'),
+          maxReviewsPerDay: num(row, 'max_reviews_per_day') || 200,
           againSteps,
           graduatingInterval: num(row, 'graduating_interval') || 1,
           easyInterval: num(row, 'easy_interval') || 4,
+          maxInterval: num(row, 'max_interval') || 365,
+          leechThreshold: num(row, 'leech_threshold') || 8,
         },
       };
     }
     stmt.free();
-    return { success: true, data: { deckId, newCardsPerDay: 20, againSteps: [1, 10], graduatingInterval: 1, easyInterval: 4 } };
+    const defaults: DeckSettings = {
+      deckId, newCardsPerDay: 20, maxReviewsPerDay: 200, againSteps: [1, 10],
+      graduatingInterval: 1, easyInterval: 4, maxInterval: 365, leechThreshold: 8,
+    };
+    return { success: true, data: defaults };
   } catch (e) {
     return { success: false, error: String(e) };
   }
@@ -1237,6 +1298,34 @@ export function setNewCardsPerDay(
        VALUES (?, ?)
        ON CONFLICT(deck_id) DO UPDATE SET new_cards_per_day = excluded.new_cards_per_day`,
       [deckId, Math.max(0, Math.round(newCardsPerDay))],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Update a single deck_settings column by name.
+ *
+ * @param db      - sql.js Database instance.
+ * @param deckId  - UUID of the deck.
+ * @param column  - Column to update (validated against allowlist).
+ * @param value   - New numeric value.
+ * @returns void on success, or an error.
+ */
+export function setDeckSetting(
+  db: Database,
+  deckId: string,
+  column: 'max_reviews_per_day' | 'max_interval' | 'leech_threshold',
+  value: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT INTO deck_settings (deck_id, ${column})
+       VALUES (?, ?)
+       ON CONFLICT(deck_id) DO UPDATE SET ${column} = excluded.${column}`,
+      [deckId, Math.max(0, Math.round(value))],
     );
     return { success: true, data: undefined };
   } catch (e) {
@@ -1282,13 +1371,13 @@ export function getDeckStats(
       SELECT
         COUNT(*)                                                              AS total,
         SUM(CASE WHEN cs.card_id IS NULL OR cs.state = 'new' THEN 1 ELSE 0 END) AS new_count,
-        SUM(CASE WHEN cs.state IN ('learning', 'relearning')  THEN 1 ELSE 0 END) AS learning_count,
+        SUM(CASE WHEN cs.state IN ('learning', 'relearning') AND cs.due <= ? THEN 1 ELSE 0 END) AS learning_count,
         SUM(CASE WHEN cs.state = 'review'                     THEN 1 ELSE 0 END) AS review_count
       FROM cards c
       LEFT JOIN card_states cs ON c.id = cs.card_id
       WHERE c.deck_id = ?
     `);
-    countStmt.bind([deckId]);
+    countStmt.bind([now, deckId]);
     countStmt.step();
     const countRow = countStmt.getAsObject() as Row;
     const totalCards = num(countRow, 'total');
@@ -1531,7 +1620,7 @@ export function setAppSetting(db: Database, key: string, value: string): Result<
 export function getGlobalStats(
   db: Database,
   now: number,
-): Result<{ totalCards: number; totalReviews: number; retentionRate: number; longestStreak: number }> {
+): Result<{ totalCards: number; totalReviews: number; retentionRate: number; currentStreak: number }> {
   try {
     const cardStmt = db.prepare('SELECT COUNT(*) AS cnt FROM cards');
     cardStmt.step();
@@ -1551,15 +1640,17 @@ export function getGlobalStats(
     const retentionRate = totalReviews > 0 ? Math.round((correct / totalReviews) * 100) : 0;
     reviewStmt.free();
 
-    // Longest streak across all decks
+    // Current streak: consecutive days with at least one review, counting back from today
     const daySeconds = 86400;
+    const todayDay = Math.floor(now / daySeconds);
     const streakStmt = db.prepare(`
       SELECT DISTINCT CAST(reviewed_at / 86400 AS INTEGER) AS day
       FROM review_logs
+      WHERE reviewed_at >= ?
       ORDER BY day DESC
     `);
-    const todayDay = Math.floor(now / daySeconds);
-    let longestStreak = 0;
+    // Only scan the last 365 days — no realistic streak is longer
+    streakStmt.bind([(todayDay - 365) * daySeconds]);
     let currentStreak = 0;
     let expectedDay = todayDay;
     while (streakStmt.step()) {
@@ -1569,15 +1660,15 @@ export function getGlobalStats(
         currentStreak++;
         expectedDay--;
       } else if (day === expectedDay + 1) {
+        // Duplicate day bucket, skip
         continue;
       } else {
         break;
       }
     }
-    longestStreak = currentStreak;
     streakStmt.free();
 
-    return { success: true, data: { totalCards, totalReviews, retentionRate, longestStreak } };
+    return { success: true, data: { totalCards, totalReviews, retentionRate, currentStreak } };
   } catch (e) {
     return { success: false, error: String(e) };
   }

@@ -35,7 +35,7 @@ const LS_ONBOARDED_KEY = 'kit_onboarded';
 function Onboarding({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div
-      className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center"
+      className="min-h-screen bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex items-center justify-center"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingBottom: 'env(safe-area-inset-bottom)',
@@ -51,13 +51,13 @@ function Onboarding({ onDismiss }: { onDismiss: () => void }) {
           remember anything. Import your Anki .apkg decks and study on the go.
         </p>
         <div className="flex flex-col gap-2 text-xs text-[#A3A3A3] leading-relaxed">
-          <p>1. Tap <strong className="text-[#171717] dark:text-[#E5E5E5]">Import Deck</strong> to add an .apkg file</p>
+          <p>1. Tap <strong className="text-[#1c1c1e] dark:text-[#E5E5E5]">Import Deck</strong> to add an .apkg file</p>
           <p>2. Tap a deck to start studying</p>
           <p>3. Rate each card and Kit schedules your reviews</p>
         </div>
         <button
           onClick={onDismiss}
-          className="w-full py-3 text-sm font-semibold bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity mt-2"
+          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity mt-2"
         >
           Get Started
         </button>
@@ -90,7 +90,7 @@ function ICloudRestorePrompt({
 
   return (
     <div
-      className="min-h-screen bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex items-center justify-center"
+      className="min-h-screen bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex items-center justify-center"
       style={{
         paddingTop: 'env(safe-area-inset-top)',
         paddingBottom: 'env(safe-area-inset-bottom)',
@@ -98,7 +98,7 @@ function ICloudRestorePrompt({
         paddingRight: 'max(1.5rem, env(safe-area-inset-right))',
       }}
     >
-      <div className="max-w-sm w-full bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
+      <div className="max-w-sm w-full bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
         <h2 className="text-base font-semibold text-center">iCloud Backup Found</h2>
         <p className="text-sm text-[#737373] text-center">
           A backup with {cardCount} {cardCount === 1 ? 'card' : 'cards'} from {formatted} was
@@ -106,13 +106,13 @@ function ICloudRestorePrompt({
         </p>
         <button
           onClick={onRestore}
-          className="w-full py-3 text-sm font-semibold bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
+          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
         >
           Restore Backup
         </button>
         <button
           onClick={onSkip}
-          className="w-full py-3 text-sm text-[#737373] active:text-[#171717] dark:active:text-[#E5E5E5] transition-colors"
+          className="w-full py-3 text-sm text-[#737373] active:text-[#1c1c1e] dark:active:text-[#E5E5E5] transition-colors"
         >
           Start Fresh
         </button>

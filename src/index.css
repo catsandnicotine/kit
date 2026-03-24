@@ -18,6 +18,7 @@
     overscroll-behavior: none;
     -webkit-user-select: none;
     user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   }
 
   /* Allow selection inside card content and editable fields */
@@ -31,12 +32,21 @@
     font-size: 16px;
   }
 
-  /* Theme-aware root for overscroll and minimal UI consistency */
+  /* Theme-aware root: CSS custom properties for bg and surface colors */
   html {
-    background-color: #FAFAFA;
+    --kit-bg: #FAFAFA;
+    --kit-surface: #FFFFFF;
+    background-color: var(--kit-bg);
   }
-  html.dark {
-    background-color: #0A0A0A;
+  html[data-theme="dark"] {
+    --kit-bg: #1c1c1e;
+    --kit-surface: #2c2c2e;
+    background-color: var(--kit-bg);
+  }
+  html[data-theme="black"] {
+    --kit-bg: #0A0A0A;
+    --kit-surface: #141414;
+    background-color: var(--kit-bg);
   }
 }
 
@@ -180,7 +190,7 @@
     pointer-events: none;
   }
   .dark .browse-card-fade {
-    background: linear-gradient(transparent, #1a1a1a);
+    background: linear-gradient(transparent, var(--kit-surface));
   }
 
   /* Cat bounce animation (header tap) */
@@ -192,22 +202,6 @@
   }
   .cat-bounce {
     animation: cat-bounce 0.4s ease-out;
-  }
-
-  /* MiniCat 2-frame walk animation — alternates between frame1 and frame2 */
-  .minicat-walking .minicat-frame1 {
-    animation: minicat-show 0.4s steps(1) infinite;
-  }
-  .minicat-walking .minicat-frame2 {
-    animation: minicat-hide 0.4s steps(1) infinite;
-  }
-  @keyframes minicat-show {
-    0%, 50% { opacity: 1; }
-    50.01%, 100% { opacity: 0; }
-  }
-  @keyframes minicat-hide {
-    0%, 50% { opacity: 0; }
-    50.01%, 100% { opacity: 1; }
   }
 
   /* Deck progress bar */

@@ -99,6 +99,13 @@ export interface CardState {
   lapses: number;
   state: LearningState;
   lastReview: number | null;
+  /**
+   * Index into the deck's again-steps (minutes) for the next "Good" while in
+   * learning/relearning. 0 = next Good applies steps[0], then increments.
+   */
+  learningStepIndex: number;
+  /** Whether the card is suspended (excluded from study). */
+  suspended: boolean;
 }
 
 export type Rating = 'again' | 'hard' | 'good' | 'easy';
@@ -112,7 +119,7 @@ export interface StudySession {
   cardsRemaining: number;
 }
 
-export type Theme = 'light' | 'dark' | 'system';
+export type Theme = 'light' | 'dark' | 'black';
 
 /** Output produced by the FSRS scheduling functions. */
 export interface FSRSOutput {

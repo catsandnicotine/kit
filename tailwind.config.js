@@ -7,6 +7,9 @@ export default {
   darkMode: 'class',
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'system-ui', 'sans-serif'],
+      },
       spacing: {
         'safe-top': 'env(safe-area-inset-top)',
         'safe-bottom': 'env(safe-area-inset-bottom)',
@@ -24,7 +27,7 @@ export default {
         },
         text: {
           dark: '#E5E5E5',
-          light: '#171717',
+          light: '#1c1c1e',
           muted: '#737373',
         },
         border: {

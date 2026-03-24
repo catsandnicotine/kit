@@ -40,8 +40,8 @@ interface DeckStatsProps {
 /** A single stat card. */
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col items-center gap-1 p-3 bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg">
-      <span className="text-lg font-semibold text-[#171717] dark:text-[#E5E5E5] tabular-nums">
+    <div className="flex flex-col items-center gap-1 p-3 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg">
+      <span className="text-lg font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums">
         {value}
       </span>
       <span className="text-xs text-[#737373]">{label}</span>
@@ -77,7 +77,7 @@ function ReviewChart({ data }: { data: number[] }) {
                 </span>
               )}
               <div
-                className="w-full rounded-sm bg-[#171717] dark:bg-[#E5E5E5]"
+                className="w-full rounded-sm bg-[#1c1c1e] dark:bg-[#E5E5E5]"
                 style={{ height }}
               />
             </div>
@@ -113,7 +113,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
 
   if (!stats) {
     return (
-      <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+      <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
         <header
           className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
@@ -133,7 +133,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -180,7 +180,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
 
       {/* Cards by state */}
       <section className="px-4 pb-4">
-        <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
             Cards by State
           </h3>
@@ -203,7 +203,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
 
       {/* 7-day chart */}
       <section className="px-4 pb-4">
-        <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
             Reviews — Last 7 Days
           </h3>

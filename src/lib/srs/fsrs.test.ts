@@ -37,6 +37,8 @@ function makeCardState(overrides: Partial<CardState> = {}): CardState {
     lapses: 0,
     state: 'review',
     lastReview: null,
+    learningStepIndex: 0,
+    suspended: false,
     ...overrides,
   };
 }

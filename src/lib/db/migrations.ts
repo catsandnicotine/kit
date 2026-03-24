@@ -46,6 +46,35 @@ const MIGRATIONS: Migration[] = [
       try { db.run(sql); } catch { /* column already exists */ }
     }
   },
+  // ── v1 → v2: learning_step_index on card_states (Anki-style minute steps) ─
+  (db) => {
+    try {
+      db.run(
+        `ALTER TABLE card_states ADD COLUMN learning_step_index INTEGER NOT NULL DEFAULT 0`,
+      );
+    } catch {
+      /* column already exists */
+    }
+    // Old builds used 1-day due for learning; bring those cards back to "due now"
+    // so the new due-based learning filter does not hide them indefinitely.
+    db.run(`
+      UPDATE card_states
+      SET due = CAST(strftime('%s', 'now') AS INTEGER)
+      WHERE state IN ('learning', 'relearning')
+    `);
+  },
+  // ── v2 → v3: suspend, max reviews/day, max interval, leech threshold ──
+  (db) => {
+    const alters = [
+      `ALTER TABLE card_states ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE deck_settings ADD COLUMN max_reviews_per_day INTEGER NOT NULL DEFAULT 200`,
+      `ALTER TABLE deck_settings ADD COLUMN max_interval INTEGER NOT NULL DEFAULT 365`,
+      `ALTER TABLE deck_settings ADD COLUMN leech_threshold INTEGER NOT NULL DEFAULT 8`,
+    ];
+    for (const sql of alters) {
+      try { db.run(sql); } catch { /* column already exists */ }
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------------

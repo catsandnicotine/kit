@@ -62,16 +62,18 @@ export const CREATE_CARDS_TABLE = `
 
 export const CREATE_CARD_STATES_TABLE = `
   CREATE TABLE IF NOT EXISTS card_states (
-    card_id        TEXT    PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
-    due            INTEGER NOT NULL,
-    stability      REAL    NOT NULL DEFAULT 0,
-    difficulty     REAL    NOT NULL DEFAULT 0,
-    elapsed_days   INTEGER NOT NULL DEFAULT 0,
-    scheduled_days INTEGER NOT NULL DEFAULT 0,
-    reps           INTEGER NOT NULL DEFAULT 0,
-    lapses         INTEGER NOT NULL DEFAULT 0,
-    state          TEXT    NOT NULL DEFAULT 'new',
-    last_review    INTEGER
+    card_id              TEXT    PRIMARY KEY REFERENCES cards(id) ON DELETE CASCADE,
+    due                  INTEGER NOT NULL,
+    stability            REAL    NOT NULL DEFAULT 0,
+    difficulty           REAL    NOT NULL DEFAULT 0,
+    elapsed_days         INTEGER NOT NULL DEFAULT 0,
+    scheduled_days       INTEGER NOT NULL DEFAULT 0,
+    reps                 INTEGER NOT NULL DEFAULT 0,
+    lapses               INTEGER NOT NULL DEFAULT 0,
+    state                TEXT    NOT NULL DEFAULT 'new',
+    last_review          INTEGER,
+    learning_step_index  INTEGER NOT NULL DEFAULT 0,
+    suspended            INTEGER NOT NULL DEFAULT 0
   );
 `;
 
@@ -103,9 +105,12 @@ export const CREATE_DECK_SETTINGS_TABLE = `
   CREATE TABLE IF NOT EXISTS deck_settings (
     deck_id              TEXT    PRIMARY KEY REFERENCES decks(id) ON DELETE CASCADE,
     new_cards_per_day    INTEGER NOT NULL DEFAULT 20,
+    max_reviews_per_day  INTEGER NOT NULL DEFAULT 200,
     again_steps          TEXT    NOT NULL DEFAULT '[1,10]',
     graduating_interval  INTEGER NOT NULL DEFAULT 1,
-    easy_interval        INTEGER NOT NULL DEFAULT 4
+    easy_interval        INTEGER NOT NULL DEFAULT 4,
+    max_interval         INTEGER NOT NULL DEFAULT 365,
+    leech_threshold      INTEGER NOT NULL DEFAULT 8
   );
 `;
 
