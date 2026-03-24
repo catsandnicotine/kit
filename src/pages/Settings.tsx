@@ -88,19 +88,19 @@ function BackupDetails({ meta }: { meta: BackupMeta }) {
     <div className="flex flex-col gap-1">
       <div className="flex justify-between text-sm">
         <span className="text-[#737373]">Last backup</span>
-        <span className="text-[#171717] dark:text-[#E5E5E5]">
+        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
           {formatTimestamp(meta.timestamp)}
         </span>
       </div>
       <div className="flex justify-between text-sm">
         <span className="text-[#737373]">Cards</span>
-        <span className="text-[#171717] dark:text-[#E5E5E5]">
+        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
           {meta.cardCount}
         </span>
       </div>
       <div className="flex justify-between text-sm">
         <span className="text-[#737373]">Device</span>
-        <span className="text-[#171717] dark:text-[#E5E5E5]">
+        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
           {meta.deviceName}
         </span>
       </div>
@@ -135,7 +135,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
     totalCards: number;
     totalReviews: number;
     retentionRate: number;
-    longestStreak: number;
+    currentStreak: number;
   } | null>(null);
 
   // Show/hide timer
@@ -208,7 +208,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
   }, [saveDefaultSteps]);
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -220,7 +220,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
       >
         <button
           onClick={() => { hapticTap(); onBack(); }}
-          className="text-sm text-[#737373] hover:text-[#171717] dark:hover:text-[#E5E5E5] transition-colors mr-3"
+          className="text-sm text-[#737373] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors mr-3"
         >
           ← Back
         </button>
@@ -242,15 +242,15 @@ export default function Settings({ db, onBack }: SettingsProps) {
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
             Theme
           </h2>
-          <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
             <div className="flex gap-2">
-              {(['light', 'dark', 'system'] as const).map((t) => (
+              {(['light', 'dark', 'black'] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => handleThemeChange(t)}
                   className={`flex-1 py-2 text-sm rounded-md border transition-colors ${
                     theme === t
-                      ? 'bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-transparent font-semibold'
+                      ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-transparent font-semibold'
                       : 'border-[#D4D4D4] dark:border-[#404040] text-[#737373]'
                   }`}
                 >
@@ -267,7 +267,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
             <h2 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
               Global Statistics
             </h2>
-            <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+            <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col items-center gap-0.5">
                   <span className="text-lg font-semibold tabular-nums">{globalStats.totalCards.toLocaleString()}</span>
@@ -282,7 +282,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
                   <span className="text-xs text-[#737373]">Retention</span>
                 </div>
                 <div className="flex flex-col items-center gap-0.5">
-                  <span className="text-lg font-semibold tabular-nums">{globalStats.longestStreak > 0 ? `${globalStats.longestStreak}d` : '—'}</span>
+                  <span className="text-lg font-semibold tabular-nums">{globalStats.currentStreak > 0 ? `${globalStats.currentStreak}d` : '—'}</span>
                   <span className="text-xs text-[#737373]">Streak</span>
                 </div>
               </div>
@@ -295,15 +295,15 @@ export default function Settings({ db, onBack }: SettingsProps) {
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
             Study Preferences
           </h2>
-          <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
             <div className="flex items-center justify-between">
               <span className="text-sm">Show session timer</span>
               <button
                 onClick={handleTimerToggle}
-                className={`w-11 h-6 rounded-full transition-colors relative ${showTimer ? 'bg-[#171717] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#404040]'}`}
+                className={`w-11 h-6 rounded-full transition-colors relative ${showTimer ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#404040]'}`}
               >
                 <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[#0A0A0A] transition-transform ${showTimer ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[var(--kit-bg)] transition-transform ${showTimer ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
                 />
               </button>
             </div>
@@ -313,60 +313,60 @@ export default function Settings({ db, onBack }: SettingsProps) {
         {/* Default learning steps */}
         <section className="pb-4">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-1">
-            Default Learning Steps
+            Default Learning Settings
           </h2>
           <p className="text-xs text-[#A3A3A3] mb-3 leading-relaxed">
-            These defaults apply to newly imported decks. You can override them per deck in each deck's settings.
+            These apply to newly imported decks. You can customize each deck individually in its own settings.
           </p>
-          <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-sm">Relearn steps</span>
+                <span className="text-sm">Practice intervals</span>
                 <input
                   type="text"
                   value={defaultSteps}
                   onChange={(e) => setDefaultSteps(e.target.value)}
                   onBlur={saveDefaultSteps}
-                  className="w-24 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-2 text-[#171717] dark:text-[#E5E5E5] outline-none"
+                  className="w-24 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
                   placeholder="1, 10"
                 />
               </div>
-              <p className="text-[11px] text-[#A3A3A3] mt-1">Minutes between re-shows when you press "Again"</p>
+              <p className="text-[11px] text-[#A3A3A3] mt-1">Minutes between re-shows when you get a card wrong (e.g. "1, 10" = 1 min then 10 min)</p>
             </div>
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-sm">Graduating interval</span>
+                <span className="text-sm">First review after learning</span>
                 <select
                   value={defaultGradInt}
                   onChange={(e) => { hapticTap(); setDefaultGradInt(Number(e.target.value)); }}
-                  className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#171717] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
+                  className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
                 >
                   {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
               </div>
-              <p className="text-[11px] text-[#A3A3A3] mt-1">Days until next review after passing all learning steps</p>
+              <p className="text-[11px] text-[#A3A3A3] mt-1">Days until a card comes back after you finish practicing it</p>
             </div>
             <div>
               <div className="flex items-center justify-between">
-                <span className="text-sm">Easy interval</span>
+                <span className="text-sm">"Easy" shortcut</span>
                 <select
                   value={defaultEasyInt}
                   onChange={(e) => { hapticTap(); setDefaultEasyInt(Number(e.target.value)); }}
-                  className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#171717] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
+                  className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
                 >
                   {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
                     <option key={n} value={n}>{n}</option>
                   ))}
                 </select>
               </div>
-              <p className="text-[11px] text-[#A3A3A3] mt-1">Days until next review when you press "Easy" on a new card</p>
+              <p className="text-[11px] text-[#A3A3A3] mt-1">Days until next review when you press "Easy" — for cards you already know</p>
             </div>
             <div className="flex gap-2 pt-1">
               <button
                 onClick={applyToAllDecks}
-                className="flex-1 py-2 text-xs font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
+                className="flex-1 py-2 text-xs font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
               >
                 Apply to all decks
               </button>
@@ -374,7 +374,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
                 onClick={applyToNewOnly}
                 className="flex-1 py-2 text-xs border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#737373] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
               >
-                Apply to new decks only
+                New decks only
               </button>
             </div>
           </div>
@@ -386,11 +386,11 @@ export default function Settings({ db, onBack }: SettingsProps) {
             iCloud Backup
           </h2>
 
-          <div className="bg-white dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
             {/* Status */}
             {checking ? (
               <div className="flex items-center gap-3">
-                <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
                 <span className="text-sm text-[#737373]">
                   Checking backup status…
                 </span>
@@ -407,7 +407,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
             {/* Backup progress */}
             {isBackingUp && (
               <div className="flex items-center gap-3">
-                <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
                 <span className="text-sm text-[#737373]">
                   Backing up…
                 </span>
@@ -446,7 +446,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
             <button
               onClick={handleBackup}
               disabled={isBackingUp || !db}
-              className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#171717] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+              className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
             >
               {isBackingUp ? 'Backing up…' : 'Back Up Now'}
             </button>

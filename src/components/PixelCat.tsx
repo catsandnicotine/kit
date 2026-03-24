@@ -9,7 +9,7 @@
 import { useTheme } from '../hooks/useTheme';
 
 interface PixelCatProps {
-  /** Width/height in pixels. Default 64. */
+  /** Height in pixels (width scales proportionally). Default 64. */
   size?: number;
   /** Additional CSS classes. */
   className?: string;
@@ -21,39 +21,35 @@ interface PixelCatProps {
  * @param size      - Width/height in pixels (square).
  * @param className - Additional CSS classes.
  */
+// 12x6 pixel grid — cat head only (ears, eyes, nose).
+const GRID = [
+  [0,0,1,0,0,0,0,0,1,0,0,0],
+  [0,1,1,1,0,0,0,1,1,1,0,0],
+  [0,1,1,1,1,1,1,1,1,1,0,0],
+  [0,1,0,1,1,1,1,0,1,1,0,0],
+  [0,1,1,1,0,1,1,1,1,1,0,0],
+  [0,0,1,1,1,1,1,1,1,0,0,0],
+];
+const COLS = 12;
+const ROWS = 6;
+
 export function PixelCat({ size = 64, className = '' }: PixelCatProps) {
   const { resolvedTheme } = useTheme();
-  const fill = resolvedTheme === 'dark' ? '#E5E5E5' : '#171717';
+  const fill = resolvedTheme === 'dark' ? '#E5E5E5' : '#1c1c1e';
 
-  // 12x12 pixel grid. 1 = filled, 0 = empty.
-  // Cat sitting with pointy ears, small body, tail curling up.
-  const grid = [
-    [0,0,1,0,0,0,0,0,1,0,0,0],
-    [0,1,1,1,0,0,0,1,1,1,0,0],
-    [0,1,1,1,1,1,1,1,1,1,0,0],
-    [0,1,0,1,1,1,1,0,1,1,0,0],
-    [0,1,1,1,0,1,1,1,1,1,0,0],
-    [0,0,1,1,1,1,1,1,1,0,0,0],
-    [0,0,1,1,1,1,1,1,1,0,0,0],
-    [0,0,1,1,1,1,1,1,1,0,0,0],
-    [0,0,1,1,0,0,0,1,1,0,0,0],
-    [0,0,1,1,0,0,0,1,1,1,0,0],
-    [0,0,0,0,0,0,0,0,0,1,1,0],
-    [0,0,0,0,0,0,0,0,0,0,1,0],
-  ];
-
-  const cellSize = size / 12;
+  const cellSize = size / ROWS;
+  const width = COLS * cellSize;
 
   return (
     <svg
-      width={size}
+      width={width}
       height={size}
-      viewBox={`0 0 ${size} ${size}`}
+      viewBox={`0 0 ${width} ${size}`}
       className={className}
       aria-label="Kit the cat"
       role="img"
     >
-      {grid.map((row, y) =>
+      {GRID.map((row, y) =>
         row.map((cell, x) =>
           cell ? (
             <rect

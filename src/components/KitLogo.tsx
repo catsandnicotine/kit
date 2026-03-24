@@ -1,72 +1,35 @@
 /**
- * KitLogo — inline SVG pixel-grid rendering "Ki†".
- *
- * The "t" is a cross (†) — same height/stroke as K and i.
- * Uses useTheme() for fill color.
+ * KitLogo — "Kit" rendered in bold system font. Uses useTheme() for color.
  */
 
 import { useTheme } from '../hooks/useTheme';
 
 interface KitLogoProps {
-  /** Height in pixels. Width scales proportionally. Default 16. */
+  /** Font size / height in pixels. Default 16. */
   height?: number;
 }
 
 /**
- * Pixel-art "Ki†" logo rendered as inline SVG.
- *
- * @param height - Logo height in pixels.
+ * @param height - Font size in pixels.
  */
 export function KitLogo({ height = 16 }: KitLogoProps) {
   const { resolvedTheme } = useTheme();
-  const fill = resolvedTheme === 'dark' ? '#E5E5E5' : '#171717';
-
-  // 5-row grid for each letter, 1px gap between letters.
-  // K: 3 wide, i: 1 wide, †: 3 wide → total 10 cols with gaps
-  // Using a 12x5 grid for clean pixel rendering.
-  //
-  // K        i   †
-  // 1 0 1    1   0 1 0
-  // 1 1 0    0   1 1 1
-  // 1 0 0    1   0 1 0
-  // 1 1 0    1   0 1 0
-  // 1 0 1    1   0 1 0
-
-  const grid = [
-    [1,0,1, 0, 1, 0, 0,1,0],
-    [1,1,0, 0, 0, 0, 1,1,1],
-    [1,0,0, 0, 1, 0, 0,1,0],
-    [1,1,0, 0, 1, 0, 0,1,0],
-    [1,0,1, 0, 1, 0, 0,1,0],
-  ];
-
-  const cols = 9;
-  const rows = 5;
-  const cellSize = height / rows;
-  const width = cols * cellSize;
+  const color = resolvedTheme === 'dark' ? '#E5E5E5' : '#1c1c1e';
 
   return (
-    <svg
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
+    <span
       aria-label="Kit logo"
-      role="img"
+      style={{
+        fontSize: height,
+        fontWeight: 700,
+        color,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif',
+        letterSpacing: '-0.02em',
+        lineHeight: 1,
+        userSelect: 'none',
+      }}
     >
-      {grid.map((row, y) =>
-        row.map((cell, x) =>
-          cell ? (
-            <rect
-              key={`${x}-${y}`}
-              x={x * cellSize}
-              y={y * cellSize}
-              width={cellSize}
-              height={cellSize}
-              fill={fill}
-            />
-          ) : null,
-        ),
-      )}
-    </svg>
+      Kit
+    </span>
   );
 }

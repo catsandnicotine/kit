@@ -155,7 +155,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
   }, [editingCard]);
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark font-mono">
+    <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
       {/* Header */}
       <header
         className="flex items-center gap-3 pb-3 border-b border-border-light dark:border-border-dark shrink-0"

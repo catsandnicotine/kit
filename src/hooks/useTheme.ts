@@ -5,9 +5,9 @@ import type { Theme } from '../types';
 type ResolvedTheme = 'light' | 'dark';
 
 export interface ThemeContextValue {
-  /** The user's theme preference (may be 'system'). */
+  /** The user's theme preference ('light', 'dark', or 'black'). */
   theme: Theme;
-  /** The actually applied theme ('light' or 'dark'). */
+  /** The actually applied theme ('light' or 'dark'). Both 'dark' and 'black' resolve to 'dark'. */
   resolvedTheme: ResolvedTheme;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
@@ -28,45 +28,41 @@ export function useTheme(): ThemeContextValue {
 const LS_THEME_KEY = 'kit_theme';
 
 /**
- * Detects the system color scheme preference.
- * @returns 'dark' | 'light'
- */
-function getSystemTheme(): ResolvedTheme {
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-/**
  * Resolve the effective theme from the preference.
+ * Both 'dark' and 'black' resolve to 'dark' for Tailwind's dark: variants.
  * @param pref - The theme preference.
  * @returns The resolved theme.
  */
 function resolve(pref: Theme): ResolvedTheme {
-  return pref === 'system' ? getSystemTheme() : pref;
+  return pref === 'light' ? 'light' : 'dark';
 }
 
 /**
- * Applies the theme class to the html element.
- * @param resolved - The resolved theme to apply.
+ * Applies the theme class and data attribute to the html element.
+ * @param theme - The theme preference to apply.
  */
-function applyTheme(resolved: ResolvedTheme): void {
+function applyTheme(theme: Theme): void {
   const root = document.documentElement;
-  if (resolved === 'dark') {
-    root.classList.add('dark');
-  } else {
+  if (theme === 'light') {
     root.classList.remove('dark');
+  } else {
+    root.classList.add('dark');
   }
+  root.setAttribute('data-theme', theme);
 }
 
 /**
  * Load persisted theme preference from localStorage.
- * @returns The saved Theme or 'system' as default.
+ * @returns The saved Theme or 'black' as default (preserving current OLED dark default).
  */
 function loadThemePref(): Theme {
   try {
     const saved = localStorage.getItem(LS_THEME_KEY);
-    if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
+    if (saved === 'light' || saved === 'dark' || saved === 'black') return saved;
+    // Migrate old 'system' preference to 'black'
+    if (saved === 'system') return 'black';
   } catch { /* ignore */ }
-  return 'system';
+  return 'black';
 }
 
 /**
@@ -80,21 +76,7 @@ export function useThemeState(): ThemeContextValue {
   useEffect(() => {
     const r = resolve(theme);
     setResolved(r);
-    applyTheme(r);
-  }, [theme]);
-
-  // Sync with system preference changes when in 'system' mode
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = (e: MediaQueryListEvent) => {
-      if (theme === 'system') {
-        const r: ResolvedTheme = e.matches ? 'dark' : 'light';
-        setResolved(r);
-        applyTheme(r);
-      }
-    };
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
+    applyTheme(theme);
   }, [theme]);
 
   const setTheme = (next: Theme) => {
@@ -104,7 +86,7 @@ export function useThemeState(): ThemeContextValue {
 
   const toggleTheme = () => {
     setThemeState(prev => {
-      const next = resolve(prev) === 'dark' ? 'light' : 'dark';
+      const next: Theme = prev === 'light' ? 'dark' : prev === 'dark' ? 'black' : 'light';
       try { localStorage.setItem(LS_THEME_KEY, next); } catch { /* ignore */ }
       return next;
     });

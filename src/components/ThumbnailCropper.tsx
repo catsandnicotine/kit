@@ -120,7 +120,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
       <div className="bg-white dark:bg-[#1A1A1A] rounded-xl overflow-hidden w-[300px] flex flex-col">
         {/* Preview area */}
         <div
-          className="relative overflow-hidden mx-auto mt-4 bg-[#F0F0F0] dark:bg-[#0A0A0A]"
+          className="relative overflow-hidden mx-auto mt-4 bg-[#F0F0F0] dark:bg-[var(--kit-bg)]"
           style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE, touchAction: 'none' }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
@@ -164,7 +164,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
             step="0.05"
             value={scale}
             onChange={(e) => setScale(Number(e.target.value))}
-            className="w-full accent-[#171717] dark:accent-[#E5E5E5]"
+            className="w-full accent-[#1c1c1e] dark:accent-[#E5E5E5]"
           />
         </div>
 
@@ -179,7 +179,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
           <button
             onClick={handleSave}
             disabled={loading || !imgEl}
-            className="flex-1 py-2 text-sm font-semibold bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 disabled:opacity-40"
+            className="flex-1 py-2 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 disabled:opacity-40"
           >
             Save
           </button>

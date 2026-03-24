@@ -35,7 +35,6 @@ import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics'
 import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
 import { PixelCat } from '../components/PixelCat';
 import { KitLogo } from '../components/KitLogo';
-import { MiniCat } from '../components/MiniCat';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
 
 // ---------------------------------------------------------------------------
@@ -66,6 +65,18 @@ function GearIcon() {
   );
 }
 
+const COUNT_COLOR_MAP: Record<string, string> = {
+  blue: 'text-blue-500 dark:text-blue-400',
+  orange: 'text-orange-500 dark:text-orange-400',
+  green: 'text-green-500 dark:text-green-400',
+};
+
+const IMPORT_LABELS: Record<string, string> = {
+  parsing: 'Parsing .apkg file…',
+  'storing-cards': 'Storing cards — this may take a moment for large decks…',
+  'storing-media': 'Storing media files…',
+};
+
 /** Count badge with a colour. */
 function CountBadge({
   count,
@@ -76,15 +87,9 @@ function CountBadge({
   color: 'blue' | 'orange' | 'green';
   label: string;
 }) {
-  const colorMap: Record<string, string> = {
-    blue: 'text-blue-500 dark:text-blue-400',
-    orange: 'text-orange-500 dark:text-orange-400',
-    green: 'text-green-500 dark:text-green-400',
-  };
-
   return (
     <span
-      className={`text-sm font-semibold tabular-nums ${colorMap[color]}`}
+      className={`text-sm font-semibold tabular-nums ${COUNT_COLOR_MAP[color]}`}
       title={label}
     >
       {count}
@@ -155,7 +160,7 @@ function DeckActionMenu({
     <div ref={menuRef} className="relative shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="px-3 py-3 text-sm text-[#737373] hover:text-[#171717] dark:hover:text-[#E5E5E5] transition-colors"
+        className="px-3 py-3 text-sm text-[#737373] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
         aria-label="Deck actions"
       >
         ···
@@ -164,38 +169,38 @@ function DeckActionMenu({
         <div className="absolute right-0 top-full mt-1 z-10 min-w-[160px] bg-white dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
           <button
             onClick={() => { setOpen(false); onRename(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
           >
             Rename
           </button>
           <button
             onClick={() => { setOpen(false); onBrowse(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
           >
             Browse Cards
           </button>
           <button
             onClick={() => { setOpen(false); onStats(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
           >
             Statistics
           </button>
           <button
             onClick={() => { setOpen(false); onDeckSettings(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
           >
             Settings
           </button>
           <button
             onClick={() => { setOpen(false); onSetThumbnail(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
           >
             Set Thumbnail
           </button>
           <button
             onClick={() => { setOpen(false); onExport(); }}
             disabled={exporting}
-            className="w-full text-left px-4 py-3 text-sm text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
           >
             {exporting ? 'Exporting…' : 'Export .apkg'}
           </button>
@@ -291,7 +296,7 @@ function DeckRow({
               onChange={(e) => setDraftName(e.target.value)}
               onBlur={commitRename}
               onKeyDown={handleKeyDown}
-              className="flex-1 text-sm font-medium bg-transparent border-b border-[#171717] dark:border-[#E5E5E5] outline-none text-[#171717] dark:text-[#E5E5E5] min-w-0"
+              className="flex-1 text-sm font-medium bg-transparent border-b border-[#1c1c1e] dark:border-[#E5E5E5] outline-none text-[#1c1c1e] dark:text-[#E5E5E5] min-w-0"
             />
           </div>
         ) : (
@@ -308,7 +313,7 @@ function DeckRow({
               />
             ) : null}
             <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-              <span className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] truncate">
+              <span className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] truncate">
                 {deck.name}
               </span>
               <span className="text-xs text-[#737373]">
@@ -334,23 +339,14 @@ function DeckRow({
         />
       </div>
 
-      {/* Progress bar with MiniCat */}
+      {/* Progress bar */}
       {totalCount > 0 && (
         <div className="px-4 pb-2 pt-0.5">
-          <div className="relative">
-            <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
-              <div
-                className="deck-progress-fill bg-[#171717] dark:bg-[#E5E5E5]"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            {/* MiniCat positioned at progress point */}
+          <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
             <div
-              className="absolute -top-[10px]"
-              style={{ left: `calc(${Math.round(progress * 100)}% - 8px)` }}
-            >
-              <MiniCat progress={progress} size={10} />
-            </div>
+              className="deck-progress-fill bg-[#1c1c1e] dark:bg-[#E5E5E5]"
+              style={{ width: `${Math.round(progress * 100)}%` }}
+            />
           </div>
         </div>
       )}
@@ -360,17 +356,12 @@ function DeckRow({
 
 /** Progress indicator shown during import. */
 function ImportProgress({ phase }: { phase: ImportPhase }) {
-  const labels: Record<string, string> = {
-    parsing: 'Parsing .apkg file\u2026',
-    'storing-cards': 'Storing cards — this may take a moment for large decks\u2026',
-    'storing-media': 'Storing media files\u2026',
-  };
-  const label = labels[phase];
+  const label = IMPORT_LABELS[phase];
   if (!label) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-3">
-      <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+      <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
       <span className="text-sm text-[#737373]">{label}</span>
     </div>
   );
@@ -509,7 +500,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
 
   // ── Render ────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-[100dvh] bg-[#FAFAFA] dark:bg-[#0A0A0A] text-[#171717] dark:text-[#E5E5E5] font-mono flex flex-col">
+    <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col">
       {/* Header */}
       <header
         className="flex items-center justify-between pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -536,7 +527,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         </div>
         <button
           onClick={() => { hapticNavigate(); onSettings(); }}
-          className="p-2 text-[#737373] hover:text-[#171717] dark:hover:text-[#E5E5E5] transition-colors"
+          className="p-2 text-[#737373] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
           aria-label="Settings"
         >
           <GearIcon />
@@ -624,7 +615,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       {/* Export status */}
       {exportPhase === 'exporting' && (
         <div className="flex items-center gap-3 px-4 py-3">
-          <div className="w-4 h-4 border-2 border-[#171717] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+          <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
           <span className="text-sm text-[#737373]">Exporting deck…</span>
         </div>
       )}
@@ -653,7 +644,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         <button
           disabled={dbLoading || !!dbError || isImporting}
           onClick={openFilePicker}
-          className="w-full py-3 text-sm font-semibold border-2 border-dashed border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#171717] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+          className="w-full py-3 text-sm font-semibold border-2 border-dashed border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
         >
           {isImporting ? 'Importing\u2026' : 'Import Deck'}
         </button>
@@ -664,7 +655,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
           <div className="bg-white dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="px-6 pt-5 pb-4 text-center">
-              <p className="text-base font-semibold text-[#171717] dark:text-[#E5E5E5]">
+              <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]">
                 Delete "{deletingDeck.name}"?
               </p>
               <p className="text-sm text-[#737373] mt-2">
@@ -674,7 +665,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
             <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
               <button
                 onClick={() => setDeletingDeck(null)}
-                className="flex-1 py-3.5 text-sm font-medium text-[#171717] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
+                className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
               >
                 Cancel
               </button>

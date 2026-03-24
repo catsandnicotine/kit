@@ -16,14 +16,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Card } from '../types';
+import type { Card, LearningState } from '../types';
 import { useStudySession } from '../hooks/useStudySession';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
 import { getDeckStats } from '../lib/db/queries';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { CardEditor } from '../components/CardEditor';
-import { MiniCat } from '../components/MiniCat';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -40,23 +39,34 @@ interface StudyProps {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Progress bar with walking MiniCat. */
+const LEARNING_STATE_CONFIG: Record<LearningState, { label: string; className: string }> = {
+  new: { label: 'New', className: 'text-blue-500 dark:text-blue-400 border-blue-500 dark:border-blue-400' },
+  learning: { label: 'Learning', className: 'text-orange-500 dark:text-orange-400 border-orange-500 dark:border-orange-400' },
+  relearning: { label: 'Relearning', className: 'text-red-500 dark:text-red-400 border-red-500 dark:border-red-400' },
+  review: { label: 'Review', className: 'text-green-500 dark:text-green-400 border-green-500 dark:border-green-400' },
+};
+
+/** Card state badge (New / Learning / Relearning / Review). */
+function CardStateBadge({ state }: { state: LearningState }) {
+  const config = LEARNING_STATE_CONFIG[state];
+  return (
+    <span className={`text-[10px] font-semibold px-1.5 py-0.5 border rounded ${config.className}`}>
+      {config.label}
+    </span>
+  );
+}
+
+/** Progress bar. */
 function ProgressBar({ studied, total }: { studied: number; total: number }) {
   const progress = total === 0 ? 1 : studied / total;
   const pct = Math.round(progress * 100);
   return (
-    <div className="relative px-4 py-1">
+    <div className="px-4 py-1">
       <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
         <div
-          className="deck-progress-fill bg-[#171717] dark:bg-[#E5E5E5]"
+          className="deck-progress-fill bg-[#1c1c1e] dark:bg-[#E5E5E5]"
           style={{ width: `${pct}%` }}
         />
-      </div>
-      <div
-        className="absolute -top-[6px]"
-        style={{ left: `calc(1rem + ${pct}% - 9px)` }}
-      >
-        <MiniCat progress={progress} size={12} />
       </div>
     </div>
   );
@@ -81,6 +91,13 @@ function formatInterval(days: number): string {
   return `${Math.round(months)}mo`;
 }
 
+const RATING_COLOR_MAP: Record<string, string> = {
+  red: 'border-red-500 text-red-500 dark:border-red-400 dark:text-red-400',
+  orange: 'border-orange-400 text-orange-400 dark:border-orange-300 dark:text-orange-300',
+  green: 'border-green-500 text-green-500 dark:border-green-400 dark:text-green-400',
+  blue: 'border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400',
+};
+
 /** Rating button with colour coding and optional interval display. */
 function RatingButton({
   label,
@@ -93,20 +110,13 @@ function RatingButton({
   color: 'red' | 'orange' | 'green' | 'blue';
   interval?: string | undefined;
 }) {
-  const colorMap: Record<string, string> = {
-    red: 'border-red-500 text-red-500 dark:border-red-400 dark:text-red-400',
-    orange: 'border-orange-400 text-orange-400 dark:border-orange-300 dark:text-orange-300',
-    green: 'border-green-500 text-green-500 dark:border-green-400 dark:text-green-400',
-    blue: 'border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400',
-  };
-
   return (
     <button
       onClick={onClick}
-      className={`rating-btn flex-1 py-2 text-sm font-semibold tracking-wide border rounded-md transition-colors active:opacity-70 flex flex-col items-center gap-0.5 ${colorMap[color]}`}
+      className={`rating-btn flex-1 py-3 text-base font-semibold tracking-wide border rounded-md transition-colors active:opacity-70 flex flex-col items-center gap-0.5 ${RATING_COLOR_MAP[color]}`}
     >
       <span>{label}</span>
-      {interval && <span className="text-xs font-normal opacity-70">{interval}</span>}
+      {interval && <span className="text-sm font-normal opacity-70">{interval}</span>}
     </button>
   );
 }
@@ -311,7 +321,7 @@ function SessionComplete({
                 <button
                   key={n}
                   onClick={() => { hapticTap(); onStudyAhead(n); }}
-                  className="px-3 py-1.5 bg-[#171717] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-xs font-medium rounded-md"
+                  className="px-3 py-1.5 bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-xs font-medium rounded-md"
                 >
                   {n}
                 </button>
@@ -393,6 +403,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
+    currentCardLearningState,
     flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
   const { rewriteHtml } = useDeckMedia(db, deckId);
@@ -476,7 +487,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
           >
             ← Back
           </button>
@@ -502,7 +513,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
           >
             ← Back
           </button>
@@ -528,7 +539,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
           >
             ← Back
           </button>
@@ -564,16 +575,19 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
       >
         <button
           onClick={() => { hapticTap(); onExit?.(); }}
-          className="text-sm font-medium text-[#171717] dark:text-[#E5E5E5] shrink-0"
+          className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
         >
           ← Back
         </button>
         <span className="text-sm text-[#737373] dark:text-[#A3A3A3] truncate flex-1 text-center">
           {deckName ?? 'Study'}
         </span>
-        <span className="text-xs text-[#737373] dark:text-[#A3A3A3] tabular-nums shrink-0">
-          {formatTime(stats.elapsedSeconds)} · {stats.remaining} left
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {currentCardLearningState && <CardStateBadge state={currentCardLearningState} />}
+          <span className="text-xs text-[#737373] dark:text-[#A3A3A3] tabular-nums">
+            {formatTime(stats.elapsedSeconds)} · {stats.remaining} left
+          </span>
+        </div>
       </header>
 
       {/* ── Progress bar ── */}
@@ -649,15 +663,13 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
               >
                 Edit
               </button>
-              {canUndo ? (
+              {canUndo && (
                 <button
                   onClick={undo}
                   className="py-2 text-xs text-text-muted"
                 >
                   Undo
                 </button>
-              ) : (
-                <span />
               )}
             </div>
           </div>
