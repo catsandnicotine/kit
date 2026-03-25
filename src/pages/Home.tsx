@@ -25,10 +25,12 @@ import type { ImportPhase } from '../hooks/useDeckImport';
 import {
   getAllDecks,
   getAllDeckCardCounts,
+  insertDeck,
   renameDeck,
   deleteDeck,
   type DeckCardCounts,
 } from '../lib/db/queries';
+import { v4 as uuidv4 } from 'uuid';
 import { persistDatabase } from '../hooks/useDatabase';
 import { scheduleICloudBackup } from '../hooks/useBackup';
 import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics';
@@ -56,18 +58,21 @@ interface HomeProps {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-/** Inline SVG gear icon (~20px). */
-function GearIcon() {
+/** Inline SVG ellipsis-in-circle icon (~22px). */
+function DotsCircleIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
-      <path fillRule="evenodd" clipRule="evenodd" d="M8.5 1h3l.4 2.4a7 7 0 011.5.9l2.3-.8 1.5 2.6-1.9 1.6a7 7 0 010 1.6l1.9 1.6-1.5 2.6-2.3-.8a7 7 0 01-1.5.9L11.5 19h-3l-.4-2.4a7 7 0 01-1.5-.9l-2.3.8-1.5-2.6 1.9-1.6a7 7 0 010-1.6L2.8 9.1l1.5-2.6 2.3.8a7 7 0 011.5-.9L8.5 1zM10 13a3 3 0 100-6 3 3 0 000 6z" />
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="8" cy="12" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="16" cy="12" r="1.1" fill="currentColor" stroke="none" />
     </svg>
   );
 }
 
 const COUNT_COLOR_MAP: Record<string, string> = {
   blue: 'text-blue-500 dark:text-blue-400',
-  orange: 'text-orange-500 dark:text-orange-400',
+  orange: 'text-red-500 dark:text-red-400',
   green: 'text-green-500 dark:text-green-400',
 };
 
@@ -100,13 +105,13 @@ function CountBadge({
 /** Count legend row: ● New  ● Learning  ● Due */
 function CountLegend() {
   return (
-    <div className="flex items-center justify-end gap-4 text-xs text-[#737373] px-4 py-1.5">
+    <div className="flex items-center justify-end gap-4 text-xs text-[#C4C4C4] px-4 py-1.5">
       <span className="flex items-center gap-1">
         <span className="w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400 inline-block" />
         New
       </span>
       <span className="flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-orange-500 dark:bg-orange-400 inline-block" />
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" />
         Learning
       </span>
       <span className="flex items-center gap-1">
@@ -160,13 +165,13 @@ function DeckActionMenu({
     <div ref={menuRef} className="relative shrink-0">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="px-3 py-3 text-sm text-[#737373] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+        className="px-3 py-3 text-sm text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
         aria-label="Deck actions"
       >
         ···
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-10 min-w-[160px] bg-white dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 z-10 min-w-[160px] bg-[#FDFBF7] dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
           <button
             onClick={() => { setOpen(false); onRename(); }}
             className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
@@ -313,10 +318,10 @@ function DeckRow({
               />
             ) : null}
             <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-              <span className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] truncate">
+              <span className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] truncate">
                 {deck.name}
               </span>
-              <span className="text-xs text-[#737373]">
+              <span className="text-xs text-[#C4C4C4]">
                 {totalCount} {totalCount === 1 ? 'card' : 'cards'}
               </span>
             </div>
@@ -362,7 +367,7 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-      <span className="text-sm text-[#737373]">{label}</span>
+      <span className="text-sm text-[#C4C4C4]">{label}</span>
     </div>
   );
 }
@@ -380,12 +385,12 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param onStudy   - Called when the user taps a deck to study.
  */
 export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStats, onDeckSettings, onSettings }: HomeProps) {
-  const [decks, setDecks] = useState<Deck[]>([]);
+  const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
   const [catBouncing, setCatBouncing] = useState(false);
 
   // Thumbnail state
-  const deckIds = useMemo(() => decks.map(d => d.id), [decks]);
+  const deckIds = useMemo(() => (decks ?? []).map(d => d.id), [decks]);
   const { thumbnails, setThumbnail } = useDeckThumbnails(deckIds);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [cropDeckId, setCropDeckId] = useState<string | null>(null);
@@ -434,6 +439,33 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
     },
     [db, refreshDecks],
   );
+
+  // ── Create deck handler ────────────────────────────────────────────
+  const [showCreateDeck, setShowCreateDeck] = useState(false);
+  const [newDeckName, setNewDeckName] = useState('');
+  const createInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (showCreateDeck) createInputRef.current?.focus();
+  }, [showCreateDeck]);
+
+  const handleCreateDeck = useCallback(() => {
+    if (!db) return;
+    const name = newDeckName.trim();
+    if (!name) return;
+    const now = Math.floor(Date.now() / 1000);
+    const deck = { id: uuidv4(), name, description: '', createdAt: now, updatedAt: now };
+    const result = insertDeck(db, deck);
+    if (result.success) {
+      persistDatabase();
+      scheduleICloudBackup();
+      refreshDecks();
+      setShowCreateDeck(false);
+      setNewDeckName('');
+      hapticTap();
+      onBrowse(deck.id, deck.name);
+    }
+  }, [db, newDeckName, refreshDecks, onBrowse]);
 
   // ── Delete handler ──────────────────────────────────────────────────
   const [deletingDeck, setDeletingDeck] = useState<{ id: string; name: string } | null>(null);
@@ -527,15 +559,15 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         </div>
         <button
           onClick={() => { hapticNavigate(); onSettings(); }}
-          className="p-2 text-[#737373] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+          className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
           aria-label="Settings"
         >
-          <GearIcon />
+          <DotsCircleIcon />
         </button>
       </header>
 
       {/* Count legend */}
-      {decks.length > 0 && <CountLegend />}
+      {decks && decks.length > 0 && <CountLegend />}
 
       {/* DB status */}
       {dbLoading && (
@@ -543,7 +575,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
           <div className="cat-bounce" style={{ animationIterationCount: 'infinite' }}>
             <PixelCat size={48} />
           </div>
-          <p className="text-xs text-[#A3A3A3]">Loading…</p>
+          <p className="text-xs text-[#C4C4C4]">Loading…</p>
         </div>
       )}
       {dbError && (
@@ -553,14 +585,14 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       )}
 
       {/* Deck list */}
-      {!dbLoading && !dbError && (
+      {!dbLoading && !dbError && decks !== null && (
         <div className="flex flex-col flex-1 min-h-0 overflow-auto">
           {decks.length === 0 && importPhase === 'idle' && (
             <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
               <PixelCat size={80} className="opacity-30" />
               <div>
-                <p className="text-sm text-[#737373]">No decks yet</p>
-                <p className="text-xs text-[#A3A3A3] mt-1">
+                <p className="text-sm text-[#C4C4C4]">No decks yet</p>
+                <p className="text-xs text-[#C4C4C4] mt-1">
                   Import an Anki .apkg file to get started
                 </p>
               </div>
@@ -605,7 +637,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
           <p className="text-sm text-red-500">{importError}</p>
           <button
             onClick={resetImport}
-            className="text-xs text-[#737373] underline self-start"
+            className="text-xs text-[#C4C4C4] underline self-start"
           >
             Dismiss
           </button>
@@ -616,25 +648,25 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       {exportPhase === 'exporting' && (
         <div className="flex items-center gap-3 px-4 py-3">
           <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm text-[#737373]">Exporting deck…</span>
+          <span className="text-sm text-[#C4C4C4]">Exporting deck…</span>
         </div>
       )}
       {exportPhase === 'done' && (
         <div className="px-4 py-3 flex items-center justify-between">
           <p className="text-sm text-green-600 dark:text-green-400">Deck exported!</p>
-          <button onClick={resetExport} className="text-xs text-[#737373] underline">Dismiss</button>
+          <button onClick={resetExport} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
         </div>
       )}
       {exportPhase === 'error' && exportError && (
         <div className="px-4 py-3 flex flex-col gap-2">
           <p className="text-sm text-red-500">{exportError}</p>
-          <button onClick={resetExport} className="text-xs text-[#737373] underline self-start">Dismiss</button>
+          <button onClick={resetExport} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
         </div>
       )}
 
-      {/* Import button */}
+      {/* Bottom buttons */}
       <div
-        className="px-4 py-4 shrink-0"
+        className="px-4 py-4 shrink-0 flex flex-col gap-2"
         style={{
           paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
@@ -642,9 +674,16 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         }}
       >
         <button
+          disabled={dbLoading || !!dbError}
+          onClick={() => { hapticTap(); setShowCreateDeck(true); }}
+          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed active:opacity-80 transition-opacity"
+        >
+          Create Deck
+        </button>
+        <button
           disabled={dbLoading || !!dbError || isImporting}
           onClick={openFilePicker}
-          className="w-full py-3 text-sm font-semibold border-2 border-dashed border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+          className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
         >
           {isImporting ? 'Importing\u2026' : 'Import Deck'}
         </button>
@@ -653,12 +692,12 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       {/* Delete confirmation dialog */}
       {deletingDeck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
-          <div className="bg-white dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
+          <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="px-6 pt-5 pb-4 text-center">
               <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]">
                 Delete "{deletingDeck.name}"?
               </p>
-              <p className="text-sm text-[#737373] mt-2">
+              <p className="text-sm text-[#C4C4C4] mt-2">
                 All cards, review history, and media will be permanently deleted.
               </p>
             </div>
@@ -674,6 +713,43 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
                 className="flex-1 py-3.5 text-sm font-semibold text-red-500 active:bg-red-50 dark:active:bg-red-950"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create deck dialog */}
+      {showCreateDeck && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
+          <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 pt-5 pb-4">
+              <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] text-center">
+                Create Deck
+              </p>
+              <input
+                ref={createInputRef}
+                type="text"
+                value={newDeckName}
+                onChange={(e) => setNewDeckName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDeck(); }}
+                placeholder="Deck name"
+                className="w-full mt-4 px-3 py-2.5 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+              />
+            </div>
+            <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
+              <button
+                onClick={() => { setShowCreateDeck(false); setNewDeckName(''); }}
+                className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateDeck}
+                disabled={!newDeckName.trim()}
+                className="flex-1 py-3.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] disabled:opacity-40"
+              >
+                Create
               </button>
             </div>
           </div>

@@ -19,7 +19,6 @@ import type {
   Note,
   NoteTemplate,
   NoteType,
-  Rating,
   Result,
   ReviewLog,
 } from '../../types';
@@ -185,17 +184,6 @@ function jsonNoteTemplates(row: Row, col: string): NoteTemplate[] {
   } catch {
     return [];
   }
-}
-
-export function toReviewLog(row: Row): ReviewLog {
-  return {
-    id:            str(row, 'id'),
-    cardId:        str(row, 'card_id'),
-    rating:        str(row, 'rating') as Rating,
-    reviewedAt:    num(row, 'reviewed_at'),
-    elapsed:       num(row, 'elapsed'),
-    scheduledDays: num(row, 'scheduled_days'),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -773,36 +761,6 @@ export function insertNote(db: Database, note: Note): Result<void> {
   }
 }
 
-/**
- * Update the fields (content) of an existing note.
- * Typically called when the user edits a card during a study session.
- *
- * @param db        - sql.js Database instance.
- * @param id        - Note UUID.
- * @param fields    - New field values (must conform to the note's NoteType).
- * @param updatedAt - Unix timestamp (seconds) of the edit.
- * @returns The updated Note, or an error.
- */
-export function updateNote(
-  db: Database,
-  id: string,
-  fields: Record<string, string>,
-  updatedAt: number,
-): Result<Note> {
-  try {
-    db.run(
-      'UPDATE notes SET fields = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(fields), updatedAt, id],
-    );
-    const result = getNoteById(db, id);
-    if (!result.success) return result;
-    if (!result.data) return { success: false, error: `Note ${id} not found after update` };
-    return { success: true, data: result.data };
-  } catch (e) {
-    return { success: false, error: String(e) };
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Note type queries
 // ---------------------------------------------------------------------------
@@ -1227,6 +1185,8 @@ export interface DeckSettings {
   maxInterval: number;
   /** Number of lapses before a card is flagged as a leech. */
   leechThreshold: number;
+  /** Target retention rate (0–1). Drives FSRS interval calculation. Default 0.9. */
+  desiredRetention: number;
 }
 
 /**
@@ -1240,7 +1200,8 @@ export function getDeckSettings(db: Database, deckId: string): Result<DeckSettin
   try {
     const stmt = db.prepare(
       `SELECT new_cards_per_day, max_reviews_per_day, again_steps,
-              graduating_interval, easy_interval, max_interval, leech_threshold
+              graduating_interval, easy_interval, max_interval, leech_threshold,
+              desired_retention
        FROM deck_settings WHERE deck_id = ?`,
     );
     stmt.bind([deckId]);
@@ -1265,6 +1226,7 @@ export function getDeckSettings(db: Database, deckId: string): Result<DeckSettin
           easyInterval: num(row, 'easy_interval') || 4,
           maxInterval: num(row, 'max_interval') || 365,
           leechThreshold: num(row, 'leech_threshold') || 8,
+          desiredRetention: num(row, 'desired_retention') || 0.9,
         },
       };
     }
@@ -1272,6 +1234,7 @@ export function getDeckSettings(db: Database, deckId: string): Result<DeckSettin
     const defaults: DeckSettings = {
       deckId, newCardsPerDay: 20, maxReviewsPerDay: 200, againSteps: [1, 10],
       graduatingInterval: 1, easyInterval: 4, maxInterval: 365, leechThreshold: 8,
+      desiredRetention: 0.9,
     };
     return { success: true, data: defaults };
   } catch (e) {
@@ -1326,6 +1289,33 @@ export function setDeckSetting(
        VALUES (?, ?)
        ON CONFLICT(deck_id) DO UPDATE SET ${column} = excluded.${column}`,
       [deckId, Math.max(0, Math.round(value))],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Set the desired retention rate for a deck (0–1).
+ *
+ * @param db        - sql.js Database instance.
+ * @param deckId    - Deck UUID.
+ * @param retention - Target retention (e.g. 0.9 for 90%).
+ * @returns void on success, or an error.
+ */
+export function setDesiredRetention(
+  db: Database,
+  deckId: string,
+  retention: number,
+): Result<void> {
+  try {
+    const clamped = Math.min(0.99, Math.max(0.7, retention));
+    db.run(
+      `INSERT INTO deck_settings (deck_id, desired_retention)
+       VALUES (?, ?)
+       ON CONFLICT(deck_id) DO UPDATE SET desired_retention = excluded.desired_retention`,
+      [deckId, clamped],
     );
     return { success: true, data: undefined };
   } catch (e) {
@@ -1535,6 +1525,31 @@ export function setDeckLearningSteps(
  * @param easyInterval        - Easy interval in days.
  * @returns void on success, or an error.
  */
+/**
+ * Apply a desired retention rate to all existing decks.
+ *
+ * @param db        - sql.js Database instance.
+ * @param retention - Target retention (0–1).
+ * @returns void on success, or an error.
+ */
+export function applyRetentionToAllDecks(
+  db: Database,
+  retention: number,
+): Result<void> {
+  try {
+    const clamped = Math.min(0.99, Math.max(0.7, retention));
+    db.run(`UPDATE deck_settings SET desired_retention = ?`, [clamped]);
+    db.run(
+      `INSERT OR IGNORE INTO deck_settings (deck_id, desired_retention)
+       SELECT id, ? FROM decks WHERE id NOT IN (SELECT deck_id FROM deck_settings)`,
+      [clamped],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
 export function applyLearningStepsToAllDecks(
   db: Database,
   againSteps: number[],

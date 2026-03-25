@@ -9,6 +9,7 @@
  */
 
 import { registerPlugin } from '@capacitor/core';
+import { uint8ToBase64, base64ToUint8 } from './persistence';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -54,29 +55,6 @@ function isNativePlatform(): boolean {
   } catch {
     return false;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Base64 helpers (shared with persistence.ts pattern)
-// ---------------------------------------------------------------------------
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  const CHUNK = 8192;
-  const parts: string[] = [];
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    const slice = bytes.subarray(i, Math.min(i + CHUNK, bytes.length));
-    parts.push(String.fromCharCode.apply(null, slice as unknown as number[]));
-  }
-  return btoa(parts.join(''));
-}
-
-function base64ToUint8(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,12 +139,3 @@ export async function checkForBackup(): Promise<BackupMeta | null> {
   }
 }
 
-/**
- * Read backup_meta.json from iCloud Drive.
- * Alias for {@link checkForBackup} — same underlying call.
- *
- * @returns BackupMeta if found, null otherwise.
- */
-export async function getBackupMeta(): Promise<BackupMeta | null> {
-  return checkForBackup();
-}

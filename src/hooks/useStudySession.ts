@@ -35,6 +35,7 @@ import {
   shouldRequeueAfterRating,
   type DeckLearningSettings,
 } from '../lib/srs/scheduleWithLearningSteps';
+import { DEFAULT_PARAMS } from '../lib/srs/fsrs';
 import type { Card, CardWithState, LearningState, Rating } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { persistDatabase } from './useDatabase';
@@ -59,6 +60,12 @@ export interface SessionStats {
   remaining: number;
   /** Wall-clock seconds elapsed since the session started. */
   elapsedSeconds: number;
+  /** Remaining new cards in the queue. */
+  newCount: number;
+  /** Remaining learning/relearning cards in the queue. */
+  learningCount: number;
+  /** Remaining review cards in the queue. */
+  reviewCount: number;
 }
 
 export type StudyPhase =
@@ -157,6 +164,9 @@ export function useStudySession(
     studied: 0,
     remaining: 0,
     elapsedSeconds: 0,
+    newCount: 0,
+    learningCount: 0,
+    reviewCount: 0,
   });
 
   const [ratingPreviews, setRatingPreviews] = useState<Record<Rating, RatingPreview> | null>(null);
@@ -207,9 +217,13 @@ export function useStudySession(
     setFrontHtml(cws.card.front);
     setBackHtml(cws.card.back);
     setRatingPreviews(null);
+    const remaining = queue.slice(index);
     setStats(prev => ({
       ...prev,
-      remaining: queue.length - index,
+      remaining: remaining.length,
+      newCount: remaining.filter(c => c.state.state === 'new').length,
+      learningCount: remaining.filter(c => c.state.state === 'learning' || c.state.state === 'relearning').length,
+      reviewCount: remaining.filter(c => c.state.state === 'review').length,
     }));
     setPhase('front');
   }, []);
@@ -258,12 +272,12 @@ export function useStudySession(
     queueRef.current = queue;
 
     if (queue.length === 0) {
-      setStats({ studied: 0, remaining: 0, elapsedSeconds: 0 });
+      setStats({ studied: 0, remaining: 0, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0 });
       setPhase('complete');
       return;
     }
 
-    setStats({ studied: 0, remaining: queue.length, elapsedSeconds: 0 });
+    setStats({ studied: 0, remaining: queue.length, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0 });
     showCard(queue, 0);
     setCurrentIndex(0);
     startTimer();
@@ -289,8 +303,9 @@ export function useStudySession(
 
     const deck = deckSettingsRef.current;
     const previews = {} as Record<Rating, RatingPreview>;
+    const fsrsParams = { ...DEFAULT_PARAMS, requestRetention: deck.desiredRetention ?? 0.9 };
     for (const r of ALL_RATINGS) {
-      const resolved = resolveSchedule(state, r, nowSec, elapsedDays, deck);
+      const resolved = resolveSchedule(state, r, nowSec, elapsedDays, deck, fsrsParams);
       previews[r] = { scheduledDays: intervalDaysUntilDue(resolved, nowSec) };
     }
     setRatingPreviews(previews);
@@ -315,7 +330,8 @@ export function useStudySession(
       const wasFirstReview = state.reps === 0;
       const elapsedDays = calcElapsedDays(state.lastReview, nowSec);
 
-      const resolved = resolveSchedule(state, rating, nowSec, elapsedDays, deckSettingsRef.current);
+      const fsrsParams = { ...DEFAULT_PARAMS, requestRetention: deckSettingsRef.current.desiredRetention ?? 0.9 };
+      const resolved = resolveSchedule(state, rating, nowSec, elapsedDays, deckSettingsRef.current, fsrsParams);
 
       // --- DB writes ---
       const logId = uuidv4();

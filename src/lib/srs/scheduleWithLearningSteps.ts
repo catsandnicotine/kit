@@ -24,6 +24,8 @@ export interface DeckLearningSettings {
   easyInterval: number;
   /** Maximum interval in days (caps how long before a review card comes back). */
   maxInterval?: number;
+  /** Target retention rate (0–1). Used to derive FSRS params. Default 0.9. */
+  desiredRetention?: number;
 }
 
 /** Full persisted schedule after one rating (FSRS + learning overlay). */

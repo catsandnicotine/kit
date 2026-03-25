@@ -44,7 +44,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <span className="text-lg font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums">
         {value}
       </span>
-      <span className="text-xs text-[#737373]">{label}</span>
+      <span className="text-xs text-[#C4C4C4]">{label}</span>
     </div>
   );
 }
@@ -72,7 +72,7 @@ function ReviewChart({ data }: { data: number[] }) {
           <div key={i} className="flex-1 flex flex-col items-center gap-1">
             <div className="w-full flex flex-col items-center justify-end" style={{ height: 96 }}>
               {count > 0 && (
-                <span className="text-[9px] text-[#737373] tabular-nums mb-0.5">
+                <span className="text-[9px] text-[#C4C4C4] tabular-nums mb-0.5">
                   {count}
                 </span>
               )}
@@ -81,7 +81,7 @@ function ReviewChart({ data }: { data: number[] }) {
                 style={{ height }}
               />
             </div>
-            <span className="text-[9px] text-[#A3A3A3]">{dayLabels[i]}</span>
+            <span className="text-[9px] text-[#C4C4C4]">{dayLabels[i]}</span>
           </div>
         );
       })}
@@ -122,11 +122,11 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
+          <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#C4C4C4] mr-3">&larr; Back</button>
           <span className="text-sm font-semibold truncate">{deckName}</span>
         </header>
         <div className="flex items-center justify-center py-12">
-          <p className="text-sm text-[#737373]">Loading…</p>
+          <p className="text-sm text-[#C4C4C4]">Loading…</p>
         </div>
       </div>
     );
@@ -143,7 +143,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
-        <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
+        <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#C4C4C4] mr-3">&larr; Back</button>
         <span className="text-sm font-semibold truncate">{deckName}</span>
       </header>
 
@@ -181,21 +181,21 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
       {/* Cards by state */}
       <section className="px-4 pb-4">
         <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#C4C4C4] mb-3">
             Cards by State
           </h3>
           <div className="flex justify-between text-sm">
             <div className="flex flex-col items-center gap-0.5">
               <span className="font-semibold text-blue-500 dark:text-blue-400 tabular-nums">{stats.newCount}</span>
-              <span className="text-xs text-[#737373]">New</span>
+              <span className="text-xs text-[#C4C4C4]">New</span>
             </div>
             <div className="flex flex-col items-center gap-0.5">
               <span className="font-semibold text-orange-500 dark:text-orange-400 tabular-nums">{stats.learningCount}</span>
-              <span className="text-xs text-[#737373]">Learning</span>
+              <span className="text-xs text-[#C4C4C4]">Learning</span>
             </div>
             <div className="flex flex-col items-center gap-0.5">
               <span className="font-semibold text-green-500 dark:text-green-400 tabular-nums">{stats.reviewCount}</span>
-              <span className="text-xs text-[#737373]">Review</span>
+              <span className="text-xs text-[#C4C4C4]">Review</span>
             </div>
           </div>
         </div>
@@ -204,7 +204,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
       {/* 7-day chart */}
       <section className="px-4 pb-4">
         <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#C4C4C4] mb-3">
             Reviews — Last 7 Days
           </h3>
           <ReviewChart data={stats.reviewsPerDay} />
@@ -214,7 +214,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
       {/* Next due */}
       {stats.nextDue && (
         <section className="px-4 pb-4">
-          <p className="text-xs text-[#737373] text-center">
+          <p className="text-xs text-[#C4C4C4] text-center">
             Next review due {formatRelativeTime(stats.nextDue)}
           </p>
         </section>

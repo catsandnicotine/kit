@@ -155,7 +155,7 @@ const LS_MAX_BYTES = 4 * 1024 * 1024;
  * @param bytes - Raw bytes to encode.
  * @returns Base64 string.
  */
-function uint8ToBase64(bytes: Uint8Array): string {
+export function uint8ToBase64(bytes: Uint8Array): string {
   const CHUNK = 8192;
   const parts: string[] = [];
   for (let i = 0; i < bytes.length; i += CHUNK) {
@@ -171,7 +171,7 @@ function uint8ToBase64(bytes: Uint8Array): string {
  * @param base64 - Base64-encoded string.
  * @returns Decoded bytes.
  */
-function base64ToUint8(base64: string): Uint8Array {
+export function base64ToUint8(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

@@ -112,13 +112,6 @@ export type Rating = 'again' | 'hard' | 'good' | 'easy';
 
 export type LearningState = 'new' | 'learning' | 'review' | 'relearning';
 
-export interface StudySession {
-  deckId: string;
-  startedAt: number;
-  cardsStudied: number;
-  cardsRemaining: number;
-}
-
 export type Theme = 'light' | 'dark' | 'black';
 
 /** Output produced by the FSRS scheduling functions. */

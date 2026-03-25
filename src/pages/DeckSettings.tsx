@@ -5,13 +5,14 @@
  * scroll wheel picker.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import {
   getDeckSettings,
   setNewCardsPerDay,
   setDeckLearningSteps,
   setDeckSetting,
+  setDesiredRetention as saveDesiredRetention,
   type DeckSettings as DeckSettingsType,
 } from '../lib/db/queries';
 import { persistDatabase } from '../hooks/useDatabase';
@@ -57,23 +58,113 @@ function WheelPicker({
   );
 }
 
-/** A settings row with label, description, and control. */
+/** Editable chip list for learning step minutes. */
+function StepsEditor({
+  steps,
+  onChange,
+}: {
+  steps: number[];
+  onChange: (s: number[]) => void;
+}) {
+  const [isAdding, setIsAdding] = useState(false);
+  const [draftValue, setDraftValue] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isAdding) inputRef.current?.focus();
+  }, [isAdding]);
+
+  const commit = () => {
+    const n = parseInt(draftValue, 10);
+    if (!isNaN(n) && n > 0) onChange([...steps, n]);
+    setDraftValue('');
+    setIsAdding(false);
+  };
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-2">
+      {steps.map((s, i) => (
+        <div
+          key={i}
+          className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2.5 py-1.5"
+        >
+          <span className="text-sm font-semibold tabular-nums">{s}m</span>
+          {steps.length > 1 && (
+            <button
+              onClick={() => onChange(steps.filter((_, idx) => idx !== i))}
+              className="text-[#C4C4C4] text-base leading-none ml-0.5"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      ))}
+      {isAdding ? (
+        <input
+          ref={inputRef}
+          type="number"
+          value={draftValue}
+          onChange={(e) => setDraftValue(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') { setDraftValue(''); setIsAdding(false); }
+          }}
+          className="w-16 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-1.5 text-sm font-semibold outline-none"
+          placeholder="min"
+          min={1}
+        />
+      ) : (
+        <button
+          onClick={() => { hapticTap(); setIsAdding(true); }}
+          className="flex items-center justify-center w-8 h-8 rounded-lg border border-dashed border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4] text-xl leading-none"
+        >
+          +
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** A settings row with label and right-side control. Optional ⓘ tooltip or inline description. */
 function SettingRow({
   label,
   description,
+  tooltip,
   children,
 }: {
   label: string;
-  description: string;
+  description?: string;
+  tooltip?: string;
   children: React.ReactNode;
 }) {
+  const [showTooltip, setShowTooltip] = useState(false);
   return (
     <div>
       <div className="flex items-center justify-between">
-        <span className="text-sm">{label}</span>
+        <div className="flex items-center gap-1">
+          <span className="text-sm font-medium">{label}</span>
+          {tooltip && (
+            <button
+              onClick={() => { hapticTap(); setShowTooltip(v => !v); }}
+              aria-label="More info"
+              className="text-[#C4C4C4]"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4M12 8h.01" />
+              </svg>
+            </button>
+          )}
+        </div>
         {children}
       </div>
-      <p className="text-[11px] text-[#A3A3A3] mt-1 leading-relaxed">{description}</p>
+      {tooltip && showTooltip && (
+        <p className="text-[11px] text-[#C4C4C4] mt-1 leading-relaxed">{tooltip}</p>
+      )}
+      {description && (
+        <p className="text-[11px] text-[#C4C4C4] mt-1 leading-relaxed">{description}</p>
+      )}
     </div>
   );
 }
@@ -91,11 +182,11 @@ function Section({
   return (
     <section className="px-4 pb-4">
       <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#737373] mb-1">
+        <h3 className="text-sm font-semibold text-[#C4C4C4] mb-1">
           {title}
         </h3>
         {description && (
-          <p className="text-xs text-[#A3A3A3] mb-3 leading-relaxed">{description}</p>
+          <p className="text-xs text-[#C4C4C4] mb-3 leading-relaxed">{description}</p>
         )}
         <div className="flex flex-col gap-4">
           {children}
@@ -132,7 +223,8 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
   const [easyInt, setEasyInt] = useState(4);
   const [maxInterval, setMaxInterval] = useState(365);
   const [leechThreshold, setLeechThreshold] = useState(8);
-  const [draftSteps, setDraftSteps] = useState('1, 10');
+  const [desiredRetention, setDesiredRetention] = useState(0.9);
+  const [steps, setSteps] = useState<number[]>([1, 10]);
 
   useEffect(() => {
     if (!db) return;
@@ -142,26 +234,25 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
       setSettings(d);
       setLimit(d.newCardsPerDay);
       setMaxReviews(d.maxReviewsPerDay);
-      setDraftSteps(d.againSteps.join(', '));
+      setSteps(d.againSteps);
       setGradInt(d.graduatingInterval);
       setEasyInt(d.easyInterval);
       setMaxInterval(d.maxInterval);
       setLeechThreshold(d.leechThreshold);
+      setDesiredRetention(d.desiredRetention);
     }
   }, [db, deckId]);
 
   /** Save all learning-related settings at once. */
   const saveLearningSettings = useCallback((
-    steps: string,
+    newSteps: number[],
     grad: number,
     easy: number,
   ) => {
-    if (!db) return;
-    const parsed = steps.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n) && n > 0);
-    if (parsed.length === 0) return;
-    const result = setDeckLearningSteps(db, deckId, parsed, grad, easy);
+    if (!db || newSteps.length === 0) return;
+    const result = setDeckLearningSteps(db, deckId, newSteps, grad, easy);
     if (result.success) {
-      setSettings(prev => prev ? { ...prev, againSteps: parsed, graduatingInterval: grad, easyInterval: easy } : prev);
+      setSettings(prev => prev ? { ...prev, againSteps: newSteps, graduatingInterval: grad, easyInterval: easy } : prev);
       persistDatabase();
     }
   }, [db, deckId]);
@@ -206,6 +297,16 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     }
   }, [db, deckId]);
 
+  const handleSaveRetention = useCallback((val: number) => {
+    if (!db) return;
+    setDesiredRetention(val);
+    const result = saveDesiredRetention(db, deckId, val);
+    if (result.success) {
+      setSettings(prev => prev ? { ...prev, desiredRetention: val } : prev);
+      persistDatabase();
+    }
+  }, [db, deckId]);
+
   if (!settings) {
     return (
       <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
@@ -217,11 +318,11 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
-          <span className="text-sm font-semibold truncate">{deckName}</span>
+          <button onClick={() => { hapticTap(); onBack(); }} className="text-sm font-medium text-[#C4C4C4] mr-3">&larr; Back</button>
+          <span className="text-base font-bold truncate">{deckName}</span>
         </header>
         <div className="flex items-center justify-center py-12">
-          <p className="text-sm text-[#737373]">Loading…</p>
+          <p className="text-sm text-[#C4C4C4]">Loading…</p>
         </div>
       </div>
     );
@@ -238,7 +339,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
-        <button onClick={() => { hapticTap(); onBack(); }} className="text-sm text-[#737373] mr-3">&larr; Back</button>
+        <button onClick={() => { hapticTap(); onBack(); }} className="text-sm font-medium text-[#C4C4C4] mr-3">&larr; Back</button>
         <span className="text-sm font-semibold truncate">Settings — {deckName}</span>
       </header>
 
@@ -280,39 +381,34 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
           title="When You're Learning a Card"
           description="New cards go through short-term practice before entering long-term review. These settings control that initial practice."
         >
-          <SettingRow
-            label="Practice intervals"
-            description={'When you get a card wrong (or it\'s brand new), it comes back after these delays. Example: "1, 10" means you\'ll see it again in 1 minute, then 10 minutes.'}
-          >
-            <input
-              type="text"
-              value={draftSteps}
-              onChange={(e) => setDraftSteps(e.target.value)}
-              onBlur={() => saveLearningSettings(draftSteps, gradInt, easyInt)}
-              className="w-24 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
-              placeholder="1, 10"
+          <div>
+            <span className="text-sm font-medium">Practice intervals</span>
+            <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">Minutes to wait before re-showing a card you got wrong.</p>
+            <StepsEditor
+              steps={steps}
+              onChange={(s) => { setSteps(s); saveLearningSettings(s, gradInt, easyInt); }}
             />
-          </SettingRow>
+          </div>
 
           <SettingRow
             label="First review after learning"
-            description={'Once you pass all practice steps, how many days until the card comes back for its first real review.'}
+            description="Once you pass all practice steps, how many days until the card comes back for its first real review."
           >
             <WheelPicker
               value={gradInt}
               options={INTERVAL_OPTIONS}
-              onChange={(v) => { setGradInt(v); saveLearningSettings(draftSteps, v, easyInt); }}
+              onChange={(v) => { setGradInt(v); saveLearningSettings(steps, v, easyInt); }}
             />
           </SettingRow>
 
           <SettingRow
-            label={'"Easy" shortcut'}
-            description={'If you press "Easy" on a new card, it skips practice and goes straight to review after this many days. Use this for cards you already know.'}
+            label="Easy interval"
+            tooltip='Pressing Easy on a new card skips all practice steps and schedules it for first review after this many days.'
           >
             <WheelPicker
               value={easyInt}
               options={INTERVAL_OPTIONS}
-              onChange={(v) => { setEasyInt(v); saveLearningSettings(draftSteps, gradInt, v); }}
+              onChange={(v) => { setEasyInt(v); saveLearningSettings(steps, gradInt, v); }}
             />
           </SettingRow>
         </Section>
@@ -331,6 +427,30 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
               options={MAX_INTERVAL_OPTIONS}
               onChange={handleSaveMaxInterval}
             />
+          </SettingRow>
+
+          <SettingRow
+            label="Target retention"
+            tooltip="How often you should remember a card when it comes due. Higher = more frequent reviews but better memory. 90% works for most people."
+          >
+            <div className="flex flex-col items-end gap-1 w-32">
+              <span className="text-sm font-semibold tabular-nums">
+                {Math.round(desiredRetention * 100)}%
+              </span>
+              <input
+                type="range"
+                min={70}
+                max={99}
+                step={1}
+                value={Math.round(desiredRetention * 100)}
+                onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
+                className="w-full accent-text-light dark:accent-text-dark"
+              />
+              <div className="flex justify-between w-full text-xs text-text-muted">
+                <span>70%</span>
+                <span>99%</span>
+              </div>
+            </div>
           </SettingRow>
 
           <SettingRow

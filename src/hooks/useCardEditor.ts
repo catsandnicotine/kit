@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card, Result } from '../types';
-import { deleteCard, updateCard } from '../lib/db/queries';
+import { deleteCard, insertCard, updateCard } from '../lib/db/queries';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
 
@@ -52,13 +52,15 @@ export interface UseCardEditorReturn {
 /**
  * Drive the card editor state for a single card.
  *
- * @param db   - sql.js Database instance (null while loading).
- * @param card - The card being edited.
+ * @param db    - sql.js Database instance (null while loading).
+ * @param card  - The card being edited (or blank card for creation).
+ * @param isNew - If true, save inserts a new card instead of updating.
  * @returns Draft state and action callbacks for the editor UI.
  */
 export function useCardEditor(
   db: Database | null,
   card: Card,
+  isNew = false,
 ): UseCardEditorReturn {
   const [tags, setTags] = useState<string[]>(card.tags);
   const [contentDirty, setContentDirty] = useState(false);
@@ -94,6 +96,23 @@ export function useCardEditor(
       if (!db) return { success: false, error: 'Database not ready.' };
 
       const now = Math.floor(Date.now() / 1000);
+
+      if (isNew) {
+        const newCard: Card = {
+          ...card,
+          front,
+          back,
+          tags,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const insertResult = insertCard(db, newCard);
+        if (!insertResult.success) return insertResult;
+        persistDatabase();
+        scheduleICloudBackup();
+        return { success: true, data: newCard };
+      }
+
       const result = updateCard(db, card.id, front, back, tags, now);
       if (result.success) {
         persistDatabase();
@@ -101,7 +120,7 @@ export function useCardEditor(
       }
       return result;
     },
-    [db, card.id, tags],
+    [db, card, tags, isNew],
   );
 
   const remove = useCallback((): Result<void> => {

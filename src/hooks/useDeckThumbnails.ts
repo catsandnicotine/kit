@@ -26,7 +26,7 @@ export function useDeckThumbnails(deckIds: string[]): UseDeckThumbnailsReturn {
     let cancelled = false;
     loadAllThumbnails(deckIds).then((loaded) => {
       if (!cancelled) setThumbnails(loaded);
-    });
+    }).catch(() => { /* thumbnail load failed — degrade gracefully */ });
     return () => { cancelled = true; };
   }, [deckIds.join(',')]);
 
