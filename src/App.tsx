@@ -46,11 +46,11 @@ function Onboarding({ onDismiss }: { onDismiss: () => void }) {
       <div className="max-w-sm w-full flex flex-col items-center gap-6 text-center">
         <PixelCat size={96} />
         <h1 className="text-xl font-semibold">Welcome to Kit</h1>
-        <p className="text-sm text-[#737373] leading-relaxed">
+        <p className="text-sm text-[#C4C4C4] leading-relaxed">
           Kit is a flashcard app that uses spaced repetition to help you
           remember anything. Import your Anki .apkg decks and study on the go.
         </p>
-        <div className="flex flex-col gap-2 text-xs text-[#A3A3A3] leading-relaxed">
+        <div className="flex flex-col gap-2 text-xs text-[#C4C4C4] leading-relaxed">
           <p>1. Tap <strong className="text-[#1c1c1e] dark:text-[#E5E5E5]">Import Deck</strong> to add an .apkg file</p>
           <p>2. Tap a deck to start studying</p>
           <p>3. Rate each card and Kit schedules your reviews</p>
@@ -100,7 +100,7 @@ function ICloudRestorePrompt({
     >
       <div className="max-w-sm w-full bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
         <h2 className="text-base font-semibold text-center">iCloud Backup Found</h2>
-        <p className="text-sm text-[#737373] text-center">
+        <p className="text-sm text-[#C4C4C4] text-center">
           A backup with {cardCount} {cardCount === 1 ? 'card' : 'cards'} from {formatted} was
           found in iCloud Drive. Would you like to restore it?
         </p>
@@ -112,7 +112,7 @@ function ICloudRestorePrompt({
         </button>
         <button
           onClick={onSkip}
-          className="w-full py-3 text-sm text-[#737373] active:text-[#1c1c1e] dark:active:text-[#E5E5E5] transition-colors"
+          className="w-full py-3 text-sm text-[#C4C4C4] active:text-[#1c1c1e] dark:active:text-[#E5E5E5] transition-colors"
         >
           Start Fresh
         </button>

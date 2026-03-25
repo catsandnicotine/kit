@@ -110,7 +110,8 @@ export const CREATE_DECK_SETTINGS_TABLE = `
     graduating_interval  INTEGER NOT NULL DEFAULT 1,
     easy_interval        INTEGER NOT NULL DEFAULT 4,
     max_interval         INTEGER NOT NULL DEFAULT 365,
-    leech_threshold      INTEGER NOT NULL DEFAULT 8
+    leech_threshold      INTEGER NOT NULL DEFAULT 8,
+    desired_retention    REAL    NOT NULL DEFAULT 0.9
   );
 `;
 

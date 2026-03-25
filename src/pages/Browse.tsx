@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { getCardsByDeck } from '../lib/db/queries';
+import { v4 as uuidv4 } from 'uuid';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { CardEditor } from '../components/CardEditor';
 import { hapticTap } from '../lib/platform/haptics';
@@ -108,6 +109,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingCard, setEditingCard] = useState<Card | null>(null);
+  const [isNewCard, setIsNewCard] = useState(false);
   const { rewriteHtml } = useDeckMedia(db, deckId);
 
   const loadCards = useCallback(() => {
@@ -140,19 +142,42 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
 
   const handleEditorSave = useCallback(
     (updated: Card) => {
-      setCards(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+      if (isNewCard) {
+        setCards(prev => [updated, ...prev]);
+      } else {
+        setCards(prev => prev.map(c => (c.id === updated.id ? updated : c)));
+      }
       setEditingCard(null);
+      setIsNewCard(false);
     },
-    [],
+    [isNewCard],
   );
 
   const handleEditorDelete = useCallback(() => {
     const deletedId = editingCard?.id;
     setEditingCard(null);
+    setIsNewCard(false);
     if (deletedId) {
       setCards(prev => prev.filter(c => c.id !== deletedId));
     }
   }, [editingCard]);
+
+  const handleAddCard = useCallback(() => {
+    hapticTap();
+    const now = Math.floor(Date.now() / 1000);
+    const blank: Card = {
+      id: uuidv4(),
+      deckId,
+      noteId: null,
+      front: '',
+      back: '',
+      tags: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    setIsNewCard(true);
+    setEditingCard(blank);
+  }, [deckId]);
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
@@ -177,6 +202,13 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
         <span className="text-xs text-text-muted ml-auto shrink-0">
           {filtered.length} {filtered.length === 1 ? 'card' : 'cards'}
         </span>
+        <button
+          onClick={handleAddCard}
+          className="ml-2 w-7 h-7 flex items-center justify-center rounded-full border border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4] text-lg leading-none shrink-0 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
+          aria-label="Add card"
+        >
+          +
+        </button>
       </header>
 
       {/* Search */}
@@ -237,7 +269,8 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
           rewriteHtml={rewriteHtml}
           onSave={handleEditorSave}
           onDelete={handleEditorDelete}
-          onDismiss={() => setEditingCard(null)}
+          onDismiss={() => { setEditingCard(null); setIsNewCard(false); }}
+          isNew={isNewCard}
         />
       )}
     </div>

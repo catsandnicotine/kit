@@ -29,6 +29,8 @@ interface CardEditorProps {
   onDelete: () => void;
   /** Called when the editor is dismissed without saving. */
   onDismiss: () => void;
+  /** If true, this is a new card being created (not editing existing). */
+  isNew?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,8 +250,8 @@ function MediaInventory({
 // Component
 // ---------------------------------------------------------------------------
 
-export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss }: CardEditorProps) {
-  const editor = useCardEditor(db, card);
+export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew }: CardEditorProps) {
+  const editor = useCardEditor(db, card, isNew);
   const [tagInput, setTagInput] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState('');
@@ -455,13 +457,13 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss 
             Cancel
           </button>
           <span className="text-sm font-semibold text-text-light dark:text-text-dark">
-            Edit Card
+            {isNew ? 'New Card' : 'Edit Card'}
           </span>
           <button
             onClick={handleSave}
-            disabled={!editor.dirty}
+            disabled={!isNew && !editor.dirty}
             className={`text-sm font-semibold ${
-              editor.dirty
+              isNew || editor.dirty
                 ? 'text-accent-light dark:text-accent-dark'
                 : 'text-text-muted opacity-50'
             }`}
@@ -549,7 +551,7 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss 
           </div>
 
           {/* Delete Card */}
-          {!showDeleteConfirm ? (
+          {isNew ? null : !showDeleteConfirm ? (
             <button
               onClick={() => setShowDeleteConfirm(true)}
               className="w-full py-2.5 text-sm text-red-500 border border-red-500/30 rounded-lg"

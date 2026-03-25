@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Card, LearningState } from '../types';
+import type { Card } from '../types';
 import { useStudySession } from '../hooks/useStudySession';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
@@ -39,22 +39,6 @@ interface StudyProps {
 // Sub-components
 // ---------------------------------------------------------------------------
 
-const LEARNING_STATE_CONFIG: Record<LearningState, { label: string; className: string }> = {
-  new: { label: 'New', className: 'text-blue-500 dark:text-blue-400 border-blue-500 dark:border-blue-400' },
-  learning: { label: 'Learning', className: 'text-orange-500 dark:text-orange-400 border-orange-500 dark:border-orange-400' },
-  relearning: { label: 'Relearning', className: 'text-red-500 dark:text-red-400 border-red-500 dark:border-red-400' },
-  review: { label: 'Review', className: 'text-green-500 dark:text-green-400 border-green-500 dark:border-green-400' },
-};
-
-/** Card state badge (New / Learning / Relearning / Review). */
-function CardStateBadge({ state }: { state: LearningState }) {
-  const config = LEARNING_STATE_CONFIG[state];
-  return (
-    <span className={`text-[10px] font-semibold px-1.5 py-0.5 border rounded ${config.className}`}>
-      {config.label}
-    </span>
-  );
-}
 
 /** Progress bar. */
 function ProgressBar({ studied, total }: { studied: number; total: number }) {
@@ -92,10 +76,10 @@ function formatInterval(days: number): string {
 }
 
 const RATING_COLOR_MAP: Record<string, string> = {
-  red: 'border-red-500 text-red-500 dark:border-red-400 dark:text-red-400',
-  orange: 'border-orange-400 text-orange-400 dark:border-orange-300 dark:text-orange-300',
-  green: 'border-green-500 text-green-500 dark:border-green-400 dark:text-green-400',
-  blue: 'border-blue-500 text-blue-500 dark:border-blue-400 dark:text-blue-400',
+  red: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
+  orange: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
+  green: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
+  blue: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
 };
 
 /** Rating button with colour coding and optional interval display. */
@@ -268,10 +252,10 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
   );
 }
 
-/** Study-ahead limit options. */
-const STUDY_AHEAD_OPTIONS = [10, 25, 50, 100] as const;
+/** Study-ahead quick-pick options (card counts). */
+const STUDY_AHEAD_OPTIONS = [5, 10, 20] as const;
 
-/** Session complete view. */
+/** Session complete view — matches the app's section-card layout. */
 function SessionComplete({
   studied,
   elapsedSeconds,
@@ -293,51 +277,105 @@ function SessionComplete({
     mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
 
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6 px-8 text-center">
-      <p className="text-4xl">🐱</p>
-      <h2 className="text-xl font-semibold text-text-light dark:text-text-dark">
-        {studied > 0 ? 'Session complete' : 'No cards due'}
-      </h2>
-      {studied > 0 ? (
-        <p className="text-sm text-text-muted">
-          {studied} {studied === 1 ? 'card' : 'cards'} reviewed in {timeStr}
-        </p>
-      ) : (
-        <p className="text-sm text-text-muted">
-          You're all caught up!
-        </p>
-      )}
-      {nextDueLabel && (
-        <p className="text-xs text-text-muted">
-          Next review {nextDueLabel}
-        </p>
-      )}
-      <div className="flex flex-col gap-3 mt-4">
-        {!isStudyAhead && onStudyAhead && (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs text-text-muted">Study ahead</p>
-            <div className="flex gap-2">
+    <div
+      className="flex-1 overflow-auto"
+      style={{
+        paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      }}
+    >
+      {/* Title area */}
+      <div className="flex flex-col items-center gap-2 pt-8 pb-6">
+        <p className="text-4xl">🐱</p>
+        <h2 className="text-base font-bold text-[#1c1c1e] dark:text-[#E5E5E5]">
+          {studied > 0 ? 'Session complete' : 'No cards due'}
+        </h2>
+      </div>
+
+      {/* Stats card */}
+      <section className="px-4 pb-4">
+        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-2">
+          {studied > 0 ? (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#C4C4C4]">Reviewed</span>
+              <span className="font-medium">{studied} {studied === 1 ? 'card' : 'cards'} in {timeStr}</span>
+            </div>
+          ) : (
+            <p className="text-sm text-[#C4C4C4]">You're all caught up!</p>
+          )}
+          {nextDueLabel && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#C4C4C4]">Next review</span>
+              <span className="font-medium">{nextDueLabel}</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* Study ahead card */}
+      {!isStudyAhead && onStudyAhead && (
+        <section className="px-4 pb-4">
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+            <p className="text-sm font-medium mb-3">Study ahead</p>
+            <div className="flex gap-2 mb-2">
               {STUDY_AHEAD_OPTIONS.map((n) => (
                 <button
                   key={n}
                   onClick={() => { hapticTap(); onStudyAhead(n); }}
-                  className="px-3 py-1.5 bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-xs font-medium rounded-md"
+                  className="flex-1 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
                 >
                   {n}
                 </button>
               ))}
             </div>
+            <StudyAheadCustom onStudyAhead={onStudyAhead} />
           </div>
-        )}
-        {onExit && (
+        </section>
+      )}
+
+      {/* Done button */}
+      {onExit && (
+        <div className="px-4 pt-2">
           <button
             onClick={() => { hapticTap(); onExit(); }}
-            className="px-6 py-2 border border-border-light dark:border-border-dark text-text-light dark:text-text-dark text-sm rounded-md"
+            className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
           >
             Done
           </button>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Custom card count input for study ahead. */
+function StudyAheadCustom({ onStudyAhead }: { onStudyAhead: (n: number) => void }) {
+  const [custom, setCustom] = useState('');
+
+  const handleCustom = () => {
+    const n = parseInt(custom, 10);
+    if (n > 0) { hapticTap(); onStudyAhead(n); }
+  };
+
+  return (
+    <div className="flex gap-2">
+      <input
+        type="number"
+        min={1}
+        max={9999}
+        placeholder="Custom"
+        value={custom}
+        onChange={e => setCustom(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') handleCustom(); }}
+        className="flex-1 text-center text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+      />
+      <button
+        onClick={handleCustom}
+        className="px-4 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+      >
+        Go
+      </button>
     </div>
   );
 }
@@ -403,7 +441,6 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
-    currentCardLearningState,
     flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
   const { rewriteHtml } = useDeckMedia(db, deckId);
@@ -475,7 +512,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'loading') {
     return (
-      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+      <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark">
         <header
           className="flex items-center gap-3 shrink-0"
           style={{
@@ -501,7 +538,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'error') {
     return (
-      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+      <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark">
         <header
           className="flex items-center gap-3 shrink-0"
           style={{
@@ -527,33 +564,33 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   if (phase === 'complete') {
     return (
-      <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+      <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
         <header
-          className="flex items-center gap-3 shrink-0"
+          className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
             paddingTop: 'env(safe-area-inset-top)',
-            paddingBottom: '0.5rem',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
+            className="text-sm font-medium text-[#C4C4C4] shrink-0"
           >
-            ← Back
+            &larr; Back
           </button>
+          <span className="text-sm font-semibold truncate">
+            {deckName ?? 'Study'}
+          </span>
         </header>
-        <div className="flex-1 flex flex-col">
-          <SessionComplete
-            studied={stats.studied}
-            elapsedSeconds={stats.elapsedSeconds}
-            nextDueLabel={nextDueLabel}
-            isStudyAhead={studyAheadLimit > 0}
-            onStudyAhead={(limit: number) => setStudyAheadLimit(limit)}
-            {...(onExit && { onExit })}
-          />
-        </div>
+        <SessionComplete
+          studied={stats.studied}
+          elapsedSeconds={stats.elapsedSeconds}
+          nextDueLabel={nextDueLabel}
+          isStudyAhead={studyAheadLimit > 0}
+          onStudyAhead={(limit: number) => setStudyAheadLimit(limit)}
+          {...(onExit && { onExit })}
+        />
       </div>
     );
   }
@@ -562,7 +599,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const total = totalCards || studied + stats.remaining;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark select-none">
+    <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark select-none">
       {/* ── Header ── */}
       <header
         className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
@@ -579,13 +616,16 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         >
           ← Back
         </button>
-        <span className="text-sm text-[#737373] dark:text-[#A3A3A3] truncate flex-1 text-center">
+        <span className="text-sm font-medium text-[#C4C4C4] dark:text-[#C4C4C4] truncate flex-1 text-center">
           {deckName ?? 'Study'}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          {currentCardLearningState && <CardStateBadge state={currentCardLearningState} />}
-          <span className="text-xs text-[#737373] dark:text-[#A3A3A3] tabular-nums">
-            {formatTime(stats.elapsedSeconds)} · {stats.remaining} left
+          <span className="text-sm font-semibold tabular-nums">
+            <span className="text-blue-500">{stats.newCount}</span>
+            <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
+            <span className="text-red-500">{stats.learningCount}</span>
+            <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
+            <span className="text-green-500">{stats.reviewCount}</span>
           </span>
         </div>
       </header>
@@ -609,7 +649,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
       >
         {/* Front */}
         <div
-          className={`absolute inset-0 flex items-center justify-center card-face ${
+          className={`absolute inset-0 flex items-center justify-center card-face bg-[var(--kit-bg)] ${
             phase === 'front' ? '' : 'card-face-hidden'
           }`}
         >
@@ -618,7 +658,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
         {/* Back */}
         <div
-          className={`absolute inset-0 flex items-center justify-center card-face ${
+          className={`absolute inset-0 flex items-center justify-center card-face bg-[var(--kit-bg)] ${
             phase === 'back' ? '' : 'card-face-hidden'
           }`}
         >
@@ -628,7 +668,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         {/* Tap-to-flip prompt overlay (only on front) */}
         {phase === 'front' && (
           <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
-            <span className="text-xs text-[#737373] dark:text-[#A3A3A3] px-3 py-1 border border-[#E5E5E5] dark:border-[#404040] rounded-full">
+            <span className="text-xs text-[#C4C4C4] dark:text-[#C4C4C4] px-3 py-1 border border-[#E5E5E5] dark:border-[#404040] rounded-full">
               tap to flip
             </span>
           </div>
@@ -697,11 +737,3 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatTime(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = secs % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}

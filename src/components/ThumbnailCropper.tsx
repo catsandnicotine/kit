@@ -117,7 +117,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center"
       style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
-      <div className="bg-white dark:bg-[#1A1A1A] rounded-xl overflow-hidden w-[300px] flex flex-col">
+      <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-xl overflow-hidden w-[300px] flex flex-col">
         {/* Preview area */}
         <div
           className="relative overflow-hidden mx-auto mt-4 bg-[#F0F0F0] dark:bg-[var(--kit-bg)]"
@@ -129,7 +129,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
         >
           {loading && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <div className="w-6 h-6 border-2 border-[#737373] border-t-transparent rounded-full animate-spin" />
+              <div className="w-6 h-6 border-2 border-[#C4C4C4] border-t-transparent rounded-full animate-spin" />
             </div>
           )}
           {imgSrc && (
@@ -153,7 +153,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
         </div>
 
         {/* Zoom hint */}
-        <p className="text-xs text-[#737373] text-center mt-2">Drag to reposition</p>
+        <p className="text-xs text-[#C4C4C4] text-center mt-2">Drag to reposition</p>
 
         {/* Zoom slider */}
         <div className="px-6 mt-2">
@@ -172,7 +172,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
         <div className="flex gap-3 p-4">
           <button
             onClick={() => { hapticTap(); onCancel(); }}
-            className="flex-1 py-2 text-sm text-[#737373] border border-[#D4D4D4] dark:border-[#404040] rounded-lg"
+            className="flex-1 py-2 text-sm text-[#C4C4C4] border border-[#D4D4D4] dark:border-[#404040] rounded-lg"
           >
             Cancel
           </button>

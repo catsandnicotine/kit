@@ -75,6 +75,14 @@ const MIGRATIONS: Migration[] = [
       try { db.run(sql); } catch { /* column already exists */ }
     }
   },
+  // ── v3 → v4: desired_retention per deck ──────────────────────────────
+  (db) => {
+    try {
+      db.run(
+        `ALTER TABLE deck_settings ADD COLUMN desired_retention REAL NOT NULL DEFAULT 0.9`,
+      );
+    } catch { /* column already exists */ }
+  },
 ];
 
 // ---------------------------------------------------------------------------
