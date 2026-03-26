@@ -54,7 +54,7 @@ const ALL_RATINGS: Rating[] = ['again', 'hard', 'good', 'easy'];
 // ---------------------------------------------------------------------------
 
 export interface SessionStats {
-  /** Cards rated at least once this session. */
+  /** Unique cards rated at least once this session. */
   studied: number;
   /** Cards left in the queue (including current). */
   remaining: number;
@@ -66,6 +66,8 @@ export interface SessionStats {
   learningCount: number;
   /** Remaining review cards in the queue. */
   reviewCount: number;
+  /** Total times the Repeat button was used this session. */
+  totalRepeats: number;
 }
 
 export type StudyPhase =
@@ -97,6 +99,10 @@ export interface UseStudySessionReturn {
   canUndo: boolean;
   /** Pre-computed next-interval previews for all 4 ratings (phase='back'). */
   ratingPreviews: Record<Rating, RatingPreview> | null;
+  /** Total review cards loaded into the queue at session start. */
+  totalDueReviews: number;
+  /** Cards rated at least once this session — passed to Review Again. */
+  studiedCards: Card[];
   /** Set briefly when a card hits the leech threshold; UI should show a warning. */
   leechCardId: string | null;
   /** Dismiss the leech warning. */
@@ -105,6 +111,11 @@ export interface UseStudySessionReturn {
   flip: () => void;
   /** Rate the current card; moves to the next card in the queue. */
   rate: (rating: Rating) => Promise<void>;
+  /**
+   * Re-insert the current card 5–10 positions later in the queue for extra
+   * practice, then advance. No DB writes or FSRS scheduling.
+   */
+  repeat: () => void;
   /** Undo the last rating and return to the card that was just rated. */
   undo: () => Promise<void>;
   /** Trigger the long-press edit flow for the current card. */
@@ -131,6 +142,8 @@ interface UndoEntry {
    * store the index so undo can remove it.
    */
   againInsertedAtIndex: number | null;
+  /** True if this was the first time the card was rated this session (affects studied count). */
+  isFirstRatingThisSession: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +163,7 @@ export function useStudySession(
   deckId: string,
   onEditCard?: (card: Card) => void,
   studyAheadLimit = 0,
+  sessionReviewLimit: number | null = null,
 ): UseStudySessionReturn {
   // -------------------------------------------------------------------------
   // State
@@ -167,10 +181,17 @@ export function useStudySession(
     newCount: 0,
     learningCount: 0,
     reviewCount: 0,
+    totalRepeats: 0,
   });
+
+  /** Card IDs rated at least once this session — used to count unique studied cards. */
+  const ratedCardIdsRef = useRef<Set<string>>(new Set());
+  /** Card objects rated at least once — used to build the Review Again queue. */
+  const ratedCardsMapRef = useRef<Map<string, Card>>(new Map());
 
   const [ratingPreviews, setRatingPreviews] = useState<Record<Rating, RatingPreview> | null>(null);
   const [leechCardId, setLeechCardId] = useState<string | null>(null);
+  const [totalDueReviews, setTotalDueReviews] = useState(0);
 
   /** Mutable queue — we push "again" cards to the end without re-rendering. */
   const queueRef = useRef<CardWithState[]>([]);
@@ -238,6 +259,8 @@ export function useStudySession(
     setPhase('loading');
     startedAtRef.current = Date.now();
     undoRef.current = null;
+    ratedCardIdsRef.current = new Set();
+    ratedCardsMapRef.current = new Map();
 
     const now = Math.floor(Date.now() / 1000);
 
@@ -269,22 +292,40 @@ export function useStudySession(
       if (aheadResult.success) queue = aheadResult.data;
     }
 
+    // Record how many review cards exist before limiting (for the picker UI).
+    const reviewsInQueue = queue.filter(c => c.state.state === 'review').length;
+    setTotalDueReviews(reviewsInQueue);
+
+    // Apply per-session review cap: all new + learning cards pass through;
+    // review cards are capped at sessionReviewLimit (most overdue are already
+    // first in the queue due to ORDER BY due ASC in getCardsDueForDeck).
+    if (sessionReviewLimit !== null && sessionReviewLimit >= 0) {
+      let reviewsSeen = 0;
+      queue = queue.filter(cws => {
+        if (cws.state.state === 'review') {
+          reviewsSeen++;
+          return reviewsSeen <= sessionReviewLimit;
+        }
+        return true;
+      });
+    }
+
     queueRef.current = queue;
 
     if (queue.length === 0) {
-      setStats({ studied: 0, remaining: 0, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0 });
+      setStats({ studied: 0, remaining: 0, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0, totalRepeats: 0 });
       setPhase('complete');
       return;
     }
 
-    setStats({ studied: 0, remaining: queue.length, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0 });
+    setStats({ studied: 0, remaining: queue.length, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0, totalRepeats: 0 });
     showCard(queue, 0);
     setCurrentIndex(0);
     startTimer();
 
     return () => stopTimer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db, deckId, studyAheadLimit]);
+  }, [db, deckId, studyAheadLimit, sessionReviewLimit]);
 
   // -------------------------------------------------------------------------
   // flip
@@ -328,6 +369,7 @@ export function useStudySession(
       const { card, state } = cws;
 
       const wasFirstReview = state.reps === 0;
+      const isFirstRatingThisSession = !ratedCardIdsRef.current.has(card.id);
       const elapsedDays = calcElapsedDays(state.lastReview, nowSec);
 
       const fsrsParams = { ...DEFAULT_PARAMS, requestRetention: deckSettingsRef.current.desiredRetention ?? 0.9 };
@@ -378,12 +420,18 @@ export function useStudySession(
         againInsertedAtIndex = queue.length - 1;
       }
 
+      if (isFirstRatingThisSession) {
+        ratedCardIdsRef.current.add(card.id);
+        ratedCardsMapRef.current.set(card.id, card);
+      }
+
       undoRef.current = {
         cardIndex: currentIndex,
         previousCardWithState: cws,
         wasFirstReview,
         reviewLogId: logId,
         againInsertedAtIndex,
+        isFirstRatingThisSession,
       };
 
       // --- Advance ---
@@ -391,7 +439,7 @@ export function useStudySession(
 
       setStats(prev => ({
         ...prev,
-        studied: prev.studied + 1,
+        studied: isFirstRatingThisSession ? prev.studied + 1 : prev.studied,
         remaining: queue.length - nextIndex,
       }));
 
@@ -416,7 +464,7 @@ export function useStudySession(
 
     hapticUndo();
 
-    const { cardIndex, previousCardWithState, wasFirstReview, reviewLogId, againInsertedAtIndex } =
+    const { cardIndex, previousCardWithState, wasFirstReview, reviewLogId, againInsertedAtIndex, isFirstRatingThisSession } =
       entry;
 
     // --- Revert DB ---
@@ -435,11 +483,15 @@ export function useStudySession(
       queue.splice(againInsertedAtIndex, 1);
     }
 
+    if (isFirstRatingThisSession) {
+      ratedCardIdsRef.current.delete(previousCardWithState.card.id);
+      ratedCardsMapRef.current.delete(previousCardWithState.card.id);
+    }
     undoRef.current = null;
 
     setStats(prev => ({
       ...prev,
-      studied: Math.max(0, prev.studied - 1),
+      studied: isFirstRatingThisSession ? Math.max(0, prev.studied - 1) : prev.studied,
       remaining: queue.length - cardIndex,
     }));
 
@@ -447,6 +499,38 @@ export function useStudySession(
     showCard(queue, cardIndex);
     if (phase === 'complete') startTimer();
   }, [db, phase, showCard, startTimer]);
+
+  // -------------------------------------------------------------------------
+  // repeat
+  // -------------------------------------------------------------------------
+
+  const repeat = useCallback(() => {
+    if (phase !== 'back') return;
+    const queue = queueRef.current;
+    const cws = queue[currentIndex];
+    if (!cws) return;
+
+    hapticUndo(); // soft light-impact
+
+    // Insert a copy of the card 5–10 positions ahead (or at the end).
+    const offset = 5 + Math.floor(Math.random() * 6);
+    const insertAt = Math.min(currentIndex + offset, queue.length);
+    queue.splice(insertAt, 0, { ...cws });
+
+    // Clear undo — a repeat is not undoable.
+    undoRef.current = null;
+
+    const nextIndex = currentIndex + 1;
+
+    setStats(prev => ({
+      ...prev,
+      remaining: queue.length - nextIndex,
+      totalRepeats: prev.totalRepeats + 1,
+    }));
+
+    setCurrentIndex(nextIndex);
+    showCard(queue, nextIndex);
+  }, [phase, currentIndex, showCard]);
 
   // -------------------------------------------------------------------------
   // Expose onEditCard via long-press (called from Study.tsx, forwarded here)
@@ -492,10 +576,13 @@ export function useStudySession(
     errorMessage,
     canUndo: undoRef.current !== null,
     ratingPreviews,
+    totalDueReviews,
+    studiedCards: Array.from(ratedCardsMapRef.current.values()),
     leechCardId,
     dismissLeech: useCallback(() => setLeechCardId(null), []),
     flip,
     rate,
+    repeat,
     undo,
     editCurrentCard,
     updateCurrentCardInQueue,

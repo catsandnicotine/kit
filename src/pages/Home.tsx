@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useClickOutside } from '../hooks/useClickOutside';
 import type { Database } from 'sql.js';
 import type { Deck } from '../types';
 import { useDeckImport } from '../hooks/useDeckImport';
@@ -31,12 +32,10 @@ import {
   type DeckCardCounts,
 } from '../lib/db/queries';
 import { v4 as uuidv4 } from 'uuid';
-import { persistDatabase } from '../hooks/useDatabase';
-import { scheduleICloudBackup } from '../hooks/useBackup';
+import { persistAndBackup } from '../hooks/useDatabase';
 import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics';
 import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
 import { PixelCat } from '../components/PixelCat';
-import { KitLogo } from '../components/KitLogo';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
 
 // ---------------------------------------------------------------------------
@@ -52,6 +51,7 @@ interface HomeProps {
   onStats: (deckId: string, deckName: string) => void;
   onDeckSettings: (deckId: string, deckName: string) => void;
   onSettings: () => void;
+  onTags: (deckId?: string, deckName?: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -70,11 +70,35 @@ function DotsCircleIcon() {
   );
 }
 
-const COUNT_COLOR_MAP: Record<string, string> = {
-  blue: 'text-blue-500 dark:text-blue-400',
-  orange: 'text-red-500 dark:text-red-400',
-  green: 'text-green-500 dark:text-green-400',
-};
+/** Inline SVG magnifying glass icon. */
+function MagnifyingGlassIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="7" />
+      <line x1="16.5" y1="16.5" x2="22" y2="22" />
+    </svg>
+  );
+}
+
+/** Inline SVG X icon. */
+function XMarkIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+/** Inline SVG plain plus icon (no circle). */
+function PlusIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="4" x2="12" y2="20" />
+      <line x1="4" y1="12" x2="20" y2="12" />
+    </svg>
+  );
+}
 
 const IMPORT_LABELS: Record<string, string> = {
   parsing: 'Parsing .apkg file…',
@@ -82,45 +106,6 @@ const IMPORT_LABELS: Record<string, string> = {
   'storing-media': 'Storing media files…',
 };
 
-/** Count badge with a colour. */
-function CountBadge({
-  count,
-  color,
-  label,
-}: {
-  count: number;
-  color: 'blue' | 'orange' | 'green';
-  label: string;
-}) {
-  return (
-    <span
-      className={`text-sm font-semibold tabular-nums ${COUNT_COLOR_MAP[color]}`}
-      title={label}
-    >
-      {count}
-    </span>
-  );
-}
-
-/** Count legend row: ● New  ● Learning  ● Due */
-function CountLegend() {
-  return (
-    <div className="flex items-center justify-end gap-4 text-xs text-[#C4C4C4] px-4 py-1.5">
-      <span className="flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 dark:bg-blue-400 inline-block" />
-        New
-      </span>
-      <span className="flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" />
-        Learning
-      </span>
-      <span className="flex items-center gap-1">
-        <span className="w-1.5 h-1.5 rounded-full bg-green-500 dark:bg-green-400 inline-block" />
-        Due
-      </span>
-    </div>
-  );
-}
 
 /** Action menu for a deck row — "..." button that opens a dropdown. */
 function DeckActionMenu({
@@ -128,7 +113,9 @@ function DeckActionMenu({
   onBrowse,
   onStats,
   onDeckSettings,
-  onExport,
+  onTags,
+  onExportFresh,
+  onExportWithProgress,
   onSetThumbnail,
   onDelete,
   exporting,
@@ -137,29 +124,16 @@ function DeckActionMenu({
   onBrowse: () => void;
   onStats: () => void;
   onDeckSettings: () => void;
-  onExport: () => void;
+  onTags: () => void;
+  onExportFresh: () => void;
+  onExportWithProgress: () => void;
   onSetThumbnail: () => void;
   onDelete: () => void;
   exporting: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-
-  // Close on outside tap
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: MouseEvent | TouchEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    document.addEventListener('touchstart', handler);
-    return () => {
-      document.removeEventListener('mousedown', handler);
-      document.removeEventListener('touchstart', handler);
-    };
-  }, [open]);
+  useClickOutside(menuRef, open, () => setOpen(false));
 
   return (
     <div ref={menuRef} className="relative shrink-0">
@@ -197,17 +171,30 @@ function DeckActionMenu({
             Settings
           </button>
           <button
+            onClick={() => { setOpen(false); onTags(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+          >
+            Tags
+          </button>
+          <button
             onClick={() => { setOpen(false); onSetThumbnail(); }}
             className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
           >
             Set Thumbnail
           </button>
           <button
-            onClick={() => { setOpen(false); onExport(); }}
+            onClick={() => { setOpen(false); onExportFresh(); }}
             disabled={exporting}
             className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
           >
-            {exporting ? 'Exporting…' : 'Export .apkg'}
+            {exporting ? 'Exporting…' : 'Share to a friend (fresh start)'}
+          </button>
+          <button
+            onClick={() => { setOpen(false); onExportWithProgress(); }}
+            disabled={exporting}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
+          >
+            {exporting ? 'Exporting…' : 'Export my copy (keeps progress)'}
           </button>
           <button
             onClick={() => { setOpen(false); onDelete(); }}
@@ -230,7 +217,9 @@ function DeckRow({
   onBrowse,
   onStats,
   onDeckSettings,
-  onExport,
+  onTags,
+  onExportFresh,
+  onExportWithProgress,
   onRename,
   onSetThumbnail,
   onDelete,
@@ -243,16 +232,14 @@ function DeckRow({
   onBrowse: () => void;
   onStats: () => void;
   onDeckSettings: () => void;
-  onExport: () => void;
-  onRename: (newName: string) => void;
+  onTags: () => void;
+  onExportFresh: () => void;
+  onExportWithProgress: () => void;
+  onRename: () => void;
   onSetThumbnail: () => void;
   onDelete: () => void;
   exporting: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draftName, setDraftName] = useState(deck.name);
-  const inputRef = useRef<HTMLInputElement>(null);
-
   const newCount = counts?.newCount ?? 0;
   const learningCount = counts?.learningCount ?? 0;
   const reviewCount = counts?.reviewCount ?? 0;
@@ -260,84 +247,49 @@ function DeckRow({
   const dueCount = newCount + learningCount + reviewCount;
   const progress = totalCount > 0 ? (totalCount - dueCount) / totalCount : 0;
 
-  const startRename = useCallback(() => {
-    setDraftName(deck.name);
-    setEditing(true);
-  }, [deck.name]);
-
-  useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
-
-  const commitRename = useCallback(() => {
-    const trimmed = draftName.trim();
-    if (trimmed && trimmed !== deck.name) {
-      onRename(trimmed);
-    }
-    setEditing(false);
-  }, [draftName, deck.name, onRename]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commitRename();
-      } else if (e.key === 'Escape') {
-        setEditing(false);
-      }
-    },
-    [commitRename],
-  );
-
   return (
     <div className="border-b border-[#E5E5E5] dark:border-[#262626]">
       <div className="flex items-center">
-        {editing ? (
-          <div className="flex-1 px-4 py-3 flex items-center gap-2 min-w-0">
-            <input
-              ref={inputRef}
-              type="text"
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              onBlur={commitRename}
-              onKeyDown={handleKeyDown}
-              className="flex-1 text-sm font-medium bg-transparent border-b border-[#1c1c1e] dark:border-[#E5E5E5] outline-none text-[#1c1c1e] dark:text-[#E5E5E5] min-w-0"
+        <button
+          onClick={onTap}
+          className="flex-1 text-left px-4 py-3 flex items-center active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors min-w-0 gap-3"
+        >
+          {/* Thumbnail */}
+          {thumbnail ? (
+            <img
+              src={thumbnail}
+              alt=""
+              className="w-10 h-10 rounded-lg object-cover shrink-0"
             />
+          ) : null}
+          <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+            <span
+              className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] truncate"
+              style={{ fontFamily: "-apple-system, 'Apple Color Emoji', 'Segoe UI Emoji', system-ui, sans-serif" }}
+            >
+              {deck.name}
+            </span>
+            <span className="text-xs text-[#C4C4C4]">
+              {totalCount} {totalCount === 1 ? 'card' : 'cards'}
+            </span>
           </div>
-        ) : (
-          <button
-            onClick={onTap}
-            className="flex-1 text-left px-4 py-3 flex items-center active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors min-w-0 gap-3"
-          >
-            {/* Thumbnail */}
-            {thumbnail ? (
-              <img
-                src={thumbnail}
-                alt=""
-                className="w-10 h-10 rounded-lg object-cover shrink-0"
-              />
-            ) : null}
-            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-              <span className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] truncate">
-                {deck.name}
-              </span>
-              <span className="text-xs text-[#C4C4C4]">
-                {totalCount} {totalCount === 1 ? 'card' : 'cards'}
-              </span>
-            </div>
-            <div className="flex items-center gap-3 ml-4 shrink-0">
-              <CountBadge count={newCount} color="blue" label="New" />
-              <CountBadge count={learningCount} color="orange" label="Learning" />
-              <CountBadge count={reviewCount} color="green" label="Review" />
-            </div>
-          </button>
-        )}
+          {dueCount > 0 && (
+            <span
+              className="text-sm font-semibold tabular-nums text-[#1c1c1e] dark:text-[#E5E5E5] ml-4 shrink-0"
+              title="Cards due"
+            >
+              {dueCount}
+            </span>
+          )}
+        </button>
         <DeckActionMenu
-          onRename={startRename}
+          onRename={onRename}
           onBrowse={onBrowse}
           onStats={onStats}
           onDeckSettings={onDeckSettings}
-          onExport={onExport}
+          onTags={onTags}
+          onExportFresh={onExportFresh}
+          onExportWithProgress={onExportWithProgress}
           onSetThumbnail={onSetThumbnail}
           onDelete={onDelete}
           exporting={exporting}
@@ -353,6 +305,91 @@ function DeckRow({
               style={{ width: `${Math.round(progress * 100)}%` }}
             />
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Plus button dropdown — "Create Deck" / "Import Deck". */
+function PlusMenu({
+  onCreateDeck,
+  onImportDeck,
+  disabled,
+}: {
+  onCreateDeck: () => void;
+  onImportDeck: () => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useClickOutside(menuRef, open, () => setOpen(false));
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        onClick={() => { if (!disabled) setOpen((v) => !v); }}
+        disabled={disabled}
+        className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors disabled:opacity-40"
+        aria-label="Add deck"
+      >
+        <PlusIcon />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] bg-[#FDFBF7] dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+          <button
+            onClick={() => { setOpen(false); onCreateDeck(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+          >
+            Create Deck
+          </button>
+          <button
+            onClick={() => { setOpen(false); onImportDeck(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+          >
+            Import Deck
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Settings/global actions dropdown — "··· " button in the home header. */
+function SettingsMenu({
+  onSettings,
+  onAllTags,
+}: {
+  onSettings: () => void;
+  onAllTags: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useClickOutside(menuRef, open, () => setOpen(false));
+
+  return (
+    <div ref={menuRef} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+        aria-label="More options"
+      >
+        <DotsCircleIcon />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[140px] bg-[#FDFBF7] dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+          <button
+            onClick={() => { setOpen(false); hapticNavigate(); onAllTags(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+          >
+            All Tags
+          </button>
+          <button
+            onClick={() => { setOpen(false); hapticNavigate(); onSettings(); }}
+            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
+          >
+            Settings
+          </button>
         </div>
       )}
     </div>
@@ -384,14 +421,47 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStats, onDeckSettings, onSettings }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStats, onDeckSettings, onSettings, onTags }: HomeProps) {
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
   const [catBouncing, setCatBouncing] = useState(false);
 
+  // Search / sort state
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOrder, setSortOrder] = useState<'alpha' | 'alpha-desc' | 'due'>('alpha');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
+
   // Thumbnail state
   const deckIds = useMemo(() => (decks ?? []).map(d => d.id), [decks]);
   const { thumbnails, setThumbnail } = useDeckThumbnails(deckIds);
+
+  // Filtered + sorted deck list
+  const filteredDecks = useMemo(() => {
+    let list = decks ?? [];
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter((d) => d.name.toLowerCase().includes(q));
+    }
+    if (sortOrder === 'alpha') {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortOrder === 'alpha-desc') {
+      list = [...list].sort((a, b) => b.name.localeCompare(a.name));
+    } else {
+      list = [...list].sort((a, b) => {
+        const ca = counts[a.id];
+        const cb = counts[b.id];
+        const dueA = (ca?.newCount ?? 0) + (ca?.learningCount ?? 0) + (ca?.reviewCount ?? 0);
+        const dueB = (cb?.newCount ?? 0) + (cb?.learningCount ?? 0) + (cb?.reviewCount ?? 0);
+        return dueB - dueA;
+      });
+    }
+    return list;
+  }, [decks, searchQuery, sortOrder, counts]);
   const [cropFile, setCropFile] = useState<File | null>(null);
   const [cropDeckId, setCropDeckId] = useState<string | null>(null);
 
@@ -420,7 +490,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
     useDeckImport(db, onImportComplete);
 
   // ── Export hook ──────────────────────────────────────────────────────
-  const { phase: exportPhase, errorMessage: exportError, exportDeck, reset: resetExport } =
+  const { phase: exportPhase, errorMessage: exportError, exportDeckFresh, exportDeckWithProgress, reset: resetExport } =
     useExport(db);
 
   const isExporting = exportPhase === 'exporting';
@@ -432,8 +502,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       const now = Math.floor(Date.now() / 1000);
       const result = renameDeck(db, deckId, newName, now);
       if (result.success) {
-        persistDatabase();
-        scheduleICloudBackup();
+        persistAndBackup();
         refreshDecks();
       }
     },
@@ -457,8 +526,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
     const deck = { id: uuidv4(), name, description: '', createdAt: now, updatedAt: now };
     const result = insertDeck(db, deck);
     if (result.success) {
-      persistDatabase();
-      scheduleICloudBackup();
+      persistAndBackup();
       refreshDecks();
       setShowCreateDeck(false);
       setNewDeckName('');
@@ -466,6 +534,25 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
       onBrowse(deck.id, deck.name);
     }
   }, [db, newDeckName, refreshDecks, onBrowse]);
+
+  // ── Rename dialog state ──────────────────────────────────────────────
+  const [renamingDeck, setRenamingDeck] = useState<{ id: string; name: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (renamingDeck) renameInputRef.current?.focus();
+  }, [renamingDeck]);
+
+  const handleRenameConfirm = useCallback(() => {
+    if (!renamingDeck) return;
+    const trimmed = renameDraft.trim();
+    if (trimmed && trimmed !== renamingDeck.name) {
+      handleRename(renamingDeck.id, trimmed);
+    }
+    setRenamingDeck(null);
+    setRenameDraft('');
+  }, [renamingDeck, renameDraft, handleRename]);
 
   // ── Delete handler ──────────────────────────────────────────────────
   const [deletingDeck, setDeletingDeck] = useState<{ id: string; name: string } | null>(null);
@@ -479,8 +566,7 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
     if (!db || !deletingDeck) return;
     const result = deleteDeck(db, deletingDeck.id);
     if (result.success) {
-      persistDatabase();
-      scheduleICloudBackup();
+      persistAndBackup();
       refreshDecks();
     }
     setDeletingDeck(null);
@@ -531,6 +617,23 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
     importPhase === 'storing-media';
 
   // ── Render ────────────────────────────────────────────────────────────
+
+  // Full-screen loading splash — shown until db is ready AND decks have loaded.
+  // Completely separate from the normal layout so no header/buttons flash through.
+  if ((dbLoading || decks === null) && !dbError) {
+    return (
+      <div className="min-h-[100dvh] bg-[var(--kit-bg)] flex flex-col items-center justify-center gap-3">
+        <PixelCat size={28} />
+        <p className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">
+          Kit
+        </p>
+        <div className="kit-loading-bar mt-1">
+          <div className="kit-loading-fill" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col">
       {/* Header */}
@@ -555,69 +658,111 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
               <PixelCat size={16} />
             </div>
           </button>
-          <KitLogo height={16} />
+          <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">Kit</span>
         </div>
-        <button
-          onClick={() => { hapticNavigate(); onSettings(); }}
-          className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
-          aria-label="Settings"
-        >
-          <DotsCircleIcon />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => {
+              hapticTap();
+              setSearchOpen((v) => {
+                if (v) setSearchQuery('');
+                return !v;
+              });
+            }}
+            className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+            aria-label={searchOpen ? 'Close search' : 'Search decks'}
+          >
+            {searchOpen ? <XMarkIcon /> : <MagnifyingGlassIcon />}
+          </button>
+          <PlusMenu
+            onCreateDeck={() => { hapticTap(); setShowCreateDeck(true); }}
+            onImportDeck={openFilePicker}
+            disabled={dbLoading || !!dbError}
+          />
+          <SettingsMenu
+            onSettings={onSettings}
+            onAllTags={() => onTags()}
+          />
+        </div>
       </header>
 
-      {/* Count legend */}
-      {decks && decks.length > 0 && <CountLegend />}
+      {/* Search / sort bar — expands below header */}
+      {searchOpen && (
+        <div
+          className="flex items-center gap-2 px-4 py-2 border-b border-[#E5E5E5] dark:border-[#262626]"
+          style={{
+            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+            paddingRight: 'max(1rem, env(safe-area-inset-right))',
+          }}
+        >
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search decks…"
+            className="flex-1 px-3 py-2 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+          />
+          <button
+            onClick={() =>
+              setSortOrder((v) =>
+                v === 'alpha' ? 'alpha-desc' : v === 'alpha-desc' ? 'due' : 'alpha',
+              )
+            }
+            className="shrink-0 px-2.5 py-2 text-xs font-medium text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg transition-colors"
+            title="Change sort order"
+          >
+            {sortOrder === 'alpha' ? 'A→Z' : sortOrder === 'alpha-desc' ? 'Z→A' : '# Due'}
+          </button>
+        </div>
+      )}
 
-      {/* DB status */}
-      {dbLoading && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 py-12">
-          <div className="cat-bounce" style={{ animationIterationCount: 'infinite' }}>
-            <PixelCat size={48} />
+      {/* Main content area */}
+      <div className="flex flex-col flex-1 min-h-0 overflow-auto">
+        {dbError ? (
+          <div className="px-4 py-4">
+            <p className="text-xs text-red-500">{dbError}</p>
           </div>
-          <p className="text-xs text-[#C4C4C4]">Loading…</p>
-        </div>
-      )}
-      {dbError && (
-        <div className="px-4 py-4">
-          <p className="text-xs text-red-500">{dbError}</p>
-        </div>
-      )}
-
-      {/* Deck list */}
-      {!dbLoading && !dbError && decks !== null && (
-        <div className="flex flex-col flex-1 min-h-0 overflow-auto">
-          {decks.length === 0 && importPhase === 'idle' && (
-            <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
-              <PixelCat size={80} className="opacity-30" />
-              <div>
-                <p className="text-sm text-[#C4C4C4]">No decks yet</p>
-                <p className="text-xs text-[#C4C4C4] mt-1">
-                  Import an Anki .apkg file to get started
-                </p>
+        ) : (
+          <>
+            {decks!.length === 0 && importPhase === 'idle' && !searchQuery && (
+              <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
+                <PixelCat size={80} className="opacity-30" />
+                <div>
+                  <p className="text-sm text-[#C4C4C4]">No decks yet</p>
+                  <p className="text-xs text-[#C4C4C4] mt-1">
+                    Tap + to import an Anki .apkg file or create a deck
+                  </p>
+                </div>
               </div>
-            </div>
-          )}
-
-          {decks.map((deck) => (
-            <DeckRow
-              key={deck.id}
-              deck={deck}
-              counts={counts[deck.id]}
-              thumbnail={thumbnails[deck.id]}
-              onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
-              onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
-              onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
-              onDeckSettings={() => { hapticNavigate(); onDeckSettings(deck.id, deck.name); }}
-              onExport={() => { hapticTap(); exportDeck(deck.id, deck.name); }}
-              onRename={(newName: string) => handleRename(deck.id, newName)}
-              onSetThumbnail={() => handleSetThumbnail(deck.id)}
-              onDelete={() => handleDeleteRequest(deck.id, deck.name)}
-              exporting={isExporting}
-            />
-          ))}
-        </div>
-      )}
+            )}
+            {filteredDecks.length === 0 && searchQuery.trim() && (
+              <div className="px-4 py-12 text-center">
+                <p className="text-sm text-[#C4C4C4]">No decks match "{searchQuery}"</p>
+              </div>
+            )}
+            {filteredDecks.map((deck) => (
+              <DeckRow
+                key={deck.id}
+                deck={deck}
+                counts={counts[deck.id]}
+                thumbnail={thumbnails[deck.id]}
+                onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
+                onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
+                onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
+                onDeckSettings={() => { hapticNavigate(); onDeckSettings(deck.id, deck.name); }}
+                onTags={() => { hapticNavigate(); onTags(deck.id, deck.name); }}
+                onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
+                onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
+                onRename={() => { setRenameDraft(deck.name); setRenamingDeck({ id: deck.id, name: deck.name }); }}
+                onSetThumbnail={() => handleSetThumbnail(deck.id)}
+                onDelete={() => handleDeleteRequest(deck.id, deck.name)}
+                exporting={isExporting}
+              />
+            ))}
+          </>
+        )}
+      </div>
 
       {/* Import progress */}
       {isImporting && <ImportProgress phase={importPhase} />}
@@ -664,31 +809,6 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
         </div>
       )}
 
-      {/* Bottom buttons */}
-      <div
-        className="px-4 py-4 shrink-0 flex flex-col gap-2"
-        style={{
-          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
-          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-          paddingRight: 'max(1rem, env(safe-area-inset-right))',
-        }}
-      >
-        <button
-          disabled={dbLoading || !!dbError}
-          onClick={() => { hapticTap(); setShowCreateDeck(true); }}
-          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed active:opacity-80 transition-opacity"
-        >
-          Create Deck
-        </button>
-        <button
-          disabled={dbLoading || !!dbError || isImporting}
-          onClick={openFilePicker}
-          className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-        >
-          {isImporting ? 'Importing\u2026' : 'Import Deck'}
-        </button>
-      </div>
-
       {/* Delete confirmation dialog */}
       {deletingDeck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
@@ -713,6 +833,42 @@ export default function Home({ db, dbLoading, dbError, onStudy, onBrowse, onStat
                 className="flex-1 py-3.5 text-sm font-semibold text-red-500 active:bg-red-50 dark:active:bg-red-950"
               >
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename deck dialog */}
+      {renamingDeck && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
+          <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 pt-5 pb-4">
+              <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] text-center mb-4">
+                Rename Deck
+              </p>
+              <input
+                ref={renameInputRef}
+                type="text"
+                value={renameDraft}
+                onChange={(e) => setRenameDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleRenameConfirm(); }}
+                className="w-full px-3 py-2.5 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+              />
+            </div>
+            <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
+              <button
+                onClick={() => { setRenamingDeck(null); setRenameDraft(''); }}
+                className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameConfirm}
+                disabled={!renameDraft.trim()}
+                className="flex-1 py-3.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] disabled:opacity-40"
+              >
+                Save
               </button>
             </div>
           </div>

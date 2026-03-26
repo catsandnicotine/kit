@@ -114,6 +114,22 @@ export type LearningState = 'new' | 'learning' | 'review' | 'relearning';
 
 export type Theme = 'light' | 'dark' | 'black';
 
+/** A single daily reminder time (24-hour clock). */
+export interface ReminderTime {
+  /** Hour in 24-hour format (0–23). */
+  hour: number;
+  /** Minute (0–59). */
+  minute: number;
+}
+
+/** Persisted notification preferences for the app. */
+export interface NotificationPrefs {
+  /** Whether study reminders are enabled. */
+  enabled: boolean;
+  /** Up to 3 daily reminder times, sorted ascending. */
+  times: ReminderTime[];
+}
+
 /** Output produced by the FSRS scheduling functions. */
 export interface FSRSOutput {
   /** New stability value in days. */

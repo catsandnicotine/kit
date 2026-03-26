@@ -31,6 +31,7 @@ import {
   restoreDatabase as restoreICloudBackup,
   type BackupMeta,
 } from '../lib/platform/icloud';
+import { scheduleICloudBackup } from './useBackup';
 
 // ---------------------------------------------------------------------------
 // Module-level singleton — allows any hook to call persistDatabase()
@@ -68,6 +69,15 @@ export function persistDatabase(): void {
       console.warn('[useDatabase] Failed to persist database:', e);
     }
   }, PERSIST_DEBOUNCE_MS);
+}
+
+/**
+ * Persist the database and schedule an iCloud backup in one call.
+ * Use this instead of calling `persistDatabase()` + `scheduleICloudBackup()` separately.
+ */
+export function persistAndBackup(): void {
+  persistDatabase();
+  scheduleICloudBackup();
 }
 
 /**

@@ -56,7 +56,10 @@
     display: none;
   }
 
-  /* Study card content: reset prose styles inside dangerouslySetInnerHTML */
+  /* ------------------------------------------------------------------ */
+  /* Card content: base styles                                          */
+  /* ------------------------------------------------------------------ */
+
   .card-content {
     font-size: 1rem;
     line-height: 1.6;
@@ -65,6 +68,18 @@
     overflow-x: hidden;
     box-sizing: border-box;
   }
+
+  /* .card wrapper — matches the element Anki wraps content in so deck
+     CSS rules targeting `.card` work out of the box. We set sensible
+     defaults that deck CSS can override (no !important anywhere). */
+  .card-content .card {
+    font-family: 'Helvetica Neue', Helvetica, Arial, 'Noto Sans', 'Noto Sans JP', 'Noto Sans SC', 'Noto Sans KR', system-ui, sans-serif;
+    text-align: center;
+    color: #1c1c1e;
+    background-color: transparent;
+  }
+
+  /* Images: scale to fit, never overflow */
   .card-content img {
     max-width: 100%;
     height: auto;
@@ -72,20 +87,51 @@
     margin: 0.5rem auto;
   }
 
-  /* Dark mode: override Anki's hardcoded dark-on-dark text colours */
-  .dark .card-content,
-  .dark .card-content * {
-    color: #E5E5E5 !important;
+  /* Tables: prevent overflow, sensible defaults */
+  .card-content table {
+    border-collapse: collapse;
+    max-width: 100%;
+    margin: 0.5rem auto;
+    overflow-x: auto;
+    display: block;
   }
-  .dark .card-content table {
-    border-color: #404040 !important;
-  }
-  .dark .card-content td,
-  .dark .card-content th {
-    border-color: #404040 !important;
+  .card-content td,
+  .card-content th {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #d4d4d4;
+    text-align: left;
   }
 
-  /* Cloze highlight */
+  /* ------------------------------------------------------------------ */
+  /* Card content: dark / black mode defaults                           */
+  /*                                                                    */
+  /* DOM structure mirrors Anki:                                        */
+  /*   .card-content > div.night_mode > div.card > ...content...        */
+  /*                                                                    */
+  /* Key principle: set defaults on .card only — do NOT blanket-force   */
+  /* color on * with !important. This lets deck CSS, inline styles, and */
+  /* .night_mode rules take priority naturally via specificity.         */
+  /* ------------------------------------------------------------------ */
+
+  /* Dark mode card defaults — low specificity so deck CSS wins */
+  .card-content .night_mode .card {
+    color: #E5E5E5;
+    background-color: #141414;
+  }
+  .card-content .night_mode table {
+    border-color: #404040;
+  }
+  .card-content .night_mode td,
+  .card-content .night_mode th {
+    border-color: #404040;
+  }
+
+  /* Black mode card defaults */
+  .card-content .black_mode .card {
+    background-color: #0A0A0A;
+  }
+
+  /* Cloze highlight — works in all themes */
   .card-content .cloze {
     color: #3b82f6;
     font-weight: 600;
@@ -174,6 +220,36 @@
   }
   .dark .browse-card-fade {
     background: linear-gradient(transparent, var(--kit-surface));
+  }
+
+  /* Startup loading bar — indeterminate slide */
+  .kit-loading-bar {
+    width: 7rem;
+    height: 2px;
+    background: #E5E5E5;
+    border-radius: 9999px;
+    position: relative;
+    overflow: hidden;
+  }
+  .dark .kit-loading-bar {
+    background: #2a2a2a;
+  }
+  .kit-loading-fill {
+    position: absolute;
+    top: 0;
+    left: -40%;
+    width: 40%;
+    height: 100%;
+    background: #1c1c1e;
+    border-radius: 9999px;
+    animation: kit-loading 1.4s linear infinite;
+  }
+  .dark .kit-loading-fill {
+    background: #E5E5E5;
+  }
+  @keyframes kit-loading {
+    0%   { left: -40%; }
+    100% { left: 100%; }
   }
 
   /* Cat bounce animation (header tap) */

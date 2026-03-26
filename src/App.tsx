@@ -1,14 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
 import { useDatabase } from './hooks/useDatabase';
 import { useBackup } from './hooks/useBackup';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
-import Study from './pages/Study';
-import Browse from './pages/Browse';
-import Settings from './pages/Settings';
-import DeckStats from './pages/DeckStats';
-import DeckSettings from './pages/DeckSettings';
+
+// Lazy-loaded pages — keeps KaTeX, Konva, and other heavy deps out of the
+// initial chunk so the WKWebView doesn't OOM during database init.
+const Study = lazy(() => import('./pages/Study'));
+const Browse = lazy(() => import('./pages/Browse'));
+const Settings = lazy(() => import('./pages/Settings'));
+const DeckStats = lazy(() => import('./pages/DeckStats'));
+const DeckSettings = lazy(() => import('./pages/DeckSettings'));
+const TagBrowser = lazy(() => import('./pages/TagBrowser'));
 
 // ---------------------------------------------------------------------------
 // Route state
@@ -20,7 +24,8 @@ type Route =
   | { page: 'browse'; deckId: string; deckName: string }
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
-  | { page: 'settings' };
+  | { page: 'settings' }
+  | { page: 'tags'; deckId?: string; deckName?: string };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -182,6 +187,14 @@ function AppInner() {
 
   const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
 
+  const goTags = useCallback((deckId?: string, deckName?: string) => {
+    setRoute({
+      page: 'tags',
+      ...(deckId !== undefined ? { deckId } : {}),
+      ...(deckName !== undefined ? { deckName } : {}),
+    });
+  }, []);
+
   // ── Onboarding (first launch) ────────────────────────────────────────
   if (showOnboarding) {
     return <Onboarding onDismiss={dismissOnboarding} />;
@@ -199,52 +212,83 @@ function AppInner() {
     );
   }
 
+  const pageFallback = (
+    <div className="min-h-[100dvh] bg-[var(--kit-bg)] flex items-center justify-center">
+      <p className="text-sm text-[#C4C4C4]">Loading…</p>
+    </div>
+  );
+
   if (route.page === 'study') {
     return (
-      <Study
-        db={db}
-        deckId={route.deckId}
-        deckName={route.deckName}
-        onExit={goHome}
-      />
+      <Suspense fallback={pageFallback}>
+        <Study
+          db={db}
+          deckId={route.deckId}
+          deckName={route.deckName}
+          onExit={goHome}
+        />
+      </Suspense>
     );
   }
 
   if (route.page === 'browse') {
     return (
-      <Browse
-        db={db}
-        deckId={route.deckId}
-        deckName={route.deckName}
-        onBack={goHome}
-      />
+      <Suspense fallback={pageFallback}>
+        <Browse
+          db={db}
+          deckId={route.deckId}
+          deckName={route.deckName}
+          onBack={goHome}
+        />
+      </Suspense>
     );
   }
 
   if (route.page === 'stats') {
     return (
-      <DeckStats
-        db={db}
-        deckId={route.deckId}
-        deckName={route.deckName}
-        onBack={goHome}
-      />
+      <Suspense fallback={pageFallback}>
+        <DeckStats
+          db={db}
+          deckId={route.deckId}
+          deckName={route.deckName}
+          onBack={goHome}
+        />
+      </Suspense>
     );
   }
 
   if (route.page === 'deck-settings') {
     return (
-      <DeckSettings
-        db={db}
-        deckId={route.deckId}
-        deckName={route.deckName}
-        onBack={goHome}
-      />
+      <Suspense fallback={pageFallback}>
+        <DeckSettings
+          db={db}
+          deckId={route.deckId}
+          deckName={route.deckName}
+          onBack={goHome}
+        />
+      </Suspense>
     );
   }
 
   if (route.page === 'settings') {
-    return <Settings db={db} onBack={goHome} />;
+    return (
+      <Suspense fallback={pageFallback}>
+        <Settings db={db} onBack={goHome} />
+      </Suspense>
+    );
+  }
+
+  if (route.page === 'tags') {
+    return (
+      <Suspense fallback={pageFallback}>
+        <TagBrowser
+          db={db}
+          {...(route.deckId !== undefined ? { deckId: route.deckId } : {})}
+          {...(route.deckName !== undefined ? { deckName: route.deckName } : {})}
+          onBack={goHome}
+        />
+      </Suspense>
+    );
   }
 
   return (
@@ -257,6 +301,7 @@ function AppInner() {
       onStats={goStats}
       onDeckSettings={goDeckSettings}
       onSettings={goSettings}
+      onTags={goTags}
     />
   );
 }
