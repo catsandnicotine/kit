@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Theme } from '../types';
+import type { Theme, ReminderTime, NotificationPrefs } from '../types';
 import { useBackup } from '../hooks/useBackup';
 import { useTheme } from '../hooks/useTheme';
 import type { BackupMeta } from '../lib/platform/icloud';
@@ -15,6 +15,8 @@ import {
   setAppSetting,
   applyLearningStepsToAllDecks,
   applyRetentionToAllDecks,
+  getNotificationPrefs,
+  setNotificationPrefs,
 } from '../lib/db/queries';
 import { persistDatabase } from '../hooks/useDatabase';
 
@@ -136,6 +138,70 @@ function StepsEditor({
 }
 
 // ---------------------------------------------------------------------------
+// Notification helpers
+// ---------------------------------------------------------------------------
+
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => {
+  const ampm = h < 12 ? 'AM' : 'PM';
+  const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return { value: h, label: `${display} ${ampm}` };
+});
+
+const MINUTE_OPTIONS = Array.from({ length: 12 }, (_, i) => {
+  const m = i * 5;
+  return { value: m, label: m.toString().padStart(2, '0') };
+});
+
+/** Single reminder time row: hour picker + minute picker + remove button. */
+function ReminderTimeRow({
+  time,
+  onChange,
+  onRemove,
+  canRemove,
+}: {
+  time: ReminderTime;
+  onChange: (t: ReminderTime) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+}) {
+  const selectClass =
+    'bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] outline-none appearance-none text-center';
+
+  return (
+    <div className="flex items-center gap-2">
+      <select
+        value={time.hour}
+        onChange={e => { hapticTap(); onChange({ ...time, hour: Number(e.target.value) }); }}
+        className={`${selectClass} min-w-[5.5rem]`}
+      >
+        {HOUR_OPTIONS.map(({ value, label }) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+      <span className="text-sm font-semibold text-[#C4C4C4]">:</span>
+      <select
+        value={time.minute}
+        onChange={e => { hapticTap(); onChange({ ...time, minute: Number(e.target.value) }); }}
+        className={`${selectClass} min-w-[4rem]`}
+      >
+        {MINUTE_OPTIONS.map(({ value, label }) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+      {canRemove && (
+        <button
+          onClick={() => { hapticTap(); onRemove(); }}
+          className="ml-auto text-[#C4C4C4] text-xl leading-none px-1"
+          aria-label="Remove reminder"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -237,6 +303,10 @@ export default function Settings({ db, onBack }: SettingsProps) {
     try { return localStorage.getItem('kit_show_timer') !== 'false'; } catch { return true; }
   });
 
+  // Notification preferences
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const [notifTimes, setNotifTimes] = useState<ReminderTime[]>([{ hour: 9, minute: 0 }]);
+
   // Default learning steps
   const [defaultStepsArr, setDefaultStepsArr] = useState<number[]>([1, 10]);
   const [defaultGradInt, setDefaultGradInt] = useState(1);
@@ -269,6 +339,12 @@ export default function Settings({ db, onBack }: SettingsProps) {
 
     const retResult = getAppSetting(db, 'default_retention');
     if (retResult.success && retResult.data) setDefaultRetention(Number(retResult.data) || 0.9);
+
+    const notifResult = getNotificationPrefs(db);
+    if (notifResult.success) {
+      setNotifEnabled(notifResult.data.enabled);
+      setNotifTimes(notifResult.data.times);
+    }
   }, [db]);
 
   const handleBackup = useCallback(async () => {
@@ -318,6 +394,48 @@ export default function Settings({ db, onBack }: SettingsProps) {
   const applyToNewOnly = useCallback(() => {
     saveDefaultSteps();
   }, [saveDefaultSteps]);
+
+  const saveNotifPrefs = useCallback((prefs: NotificationPrefs) => {
+    if (!db) return;
+    setNotificationPrefs(db, prefs);
+    persistDatabase();
+  }, [db]);
+
+  const handleNotifToggle = useCallback(() => {
+    hapticTap();
+    setNotifEnabled(prev => {
+      const next = !prev;
+      saveNotifPrefs({ enabled: next, times: notifTimes });
+      return next;
+    });
+  }, [saveNotifPrefs, notifTimes]);
+
+  const handleTimeChange = useCallback((index: number, time: ReminderTime) => {
+    setNotifTimes(prev => {
+      const next = prev.map((t, i) => i === index ? time : t);
+      saveNotifPrefs({ enabled: notifEnabled, times: next });
+      return next;
+    });
+  }, [saveNotifPrefs, notifEnabled]);
+
+  const handleTimeRemove = useCallback((index: number) => {
+    hapticTap();
+    setNotifTimes(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      saveNotifPrefs({ enabled: notifEnabled, times: next });
+      return next;
+    });
+  }, [saveNotifPrefs, notifEnabled]);
+
+  const handleTimeAdd = useCallback(() => {
+    hapticTap();
+    setNotifTimes(prev => {
+      if (prev.length >= 3) return prev;
+      const next = [...prev, { hour: 9, minute: 0 }];
+      saveNotifPrefs({ enabled: notifEnabled, times: next });
+      return next;
+    });
+  }, [saveNotifPrefs, notifEnabled]);
 
   const THEME_OPTIONS: { value: Theme; label: string; icon: React.ReactNode }[] = [
     { value: 'light', label: 'Light', icon: <SunIcon /> },
@@ -427,6 +545,61 @@ export default function Settings({ db, onBack }: SettingsProps) {
                 <span>99%</span>
               </div>
             </div>
+          </div>
+        </section>
+
+        {/* ── Notifications ── */}
+        <section className="pb-4">
+          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">Notifications</h2>
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
+            {/* Enable toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-sm font-medium">Study reminders</span>
+                <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">
+                  Daily notifications showing how many cards are due.
+                </p>
+              </div>
+              <button
+                onClick={handleNotifToggle}
+                className={`ml-4 w-11 h-6 rounded-full transition-colors relative shrink-0 ${notifEnabled ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#404040]'}`}
+                aria-label={notifEnabled ? 'Disable study reminders' : 'Enable study reminders'}
+              >
+                <div
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-[#FDFBF7] dark:bg-[var(--kit-bg)] transition-transform ${notifEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
+                />
+              </button>
+            </div>
+
+            {/* Time pickers — only shown when enabled */}
+            {notifEnabled && (
+              <>
+                <div className="h-px bg-[#E5E5E5] dark:bg-[#262626] -mx-4" />
+                <div className="flex flex-col gap-3">
+                  <span className="text-xs font-medium text-[#C4C4C4] uppercase tracking-wider">
+                    Reminder times
+                  </span>
+                  {notifTimes.map((time, i) => (
+                    <ReminderTimeRow
+                      key={i}
+                      time={time}
+                      onChange={t => handleTimeChange(i, t)}
+                      onRemove={() => handleTimeRemove(i)}
+                      canRemove={notifTimes.length > 1}
+                    />
+                  ))}
+                  {notifTimes.length < 3 && (
+                    <button
+                      onClick={handleTimeAdd}
+                      className="flex items-center gap-1.5 text-sm text-[#C4C4C4] self-start"
+                    >
+                      <span className="w-6 h-6 flex items-center justify-center rounded-full border border-dashed border-[#D4D4D4] dark:border-[#404040] text-base leading-none">+</span>
+                      Add reminder
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </section>
 

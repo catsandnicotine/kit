@@ -18,10 +18,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { useStudySession } from '../hooks/useStudySession';
+import { ReviewPassView } from '../components/ReviewPassView';
 import { useDeckMedia } from '../hooks/useDeckMedia';
+import { useTheme } from '../hooks/useTheme';
 import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
 import { getDeckStats } from '../lib/db/queries';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
+import { renderMath } from '../lib/renderMath';
 import { CardEditor } from '../components/CardEditor';
 
 // ---------------------------------------------------------------------------
@@ -158,8 +161,17 @@ function playAudioSequentially(audios: HTMLAudioElement[]): () => void {
  *  - Only the first track auto-plays; the rest wait for the previous to end.
  *  - A "Replay" button appears when there is audio, letting the user replay
  *    the full sequence.
+ *
+ * The HTML is wrapped to match Anki's DOM structure:
+ *   <div class="night_mode">   ← body-level classes (dark/black modes)
+ *     <div class="card">       ← card-level wrapper (deck CSS targets this)
+ *       ...content...
+ *     </div>
+ *   </div>
+ *
+ * This lets deck CSS rules like `.night_mode .card { ... }` work naturally.
  */
-function CardContent({ html, visible }: { html: string; visible: boolean }) {
+function CardContent({ html, visible, bodyClass }: { html: string; visible: boolean; bodyClass: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const currentHtmlRef = useRef('');
   const stopPlaybackRef = useRef<(() => void) | null>(null);
@@ -191,8 +203,11 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
     const el = containerRef.current;
     if (!el) return;
 
-    if (currentHtmlRef.current === html) return;
-    currentHtmlRef.current = html;
+    const outerOpen = bodyClass ? `<div class="${bodyClass}">` : '';
+    const outerClose = bodyClass ? '</div>' : '';
+    const fullHtml = `${outerOpen}<div class="card">${html}</div>${outerClose}`;
+    if (currentHtmlRef.current === fullHtml) return;
+    currentHtmlRef.current = fullHtml;
 
     // Stop & clean up old audio before replacing DOM.
     stopCurrent();
@@ -203,7 +218,7 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
       audio.load();
     }
 
-    el.innerHTML = html;
+    el.innerHTML = fullHtml;
 
     const audios = getAudios();
     setHasAudio(audios.length > 0);
@@ -213,7 +228,7 @@ function CardContent({ html, visible }: { html: string; visible: boolean }) {
     }
 
     return stopCurrent;
-  }, [html, visible, getAudios, stopCurrent]);
+  }, [html, visible, bodyClass, getAudios, stopCurrent]);
 
   // -- Visibility transitions --
   const prevVisibleRef = useRef(visible);
@@ -259,15 +274,19 @@ const STUDY_AHEAD_OPTIONS = [5, 10, 20] as const;
 function SessionComplete({
   studied,
   elapsedSeconds,
+  totalRepeats,
   nextDueLabel,
   onExit,
+  onReviewAgain,
   onStudyAhead,
   isStudyAhead,
 }: {
   studied: number;
   elapsedSeconds: number;
+  totalRepeats: number;
   nextDueLabel: string | null;
   onExit?: () => void;
+  onReviewAgain?: () => void;
   onStudyAhead?: (limit: number) => void;
   isStudyAhead: boolean;
 }) {
@@ -287,11 +306,22 @@ function SessionComplete({
     >
       {/* Title area */}
       <div className="flex flex-col items-center gap-2 pt-8 pb-6">
-        <p className="text-4xl">🐱</p>
         <h2 className="text-base font-bold text-[#1c1c1e] dark:text-[#E5E5E5]">
           {studied > 0 ? 'Session complete' : 'No cards due'}
         </h2>
       </div>
+
+      {/* Review Again */}
+      {studied > 0 && onReviewAgain && (
+        <div className="px-4 pb-4">
+          <button
+            onClick={() => { hapticTap(); onReviewAgain(); }}
+            className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+          >
+            Review Again
+          </button>
+        </div>
+      )}
 
       {/* Stats card */}
       <section className="px-4 pb-4">
@@ -303,6 +333,12 @@ function SessionComplete({
             </div>
           ) : (
             <p className="text-sm text-[#C4C4C4]">You're all caught up!</p>
+          )}
+          {totalRepeats > 0 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[#C4C4C4]">Repeated</span>
+              <span className="font-medium">{totalRepeats} {totalRepeats === 1 ? 'time' : 'times'}</span>
+            </div>
           )}
           {nextDueLabel && (
             <div className="flex justify-between text-sm">
@@ -345,6 +381,86 @@ function SessionComplete({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Bottom-sheet picker for limiting review cards in the current session.
+ * Tapping "All" removes the limit; tapping a number caps review cards at that value.
+ */
+function ReviewLimitPicker({
+  totalDueReviews,
+  currentLimit,
+  onSelect,
+  onDismiss,
+}: {
+  totalDueReviews: number;
+  currentLimit: number | null;
+  onSelect: (limit: number | null) => void;
+  onDismiss: () => void;
+}) {
+  const quickOptions = [10, 20, 30, 50, 100].filter(n => n < totalDueReviews);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/30"
+        onClick={onDismiss}
+      />
+      {/* Sheet */}
+      <div
+        className="relative bg-[var(--kit-surface)] rounded-t-2xl shadow-xl"
+        style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
+      >
+        {/* Handle */}
+        <div className="flex justify-center pt-3 pb-4">
+          <div className="w-10 h-1 rounded-full bg-[#D4D4D4] dark:bg-[#404040]" />
+        </div>
+
+        <div className="px-4 pb-2">
+          <p className="text-sm font-semibold mb-0.5">Limit review cards</p>
+          <p className="text-xs text-[#C4C4C4]">{totalDueReviews} due · new and learning cards always show</p>
+        </div>
+
+        {/* Quick options */}
+        <div className="px-4 pt-3 pb-1 flex flex-wrap gap-2">
+          <button
+            onClick={() => onSelect(null)}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+              currentLimit === null
+                ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
+                : 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]'
+            }`}
+          >
+            All ({totalDueReviews})
+          </button>
+          {quickOptions.map(n => (
+            <button
+              key={n}
+              onClick={() => onSelect(n)}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
+                currentLimit === n
+                  ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
+                  : 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
+        {/* Cancel */}
+        <div className="px-4 pt-3">
+          <button
+            onClick={onDismiss}
+            className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -433,17 +549,34 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
   const [studyAheadLimit, setStudyAheadLimit] = useState(0);
+  const [reviewPassCards, setReviewPassCards] = useState<Card[] | null>(null);
 
   const handleEditCard = useCallback((card: Card) => {
     setEditingCard(card);
   }, []);
 
-  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit);
+  const [sessionReviewLimit, setSessionReviewLimit] = useState<number | null>(null);
+  const [showReviewPicker, setShowReviewPicker] = useState(false);
+
+  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit, sessionReviewLimit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
-    flip, rate, undo, editCurrentCard, updateCurrentCardInQueue,
+    totalDueReviews, studiedCards,
+    flip, rate, repeat, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
   const { rewriteHtml } = useDeckMedia(db, deckId);
+  const { theme } = useTheme();
+
+  // Build class strings for the Anki-compatible card wrapper.
+  // Anki's DOM: <body class="night_mode"><div class="card">...</div></body>
+  // We replicate: <div class="night_mode"><div class="card">...</div></div>
+  // so deck CSS like `.night_mode .card { color: white }` works naturally.
+  const bodyClass = useMemo(() => {
+    const classes: string[] = [];
+    if (theme === 'dark' || theme === 'black') classes.push('night_mode');
+    if (theme === 'black') classes.push('black_mode');
+    return classes.join(' ');
+  }, [theme]);
 
   // Compute next due label when session completes
   useEffect(() => {
@@ -488,11 +621,11 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   // then render Image Occlusion masks if present.
   // Memoized so the 1-second elapsed-time ticker doesn't re-run the regex work.
   const resolvedFront = useMemo(
-    () => renderImageOcclusion(rewriteHtml(frontHtml), 'front'),
+    () => renderMath(renderImageOcclusion(rewriteHtml(frontHtml), 'front')),
     [rewriteHtml, frontHtml],
   );
   const resolvedBack = useMemo(
-    () => renderImageOcclusion(rewriteHtml(backHtml), 'back'),
+    () => renderMath(renderImageOcclusion(rewriteHtml(backHtml), 'back')),
     [rewriteHtml, backHtml],
   );
 
@@ -509,6 +642,18 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
+
+  // Review-again pass — renders instead of normal study UI, no DB writes
+  if (reviewPassCards) {
+    return (
+      <ReviewPassView
+        cards={reviewPassCards}
+        {...(deckName !== undefined ? { contextLabel: deckName } : {})}
+        rewriteHtml={rewriteHtml}
+        onDone={() => setReviewPassCards(null)}
+      />
+    );
+  }
 
   if (phase === 'loading') {
     return (
@@ -586,9 +731,11 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
         <SessionComplete
           studied={stats.studied}
           elapsedSeconds={stats.elapsedSeconds}
+          totalRepeats={stats.totalRepeats}
           nextDueLabel={nextDueLabel}
           isStudyAhead={studyAheadLimit > 0}
           onStudyAhead={(limit: number) => setStudyAheadLimit(limit)}
+          {...(studiedCards.length > 0 ? { onReviewAgain: () => setReviewPassCards(studiedCards) } : {})}
           {...(onExit && { onExit })}
         />
       </div>
@@ -625,7 +772,15 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
             <span className="text-red-500">{stats.learningCount}</span>
             <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
-            <span className="text-green-500">{stats.reviewCount}</span>
+            <button
+              onClick={() => { if (totalDueReviews > 0) { hapticTap(); setShowReviewPicker(true); } }}
+              className={`text-green-500 tabular-nums ${totalDueReviews > 0 ? 'underline decoration-dotted underline-offset-2' : ''}`}
+              aria-label="Limit review cards this session"
+            >
+              {sessionReviewLimit !== null
+                ? `${stats.reviewCount}/${sessionReviewLimit}`
+                : stats.reviewCount}
+            </button>
           </span>
         </div>
       </header>
@@ -653,7 +808,7 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             phase === 'front' ? '' : 'card-face-hidden'
           }`}
         >
-          <CardContent html={resolvedFront} visible={phase === 'front'} />
+          <CardContent html={resolvedFront} visible={phase === 'front'} bodyClass={bodyClass} />
         </div>
 
         {/* Back */}
@@ -662,8 +817,22 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
             phase === 'back' ? '' : 'card-face-hidden'
           }`}
         >
-          <CardContent html={resolvedBack} visible={phase === 'back'} />
+          <CardContent html={resolvedBack} visible={phase === 'back'} bodyClass={bodyClass} />
         </div>
+
+        {/* Tag pills — shown on back */}
+        {phase === 'back' && session.currentCard && session.currentCard.tags.length > 0 && (
+          <div className="absolute bottom-4 left-0 right-0 flex flex-wrap justify-center gap-1.5 px-4 pointer-events-none">
+            {session.currentCard.tags.map(tag => (
+              <span
+                key={tag}
+                className="px-2 py-0.5 text-[10px] text-[#C4C4C4] bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-full"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
 
         {/* Tap-to-flip prompt overlay (only on front) */}
         {phase === 'front' && (
@@ -687,6 +856,16 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
       >
         {phase === 'back' ? (
           <div className="flex flex-col gap-2 py-3">
+            {/* Repeat button — extra practice, no scheduling */}
+            <div className="flex justify-center">
+              <button
+                onClick={repeat}
+                className="px-5 py-1.5 text-xs font-medium text-[#C4C4C4] border border-[#D4D4D4] dark:border-[#404040] rounded-full bg-[var(--kit-bg)] active:opacity-60 transition-opacity"
+              >
+                Repeat later
+              </button>
+            </div>
+
             {/* Rating buttons */}
             <div className="flex gap-2">
               <RatingButton label="Again" onClick={() => rate('again')} color="red" interval={ratingPreviews ? formatInterval(ratingPreviews.again.scheduledDays) : undefined} />
@@ -730,6 +909,20 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
           onSave={handleEditorSave}
           onDelete={handleEditorDelete}
           onDismiss={() => setEditingCard(null)}
+        />
+      )}
+
+      {/* ── Review limiter picker ── */}
+      {showReviewPicker && (
+        <ReviewLimitPicker
+          totalDueReviews={totalDueReviews}
+          currentLimit={sessionReviewLimit}
+          onSelect={(limit) => {
+            hapticTap();
+            setSessionReviewLimit(limit);
+            setShowReviewPicker(false);
+          }}
+          onDismiss={() => { hapticTap(); setShowReviewPicker(false); }}
         />
       )}
     </div>

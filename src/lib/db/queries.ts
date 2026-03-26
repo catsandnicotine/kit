@@ -969,6 +969,41 @@ export function insertMedia(db: Database, media: Media): Result<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * Fetch all review logs for cards belonging to a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns Array of ReviewLog records on success, or an error.
+ */
+export function getReviewLogsByDeck(db: Database, deckId: string): Result<ReviewLog[]> {
+  try {
+    const stmt = db.prepare(`
+      SELECT rl.*
+      FROM review_logs rl
+      JOIN cards c ON rl.card_id = c.id
+      WHERE c.deck_id = ?
+    `);
+    stmt.bind([deckId]);
+    const logs: ReviewLog[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      logs.push({
+        id: str(row, 'id'),
+        cardId: str(row, 'card_id'),
+        rating: str(row, 'rating') as ReviewLog['rating'],
+        reviewedAt: num(row, 'reviewed_at'),
+        elapsed: num(row, 'elapsed'),
+        scheduledDays: num(row, 'scheduled_days'),
+      });
+    }
+    stmt.free();
+    return { success: true, data: logs };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Append a review log entry. Logs are immutable once written.
  * @param db  - sql.js Database instance.
  * @param log - Fully-formed ReviewLog (caller provides UUID).
@@ -1625,6 +1660,78 @@ export function setAppSetting(db: Database, key: string, value: string): Result<
   }
 }
 
+// ---------------------------------------------------------------------------
+// Notification preference queries
+// ---------------------------------------------------------------------------
+
+/** Keys used to store notification preferences in app_settings. */
+const NOTIF_ENABLED_KEY = 'notification_enabled';
+const NOTIF_TIMES_KEY   = 'notification_times';
+
+/**
+ * Load notification preferences. Returns safe defaults if no preferences are stored.
+ *
+ * @param db - sql.js Database instance.
+ * @returns NotificationPrefs on success, or an error.
+ */
+export function getNotificationPrefs(db: Database): Result<import('../../types').NotificationPrefs> {
+  try {
+    const enabledRes = getAppSetting(db, NOTIF_ENABLED_KEY);
+    const timesRes   = getAppSetting(db, NOTIF_TIMES_KEY);
+
+    const enabled = enabledRes.success && enabledRes.data !== null
+      ? enabledRes.data === 'true'
+      : false;
+
+    let times: import('../../types').ReminderTime[] = [{ hour: 9, minute: 0 }];
+    if (timesRes.success && timesRes.data) {
+      try {
+        const parsed = JSON.parse(timesRes.data);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          times = parsed
+            .filter((t: unknown) =>
+              t !== null && typeof t === 'object' &&
+              typeof (t as Record<string, unknown>)['hour'] === 'number' &&
+              typeof (t as Record<string, unknown>)['minute'] === 'number',
+            )
+            .map((t: Record<string, unknown>) => ({
+              hour:   Math.max(0, Math.min(23, Math.round(t['hour'] as number))),
+              minute: Math.max(0, Math.min(59, Math.round(t['minute'] as number))),
+            }))
+            .slice(0, 3);
+        }
+      } catch {
+        // Malformed JSON — fall back to default
+      }
+    }
+
+    return { success: true, data: { enabled, times } };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Persist notification preferences to app_settings.
+ *
+ * @param db    - sql.js Database instance.
+ * @param prefs - Preferences to store.
+ * @returns void on success, or an error.
+ */
+export function setNotificationPrefs(
+  db: Database,
+  prefs: import('../../types').NotificationPrefs,
+): Result<void> {
+  try {
+    const times = prefs.times.slice(0, 3);
+    setAppSetting(db, NOTIF_ENABLED_KEY, prefs.enabled ? 'true' : 'false');
+    setAppSetting(db, NOTIF_TIMES_KEY, JSON.stringify(times));
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
 /**
  * Get global statistics across all decks.
  *
@@ -1718,6 +1825,227 @@ export function getNewCardsStudiedToday(
     stmt.free();
     return { success: true, data: count };
   } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tag operations
+// ---------------------------------------------------------------------------
+
+/** A tag string paired with the number of cards that use it. */
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+/**
+ * Get all unique tags with card counts, optionally scoped to one deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Optional deck UUID to scope the query.
+ * @returns Tags sorted alphabetically with their card counts.
+ */
+export function getAllTagsWithCounts(
+  db: Database,
+  deckId?: string,
+): Result<TagCount[]> {
+  try {
+    const stmt = deckId
+      ? db.prepare('SELECT tags FROM cards WHERE deck_id = ?')
+      : db.prepare('SELECT tags FROM cards');
+    if (deckId) stmt.bind([deckId]);
+
+    const counts = new Map<string, number>();
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const raw = str(row, 'tags');
+      const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+      for (const tag of tags) {
+        if (tag) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    stmt.free();
+
+    const result: TagCount[] = Array.from(counts.entries())
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => a.tag.localeCompare(b.tag));
+
+    return { success: true, data: result };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Rename a tag across all cards, optionally scoped to a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param oldTag - Tag string to replace.
+ * @param newTag - Replacement tag string (trimmed, non-empty).
+ * @param now    - Current Unix timestamp in seconds.
+ * @param deckId - Optional deck UUID to scope the update.
+ * @returns Number of cards affected.
+ */
+export function renameTagInCards(
+  db: Database,
+  oldTag: string,
+  newTag: string,
+  now: number,
+  deckId?: string,
+): Result<{ affected: number }> {
+  try {
+    const stmt = deckId
+      ? db.prepare('SELECT id, tags FROM cards WHERE deck_id = ?')
+      : db.prepare('SELECT id, tags FROM cards');
+    if (deckId) stmt.bind([deckId]);
+
+    const toUpdate: { id: string; tags: string[] }[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const raw = str(row, 'tags');
+      const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+      if (tags.includes(oldTag)) {
+        toUpdate.push({ id: str(row, 'id'), tags: tags.map(t => (t === oldTag ? newTag : t)) });
+      }
+    }
+    stmt.free();
+
+    for (const { id, tags } of toUpdate) {
+      db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(tags), now, id,
+      ]);
+    }
+
+    return { success: true, data: { affected: toUpdate.length } };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Remove a tag from all cards, optionally scoped to a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param tag    - Tag string to remove.
+ * @param now    - Current Unix timestamp in seconds.
+ * @param deckId - Optional deck UUID to scope the update.
+ * @returns Number of cards affected.
+ */
+export function deleteTagFromCards(
+  db: Database,
+  tag: string,
+  now: number,
+  deckId?: string,
+): Result<{ affected: number }> {
+  try {
+    const stmt = deckId
+      ? db.prepare('SELECT id, tags FROM cards WHERE deck_id = ?')
+      : db.prepare('SELECT id, tags FROM cards');
+    if (deckId) stmt.bind([deckId]);
+
+    const toUpdate: { id: string; tags: string[] }[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      const raw = str(row, 'tags');
+      const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
+      if (tags.includes(tag)) {
+        toUpdate.push({ id: str(row, 'id'), tags: tags.filter(t => t !== tag) });
+      }
+    }
+    stmt.free();
+
+    for (const { id, tags } of toUpdate) {
+      db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [
+        JSON.stringify(tags), now, id,
+      ]);
+    }
+
+    return { success: true, data: { affected: toUpdate.length } };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Delete multiple cards by ID (cascades to card_states and review_logs).
+ *
+ * @param db      - sql.js Database instance.
+ * @param cardIds - Array of card UUIDs to delete.
+ * @returns void on success.
+ */
+export function deleteCards(db: Database, cardIds: string[]): Result<void> {
+  try {
+    for (const id of cardIds) {
+      db.run('DELETE FROM cards WHERE id = ?', [id]);
+    }
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get all cards matching any of the given tags, across all decks.
+ *
+ * @param db   - sql.js Database instance.
+ * @param tags - Tag strings to match (OR logic — any match is sufficient).
+ * @returns Cards whose tags array contains at least one of the given tags.
+ */
+export function getCardsByTags(db: Database, tags: string[]): Result<Card[]> {
+  try {
+    if (tags.length === 0) return { success: true, data: [] };
+    // Pre-filter in SQL using LIKE patterns — avoids loading every card into JS.
+    // Tags are stored as JSON arrays, so `"tag"` (with quotes) is a safe discriminator.
+    const conditions = tags.map(() => 'tags LIKE ?').join(' OR ');
+    const params = tags.map(t => `%"${t}"%`);
+    const stmt = db.prepare(
+      `SELECT * FROM cards WHERE (${conditions}) ORDER BY created_at ASC`,
+    );
+    stmt.bind(params);
+    const cards: Card[] = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Row;
+      cards.push(toCard(row));
+    }
+    stmt.free();
+    return { success: true, data: cards };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Insert multiple cards in a single transaction — much faster than N individual inserts.
+ *
+ * @param db    - sql.js Database instance.
+ * @param cards - Array of fully-formed cards (callers provide UUIDs).
+ * @returns void on success, or an error (transaction is rolled back on failure).
+ */
+export function insertCardsBatch(db: Database, cards: Card[]): Result<void> {
+  try {
+    db.run('BEGIN');
+    for (const card of cards) {
+      db.run(
+        `INSERT INTO cards
+           (id, deck_id, note_id, front, back, tags, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          card.id,
+          card.deckId,
+          card.noteId,
+          card.front,
+          card.back,
+          JSON.stringify(card.tags),
+          card.createdAt,
+          card.updatedAt,
+        ],
+      );
+    }
+    db.run('COMMIT');
+    return { success: true, data: undefined };
+  } catch (e) {
+    try { db.run('ROLLBACK'); } catch { /* ignore */ }
     return { success: false, error: String(e) };
   }
 }

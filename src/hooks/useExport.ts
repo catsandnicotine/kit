@@ -7,9 +7,10 @@
 
 import { useCallback, useState } from 'react';
 import type { Database } from 'sql.js';
+import type { Result } from '../types';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
-import { exportDeckAsApkg } from '../lib/apkg/exporter';
+import { exportDeckAsApkgFresh, exportDeckAsApkgWithProgress } from '../lib/apkg/exporter';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -22,8 +23,10 @@ export interface UseExportReturn {
   phase: ExportPhase;
   /** Error message when phase is 'error'. */
   errorMessage: string;
-  /** Start the export for a given deck. */
-  exportDeck: (deckId: string, deckName: string) => Promise<void>;
+  /** Export deck with all scheduling stripped (safe to share). */
+  exportDeckFresh: (deckId: string, deckName: string) => Promise<void>;
+  /** Export deck with FSRS states and review logs embedded. */
+  exportDeckWithProgress: (deckId: string, deckName: string) => Promise<void>;
   /** Reset back to idle. */
   reset: () => void;
 }
@@ -63,8 +66,12 @@ export function useExport(db: Database | null): UseExportReturn {
     setErrorMessage('');
   }, []);
 
-  const exportDeck = useCallback(
-    async (deckId: string, deckName: string) => {
+  const runExport = useCallback(
+    async (
+      deckId: string,
+      deckName: string,
+      exporter: (db: Database, id: string) => Promise<Result<Blob>>,
+    ) => {
       if (!db) {
         setPhase('error');
         setErrorMessage('Database is not ready yet.');
@@ -75,7 +82,7 @@ export function useExport(db: Database | null): UseExportReturn {
       setErrorMessage('');
 
       try {
-        const result = await exportDeckAsApkg(db, deckId);
+        const result = await exporter(db, deckId);
         if (!result.success) {
           setPhase('error');
           setErrorMessage(result.error);
@@ -89,7 +96,6 @@ export function useExport(db: Database | null): UseExportReturn {
           try {
             await shareNative(blob, filename);
           } catch {
-            // Plugin not available — fall back to browser download.
             downloadBrowser(blob, filename);
           }
         } else {
@@ -105,7 +111,17 @@ export function useExport(db: Database | null): UseExportReturn {
     [db],
   );
 
-  return { phase, errorMessage, exportDeck, reset };
+  const exportDeckFresh = useCallback(
+    (deckId: string, deckName: string) => runExport(deckId, deckName, exportDeckAsApkgFresh),
+    [runExport],
+  );
+
+  const exportDeckWithProgress = useCallback(
+    (deckId: string, deckName: string) => runExport(deckId, deckName, exportDeckAsApkgWithProgress),
+    [runExport],
+  );
+
+  return { phase, errorMessage, exportDeckFresh, exportDeckWithProgress, reset };
 }
 
 // ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from 'sql.js';
-import type { Card, Deck, Media, Note, NoteType, Result } from '../types';
+import type { Card, CardState, Deck, Media, Note, NoteType, Result, ReviewLog } from '../types';
 import { parseApkgLazy, extractMediaBatch } from '../lib/apkg';
 import { renderTemplate } from '../lib/apkg/templateRenderer';
 import type {
@@ -33,6 +33,8 @@ import {
   insertMedia,
   insertNote,
   insertNoteType,
+  insertReviewLog,
+  setCardState,
 } from '../lib/db/queries';
 import { hapticCelebration } from '../lib/platform/haptics';
 import { persistDatabase } from './useDatabase';
@@ -69,6 +71,16 @@ export interface UseDeckImportReturn {
 
 /** Number of media blobs to extract and insert per batch. */
 const MEDIA_BATCH_SIZE = 50;
+
+// ---------------------------------------------------------------------------
+// kit_progress.json shape
+// ---------------------------------------------------------------------------
+
+interface KitProgressData {
+  version: number;
+  statesByContent: Record<string, CardState>;
+  logsByContent: Record<string, ReviewLog[]>;
+}
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -130,7 +142,20 @@ export function useDeckImport(
         setPhase('storing-cards');
         await new Promise((r) => setTimeout(r, 0));
 
-        const storeResult = storeEntities(db, parsed);
+        // Check for embedded Kit progress data (ignored by Anki Desktop).
+        let progressData: KitProgressData | undefined;
+        try {
+          const progressFile = parsed.zip.file('kit_progress.json');
+          if (progressFile) {
+            const json = await progressFile.async('string');
+            const parsed2 = JSON.parse(json) as KitProgressData;
+            if (parsed2.version === 1) progressData = parsed2;
+          }
+        } catch {
+          // Not a Kit-exported deck — silently ignore.
+        }
+
+        const storeResult = storeEntities(db, parsed, progressData);
         if (!storeResult.success) {
           setPhase('error');
           setErrorMessage(storeResult.error);
@@ -198,7 +223,11 @@ export function useDeckImport(
  * @param parsed - Lazily-parsed .apkg data (no media blobs in memory).
  * @returns The primary deck ID on success, or an error.
  */
-function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
+function storeEntities(
+  db: Database,
+  parsed: ParsedApkgLazy,
+  progressData?: KitProgressData,
+): Result<string> {
   const txn = beginTransaction(db);
   if (!txn.success) return txn;
 
@@ -373,6 +402,31 @@ function storeEntities(db: Database, parsed: ParsedApkgLazy): Result<string> {
       if (!r.success) {
         rollbackTransaction(db);
         return r;
+      }
+
+      // Restore FSRS state if this deck was exported from Kit with progress.
+      if (progressData) {
+        const contentKey = `${card.front}\x1f${card.back}`;
+
+        const savedState = progressData.statesByContent[contentKey];
+        if (savedState) {
+          const stateResult = setCardState(db, { ...savedState, cardId: card.id });
+          if (!stateResult.success) {
+            rollbackTransaction(db);
+            return stateResult;
+          }
+        }
+
+        const savedLogs = progressData.logsByContent[contentKey];
+        if (savedLogs) {
+          for (const log of savedLogs) {
+            const logResult = insertReviewLog(db, { ...log, id: uuidv4(), cardId: card.id });
+            if (!logResult.success) {
+              rollbackTransaction(db);
+              return logResult;
+            }
+          }
+        }
       }
     }
 

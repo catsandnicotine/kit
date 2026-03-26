@@ -58,6 +58,54 @@ function WheelPicker({
   );
 }
 
+/** Numeric text input styled to match WheelPicker — shows numeric keyboard on iOS. */
+function NumberInput({
+  value,
+  min,
+  max,
+  onChange,
+  suffix,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  onChange: (v: number) => void;
+  suffix?: string;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  // Keep draft in sync when value changes externally
+  useEffect(() => { setDraft(String(value)); }, [value]);
+
+  const commit = () => {
+    const n = parseInt(draft, 10);
+    if (!isNaN(n)) {
+      const clamped = Math.max(min ?? 0, Math.min(max ?? 999999, n));
+      onChange(clamped);
+      setDraft(String(clamped));
+    } else {
+      setDraft(String(value));
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 min-w-[4.5rem]">
+      <input
+        type="number"
+        inputMode="numeric"
+        value={draft}
+        min={min}
+        max={max}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onFocus={() => hapticTap()}
+        onKeyDown={(e) => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur(); } }}
+        className="w-full text-center text-sm font-semibold tabular-nums bg-transparent outline-none text-[#1c1c1e] dark:text-[#E5E5E5] [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+      />
+      {suffix && <span className="text-sm font-semibold text-[#C4C4C4] shrink-0">{suffix}</span>}
+    </div>
+  );
+}
+
 /** Editable chip list for learning step minutes. */
 function StepsEditor({
   steps,
@@ -198,7 +246,6 @@ function Section({
 
 // Pre-generate option arrays
 const DAILY_LIMIT_OPTIONS = Array.from({ length: 101 }, (_, i) => i * 5); // 0–500
-const REVIEW_LIMIT_OPTIONS = [50, 100, 150, 200, 300, 500, 1000, 9999];
 const INTERVAL_OPTIONS = Array.from({ length: 60 }, (_, i) => i + 1); // 1–60
 const MAX_INTERVAL_OPTIONS = [7, 14, 30, 60, 90, 120, 180, 365, 730, 1825, 3650];
 const LEECH_OPTIONS = [0, 4, 6, 8, 10, 12, 15, 20]; // 0 = disabled
@@ -366,20 +413,22 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
 
           <SettingRow
             label="Max reviews per day"
-            description="Cap on review cards per session. If you fall behind, this prevents a mountain of reviews. Learning cards always show up regardless."
+            tooltip="Cap on review cards per session. If you fall behind, this prevents an overwhelming pile of reviews. Learning cards always show regardless."
           >
-            <WheelPicker
+            <NumberInput
               value={maxReviews}
-              options={REVIEW_LIMIT_OPTIONS}
+              min={1}
+              max={9999}
               onChange={handleSaveMaxReviews}
             />
           </SettingRow>
+
         </Section>
 
         {/* Learning Steps */}
         <Section
-          title="When You're Learning a Card"
-          description="New cards go through short-term practice before entering long-term review. These settings control that initial practice."
+          title="Learning Steps"
+          description="New cards cycle through these short practice rounds before entering long-term review."
         >
           <div>
             <span className="text-sm font-medium">Practice intervals</span>
@@ -413,22 +462,11 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
           </SettingRow>
         </Section>
 
-        {/* Advanced */}
+        {/* Scheduling */}
         <Section
-          title="Long-Term Review"
-          description="Controls how the spaced repetition algorithm schedules cards you've already learned."
+          title="Scheduling"
+          description="Controls how the FSRS algorithm spaces your long-term reviews."
         >
-          <SettingRow
-            label="Maximum wait between reviews"
-            description="The longest a card can go before you see it again. Shorter = more reviews but better retention. 365 days works for most people."
-          >
-            <WheelPicker
-              value={maxInterval}
-              options={MAX_INTERVAL_OPTIONS}
-              onChange={handleSaveMaxInterval}
-            />
-          </SettingRow>
-
           <SettingRow
             label="Target retention"
             tooltip="How often you should remember a card when it comes due. Higher = more frequent reviews but better memory. 90% works for most people."
@@ -454,8 +492,19 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
           </SettingRow>
 
           <SettingRow
+            label="Maximum wait between reviews"
+            tooltip="The longest a card can go before you see it again. Shorter = more reviews but better retention. 365 days works for most people."
+          >
+            <WheelPicker
+              value={maxInterval}
+              options={MAX_INTERVAL_OPTIONS}
+              onChange={handleSaveMaxInterval}
+            />
+          </SettingRow>
+
+          <SettingRow
             label="Trouble card detection"
-            description={'If you get a card wrong this many times, Kit will pause it and let you know. Set to 0 to disable. These "leech" cards usually need to be rewritten.'}
+            tooltip="If you get a card wrong this many times, Kit will suspend it as a 'leech'. These cards usually need to be rewritten. Set to 0 to disable."
           >
             <WheelPicker
               value={leechThreshold}

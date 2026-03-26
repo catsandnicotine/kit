@@ -31,6 +31,8 @@ interface CardEditorProps {
   onDismiss: () => void;
   /** If true, this is a new card being created (not editing existing). */
   isNew?: boolean;
+  /** Existing tags in the deck — used for autocomplete suggestions. */
+  allTags?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -250,7 +252,7 @@ function MediaInventory({
 // Component
 // ---------------------------------------------------------------------------
 
-export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew }: CardEditorProps) {
+export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew, allTags = [] }: CardEditorProps) {
   const editor = useCardEditor(db, card, isNew);
   const [tagInput, setTagInput] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -532,21 +534,45 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
                 </button>
               ))}
             </div>
-            <div className="flex gap-2">
-              <input
-                value={tagInput}
-                onChange={e => setTagInput(e.target.value)}
-                onKeyDown={handleTagKeyDown}
-                placeholder="Add tag..."
-                className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
-              />
-              <button
-                onClick={handleAddTag}
-                disabled={!tagInput.trim()}
-                className="px-3 py-1.5 text-sm font-medium text-accent-light dark:text-accent-dark disabled:opacity-40"
-              >
-                Add
-              </button>
+            <div className="relative">
+              <div className="flex gap-2">
+                <input
+                  value={tagInput}
+                  onChange={e => setTagInput(e.target.value)}
+                  onKeyDown={handleTagKeyDown}
+                  placeholder="Add tag..."
+                  className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
+                  autoComplete="off"
+                />
+                <button
+                  onClick={handleAddTag}
+                  disabled={!tagInput.trim()}
+                  className="px-3 py-1.5 text-sm font-medium text-accent-light dark:text-accent-dark disabled:opacity-40"
+                >
+                  Add
+                </button>
+              </div>
+              {/* Autocomplete dropdown */}
+              {tagInput.trim() && (() => {
+                const q = tagInput.trim().toLowerCase();
+                const suggestions = allTags.filter(
+                  t => t.toLowerCase().includes(q) && !editor.tags.includes(t),
+                );
+                return suggestions.length > 0 ? (
+                  <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-[var(--kit-surface)] border border-border-light dark:border-border-dark rounded-lg overflow-hidden shadow-lg">
+                    {suggestions.slice(0, 6).map(s => (
+                      <button
+                        key={s}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => { editor.addTag(s); setTagInput(''); }}
+                        className="w-full text-left px-3 py-2 text-sm text-text-light dark:text-text-dark hover:bg-[#F0F0F0] dark:hover:bg-[#262626] border-b border-border-light dark:border-border-dark last:border-b-0"
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                ) : null;
+              })()}
             </div>
           </div>
 

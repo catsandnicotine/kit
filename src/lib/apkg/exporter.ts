@@ -13,7 +13,7 @@
  *   col   — single row: id, crt, mod, scm, ver, dty, usn, ls, conf, models, decks, dconf, tags
  *   notes — id, guid, mid, mod, usn, tags, flds, sfld, csum, flags, data
  *   cards — id, nid, did, ord, mod, usn, type, queue, due, ivl, factor, reps, lapses, left, odue, odid, flags, data
- *   revlog — (empty — we don't export review history)
+ *   revlog — (empty — Kit progress is stored in kit_progress.json sidecar)
  *   graves — (empty)
  *
  * This module has ZERO imports from React, UI, or platform code.
@@ -37,6 +37,7 @@ import {
   getMediaByDeck,
   getNotesByDeck,
   getNoteTypesByDeck,
+  getReviewLogsByDeck,
 } from '../db/queries';
 import { getSqlJsLocator } from './parser';
 
@@ -113,15 +114,48 @@ const DEFAULT_CONF: Record<string, unknown> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Export a Kit deck as a valid Anki .apkg file.
+ * Export a Kit deck as a standard .apkg with ALL scheduling data stripped.
+ * Every card is reset to "new" state — safe to share with a friend.
  *
  * @param kitDb  - The Kit sql.js Database instance.
  * @param deckId - UUID of the deck to export.
  * @returns A Blob containing the .apkg ZIP, or an error.
  */
-export async function exportDeckAsApkg(
+export async function exportDeckAsApkgFresh(
   kitDb: Database,
   deckId: string,
+): Promise<Result<Blob>> {
+  return buildApkg(kitDb, deckId, false);
+}
+
+/**
+ * Export a Kit deck as an .apkg with an embedded `kit_progress.json` file.
+ * The extra file is ignored by Anki Desktop; Kit detects it on import to
+ * restore FSRS states and review logs.
+ *
+ * @param kitDb  - The Kit sql.js Database instance.
+ * @param deckId - UUID of the deck to export.
+ * @returns A Blob containing the .apkg ZIP, or an error.
+ */
+export async function exportDeckAsApkgWithProgress(
+  kitDb: Database,
+  deckId: string,
+): Promise<Result<Blob>> {
+  return buildApkg(kitDb, deckId, true);
+}
+
+/**
+ * Export a Kit deck as a valid Anki .apkg file.
+ *
+ * @param kitDb            - The Kit sql.js Database instance.
+ * @param deckId           - UUID of the deck to export.
+ * @param includeProgress  - When true, embeds kit_progress.json in the ZIP.
+ * @returns A Blob containing the .apkg ZIP, or an error.
+ */
+async function buildApkg(
+  kitDb: Database,
+  deckId: string,
+  includeProgress: boolean,
 ): Promise<Result<Blob>> {
   try {
     // ── 1. Fetch all data from Kit's database ─────────────────────────────
@@ -142,10 +176,13 @@ export async function exportDeckAsApkg(
     if (!cardsResult.success) return cardsResult;
     const cards = cardsResult.data;
 
-    const statesResult = getCardStatesByDeck(kitDb, deckId);
-    if (!statesResult.success) return statesResult;
+    // For fresh export, use an empty stateMap so all cards export as "new".
     const stateMap = new Map<string, CardState>();
-    for (const s of statesResult.data) stateMap.set(s.cardId, s);
+    if (includeProgress) {
+      const statesResult = getCardStatesByDeck(kitDb, deckId);
+      if (!statesResult.success) return statesResult;
+      for (const s of statesResult.data) stateMap.set(s.cardId, s);
+    }
 
     const mediaResult = getMediaByDeck(kitDb, deckId);
     if (!mediaResult.success) return mediaResult;
@@ -191,6 +228,43 @@ export async function exportDeckAsApkg(
         zip.file(key, m.data);
       });
       zip.file('media', JSON.stringify(mediaManifest));
+
+      // ── 5. Optionally embed kit_progress.json ─────────────────────────────
+      if (includeProgress) {
+        const logsResult = getReviewLogsByDeck(kitDb, deckId);
+        if (!logsResult.success) return logsResult;
+
+        // Index states and logs by card content (front + "\x1f" + back) so
+        // they can be matched to newly-assigned UUIDs on re-import.
+        // Using both sides avoids collisions when two cards share a front.
+        const statesByContent: Record<string, CardState> = {};
+        for (const card of cards) {
+          const state = stateMap.get(card.id);
+          if (state) statesByContent[`${card.front}\x1f${card.back}`] = state;
+        }
+
+        // Group review logs by card content
+        const cardById = new Map<string, typeof cards[0]>();
+        for (const card of cards) cardById.set(card.id, card);
+
+        const logsByContent: Record<string, typeof logsResult.data> = {};
+        for (const log of logsResult.data) {
+          const card = cardById.get(log.cardId);
+          if (!card) continue;
+          const key = `${card.front}\x1f${card.back}`;
+          const arr = logsByContent[key] ?? [];
+          arr.push(log);
+          logsByContent[key] = arr;
+        }
+
+        const progressData = {
+          version: 1,
+          exportedAt: baseTs,
+          statesByContent,
+          logsByContent,
+        };
+        zip.file('kit_progress.json', JSON.stringify(progressData));
+      }
 
       const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
       return { success: true, data: blob };
@@ -580,9 +654,6 @@ function insertAnkiCards(
     let factor = 2500; // ease factor (2.5 × 1000)
 
     if (state) {
-      const reps = state.reps;
-      const lapses = state.lapses;
-
       switch (state.state) {
         case 'new':
           type = 0;
@@ -613,7 +684,7 @@ function insertAnkiCards(
       stmt.bind([
         ankiCid, ankiNid, ankiDeckId, ord, baseTs, -1,
         type, queue, due, ivl, factor,
-        reps, lapses,
+        state.reps ?? 0, state.lapses ?? 0,
         0,    // left
         0,    // odue
         0,    // odid
