@@ -1837,14 +1837,17 @@ export function getNewCardsStudiedToday(
 export interface TagCount {
   tag: string;
   count: number;
+  /** Hex color string set by the user, e.g. `'#FF3B30'`. Empty string = uncoloured. */
+  color: string;
 }
 
 /**
- * Get all unique tags with card counts, optionally scoped to one deck.
+ * Get all unique tags with card counts and colours, optionally scoped to one deck.
+ * Includes standalone tags that exist only in `tag_colors` (count = 0).
  *
  * @param db     - sql.js Database instance.
- * @param deckId - Optional deck UUID to scope the query.
- * @returns Tags sorted alphabetically with their card counts.
+ * @param deckId - Optional deck UUID to scope card-side counts.
+ * @returns Tags sorted alphabetically with their card counts and colours.
  */
 export function getAllTagsWithCounts(
   db: Database,
@@ -1867,11 +1870,77 @@ export function getAllTagsWithCounts(
     }
     stmt.free();
 
+    // Fetch colours + standalone tags from tag_colors
+    const colors = new Map<string, string>();
+    try {
+      const cr = db.exec('SELECT tag, color FROM tag_colors');
+      if (cr.length > 0 && cr[0] !== undefined) {
+        for (const row of cr[0].values) {
+          const tag = row[0] as string;
+          colors.set(tag, row[1] as string);
+          // Standalone tags (not on any card) still appear with count 0
+          if (!counts.has(tag)) counts.set(tag, 0);
+        }
+      }
+    } catch { /* tag_colors table may not exist on very old installs */ }
+
     const result: TagCount[] = Array.from(counts.entries())
-      .map(([tag, count]) => ({ tag, count }))
+      .map(([tag, count]) => ({ tag, count, color: colors.get(tag) ?? '' }))
       .sort((a, b) => a.tag.localeCompare(b.tag));
 
     return { success: true, data: result };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Set or update the colour for a tag (creates the row if it doesn't exist).
+ *
+ * @param db    - sql.js Database instance.
+ * @param tag   - Tag string.
+ * @param color - Hex colour (e.g. `'#FF3B30'`) or `''` to clear.
+ * @param now   - Current Unix timestamp in seconds.
+ */
+export function upsertTagColor(
+  db: Database,
+  tag: string,
+  color: string,
+  now: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT INTO tag_colors (tag, color, created_at) VALUES (?, ?, ?)
+       ON CONFLICT(tag) DO UPDATE SET color = excluded.color`,
+      [tag, color, now],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Create a standalone tag (adds to `tag_colors`; no cards required).
+ * Does nothing if the tag already exists.
+ *
+ * @param db    - sql.js Database instance.
+ * @param tag   - Tag string to create.
+ * @param color - Initial hex colour, or `''` for none.
+ * @param now   - Current Unix timestamp in seconds.
+ */
+export function createStandaloneTag(
+  db: Database,
+  tag: string,
+  color: string,
+  now: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT OR IGNORE INTO tag_colors (tag, color, created_at) VALUES (?, ?, ?)`,
+      [tag, color, now],
+    );
+    return { success: true, data: undefined };
   } catch (e) {
     return { success: false, error: String(e) };
   }
@@ -1917,6 +1986,18 @@ export function renameTagInCards(
       ]);
     }
 
+    // Keep deck_tags and tag_colors in sync
+    try {
+      db.run(`UPDATE deck_tags SET tag = ? WHERE tag = ?`, [newTag, oldTag]);
+      db.run(
+        `INSERT INTO tag_colors (tag, color, created_at)
+         SELECT ?, color, created_at FROM tag_colors WHERE tag = ?
+         ON CONFLICT(tag) DO NOTHING`,
+        [newTag, oldTag],
+      );
+      db.run(`DELETE FROM tag_colors WHERE tag = ?`, [oldTag]);
+    } catch { /* tables may not exist on very old installs */ }
+
     return { success: true, data: { affected: toUpdate.length } };
   } catch (e) {
     return { success: false, error: String(e) };
@@ -1959,6 +2040,14 @@ export function deleteTagFromCards(
       db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [
         JSON.stringify(tags), now, id,
       ]);
+    }
+
+    // Remove from deck_tags and tag_colors (global delete only — not deck-scoped)
+    if (!deckId) {
+      try {
+        db.run(`DELETE FROM deck_tags WHERE tag = ?`, [tag]);
+        db.run(`DELETE FROM tag_colors WHERE tag = ?`, [tag]);
+      } catch { /* tables may not exist on very old installs */ }
     }
 
     return { success: true, data: { affected: toUpdate.length } };
@@ -2047,5 +2136,167 @@ export function insertCardsBatch(db: Database, cards: Card[]): Result<void> {
   } catch (e) {
     try { db.run('ROLLBACK'); } catch { /* ignore */ }
     return { success: false, error: String(e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deck-tag associations
+// ---------------------------------------------------------------------------
+
+/**
+ * Associate a tag with a deck (add a "marble" to a "bucket").
+ * Does nothing if the association already exists.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @param tag    - Tag string.
+ * @param now    - Current Unix timestamp in seconds.
+ */
+export function addTagToDeck(
+  db: Database,
+  deckId: string,
+  tag: string,
+  now: number,
+): Result<void> {
+  try {
+    db.run(
+      `INSERT OR IGNORE INTO deck_tags (deck_id, tag, created_at) VALUES (?, ?, ?)`,
+      [deckId, tag, now],
+    );
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Remove a tag association from a deck.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @param tag    - Tag string.
+ */
+export function removeTagFromDeck(
+  db: Database,
+  deckId: string,
+  tag: string,
+): Result<void> {
+  try {
+    db.run(`DELETE FROM deck_tags WHERE deck_id = ? AND tag = ?`, [deckId, tag]);
+    return { success: true, data: undefined };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get all tags associated with a deck, with their colors.
+ *
+ * @param db     - sql.js Database instance.
+ * @param deckId - Deck UUID.
+ * @returns Tags sorted alphabetically with colors.
+ */
+export function getTagsForDeck(
+  db: Database,
+  deckId: string,
+): Result<TagCount[]> {
+  try {
+    const rows = db.exec(
+      `SELECT dt.tag, COALESCE(tc.color, '') AS color
+       FROM deck_tags dt
+       LEFT JOIN tag_colors tc ON tc.tag = dt.tag
+       WHERE dt.deck_id = ?
+       ORDER BY dt.tag`,
+      [deckId],
+    );
+    if (rows.length === 0 || rows[0] === undefined) return { success: true, data: [] };
+    const data: TagCount[] = rows[0].values.map(r => ({
+      tag: String(r[0]),
+      count: 0,
+      color: String(r[1] ?? ''),
+    }));
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Get all decks that have a specific tag associated.
+ *
+ * @param db  - sql.js Database instance.
+ * @param tag - Tag string.
+ * @returns Array of deck id + name pairs.
+ */
+export function getDecksByTag(
+  db: Database,
+  tag: string,
+): Result<{ deckId: string; deckName: string }[]> {
+  try {
+    const rows = db.exec(
+      `SELECT d.id, d.name FROM deck_tags dt
+       JOIN decks d ON d.id = dt.deck_id
+       WHERE dt.tag = ?
+       ORDER BY d.name`,
+      [tag],
+    );
+    if (rows.length === 0 || rows[0] === undefined) return { success: true, data: [] };
+    const data = rows[0].values.map(r => ({
+      deckId: String(r[0]),
+      deckName: String(r[1]),
+    }));
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Search for decks whose associated tags contain the query string.
+ * Used by home search to show tag-matched decks.
+ *
+ * @param db    - sql.js Database instance.
+ * @param query - Substring to match against tag names (case-insensitive).
+ * @returns Array of { deckId, deckName, matchedTag } results.
+ */
+export function searchDecksByTagLike(
+  db: Database,
+  query: string,
+): Result<{ deckId: string; deckName: string; matchedTag: string }[]> {
+  try {
+    if (!query.trim()) return { success: true, data: [] };
+    const rows = db.exec(
+      `SELECT d.id, d.name, dt.tag FROM deck_tags dt
+       JOIN decks d ON d.id = dt.deck_id
+       WHERE LOWER(dt.tag) LIKE ?
+       ORDER BY d.name`,
+      [`%${query.toLowerCase()}%`],
+    );
+    if (rows.length === 0 || rows[0] === undefined) return { success: true, data: [] };
+    const data = rows[0].values.map(r => ({
+      deckId: String(r[0]),
+      deckName: String(r[1]),
+      matchedTag: String(r[2]),
+    }));
+    return { success: true, data };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Return the set of tag names currently in tag_colors.
+ * Used during Anki import to detect name collisions.
+ *
+ * @param db - sql.js Database instance.
+ * @returns Set of existing tag name strings.
+ */
+export function getExistingTagNames(db: Database): Set<string> {
+  try {
+    const rows = db.exec('SELECT tag FROM tag_colors');
+    if (rows.length === 0 || rows[0] === undefined) return new Set();
+    return new Set(rows[0].values.map(r => String(r[0])));
+  } catch {
+    return new Set();
   }
 }

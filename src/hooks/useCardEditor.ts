@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card, Result } from '../types';
+import type { EditOp } from '../lib/sync/types';
 import { deleteCard, insertCard, updateCard } from '../lib/db/queries';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
@@ -52,15 +53,17 @@ export interface UseCardEditorReturn {
 /**
  * Drive the card editor state for a single card.
  *
- * @param db    - sql.js Database instance (null while loading).
- * @param card  - The card being edited (or blank card for creation).
- * @param isNew - If true, save inserts a new card instead of updating.
+ * @param db         - sql.js Database instance (null while loading).
+ * @param card       - The card being edited (or blank card for creation).
+ * @param isNew      - If true, save inserts a new card instead of updating.
+ * @param onSyncEdit - Optional callback to emit sync edit operations (new arch).
  * @returns Draft state and action callbacks for the editor UI.
  */
 export function useCardEditor(
   db: Database | null,
   card: Card,
   isNew = false,
+  onSyncEdit?: (ops: EditOp[]) => void,
 ): UseCardEditorReturn {
   const [tags, setTags] = useState<string[]>(card.tags);
   const [contentDirty, setContentDirty] = useState(false);
@@ -108,19 +111,33 @@ export function useCardEditor(
         };
         const insertResult = insertCard(db, newCard);
         if (!insertResult.success) return insertResult;
-        persistDatabase();
-        scheduleICloudBackup();
+
+        if (onSyncEdit) {
+          onSyncEdit([{ type: 'card_add', card: newCard }]);
+        } else {
+          persistDatabase();
+          scheduleICloudBackup();
+        }
         return { success: true, data: newCard };
       }
 
       const result = updateCard(db, card.id, front, back, tags, now);
       if (result.success) {
-        persistDatabase();
-        scheduleICloudBackup();
+        if (onSyncEdit) {
+          onSyncEdit([{
+            type: 'card_edit',
+            cardId: card.id,
+            fields: { front, back, tags },
+            updatedAt: now,
+          }]);
+        } else {
+          persistDatabase();
+          scheduleICloudBackup();
+        }
       }
       return result;
     },
-    [db, card, tags, isNew],
+    [db, card, tags, isNew, onSyncEdit],
   );
 
   const remove = useCallback((): Result<void> => {
@@ -128,11 +145,15 @@ export function useCardEditor(
 
     const result = deleteCard(db, card.id);
     if (result.success) {
-      persistDatabase();
-      scheduleICloudBackup();
+      if (onSyncEdit) {
+        onSyncEdit([{ type: 'card_delete', cardId: card.id }]);
+      } else {
+        persistDatabase();
+        scheduleICloudBackup();
+      }
     }
     return result;
-  }, [db, card.id]);
+  }, [db, card.id, onSyncEdit]);
 
   return {
     card,

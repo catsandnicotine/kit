@@ -22,7 +22,7 @@ import { ReviewPassView } from '../components/ReviewPassView';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { useTheme } from '../hooks/useTheme';
 import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
-import { getDeckStats } from '../lib/db/queries';
+import { getDeckStats, getTagsForDeck, type TagCount } from '../lib/db/queries';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { renderMath } from '../lib/renderMath';
 import { CardEditor } from '../components/CardEditor';
@@ -36,6 +36,8 @@ interface StudyProps {
   deckId: string;
   deckName?: string;
   onExit?: () => void;
+  /** Callback to emit sync edit operations (new per-deck architecture). */
+  onSyncEdit?: (ops: import('../lib/sync/types').EditOp[]) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -545,7 +547,7 @@ function useLongPress(onLongPress: () => void) {
  * @param onEditCard - Called when the user long-presses the card.
  * @param onExit    - Called when the user dismisses the session-complete screen.
  */
-export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
+export default function Study({ db, deckId, deckName, onExit, onSyncEdit }: StudyProps) {
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
   const [studyAheadLimit, setStudyAheadLimit] = useState(0);
@@ -557,14 +559,21 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
 
   const [sessionReviewLimit, setSessionReviewLimit] = useState<number | null>(null);
   const [showReviewPicker, setShowReviewPicker] = useState(false);
+  const [deckTags, setDeckTags] = useState<TagCount[]>([]);
 
-  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit, sessionReviewLimit);
+  useEffect(() => {
+    if (!db) return;
+    const result = getTagsForDeck(db, deckId);
+    if (result.success) setDeckTags(result.data);
+  }, [db, deckId]);
+
+  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit, sessionReviewLimit, onSyncEdit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
     totalDueReviews, studiedCards,
     flip, rate, repeat, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
-  const { rewriteHtml } = useDeckMedia(db, deckId);
+  const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
   const { theme } = useTheme();
 
   // Build class strings for the Anki-compatible card wrapper.
@@ -767,21 +776,19 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
           {deckName ?? 'Study'}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-sm font-semibold tabular-nums">
+          <div className="flex items-center gap-2 text-sm font-semibold tabular-nums">
             <span className="text-blue-500">{stats.newCount}</span>
-            <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
             <span className="text-red-500">{stats.learningCount}</span>
-            <span className="text-[#C4C4C4] dark:text-[#C4C4C4]"> + </span>
             <button
               onClick={() => { if (totalDueReviews > 0) { hapticTap(); setShowReviewPicker(true); } }}
-              className={`text-green-500 tabular-nums ${totalDueReviews > 0 ? 'underline decoration-dotted underline-offset-2' : ''}`}
+              className={`text-green-500 ${totalDueReviews > 0 ? 'underline decoration-dotted underline-offset-2' : ''}`}
               aria-label="Limit review cards this session"
             >
               {sessionReviewLimit !== null
                 ? `${stats.reviewCount}/${sessionReviewLimit}`
                 : stats.reviewCount}
             </button>
-          </span>
+          </div>
         </div>
       </header>
 
@@ -906,9 +913,12 @@ export default function Study({ db, deckId, deckName, onExit }: StudyProps) {
           db={db}
           card={editingCard}
           rewriteHtml={rewriteHtml}
+          deckTags={deckTags}
           onSave={handleEditorSave}
           onDelete={handleEditorDelete}
           onDismiss={() => setEditingCard(null)}
+          onMediaAdded={addMediaFile}
+          onSyncEdit={onSyncEdit}
         />
       )}
 

@@ -60,14 +60,25 @@ export async function saveDatabaseSnapshot(data: Uint8Array): Promise<void> {
 /**
  * Load a previously-saved database snapshot, or null if none exists.
  *
- * @returns The raw SQLite file bytes, or null.
+ * Returns the special string `'too_large'` when the snapshot file exceeds
+ * MAX_NATIVE_DB_BYTES, which would OOM the WKWebView process if loaded.
+ * The caller should offer the user a data-reset path instead of retrying.
+ *
+ * @returns The raw SQLite file bytes, null (no snapshot), or 'too_large'.
  */
-export async function loadDatabaseSnapshot(): Promise<Uint8Array | null> {
+export async function loadDatabaseSnapshot(): Promise<Uint8Array | null | 'too_large'> {
   if (isNativePlatform()) {
     return loadNative();
   }
   return loadBrowser();
 }
+
+/**
+ * Maximum SQLite snapshot size we will attempt to load on native.
+ * Loading a ~50 MB base64 file requires ~150 MB peak (string + Uint8Array +
+ * WASM heap), which kills the WKWebView process on typical iOS devices.
+ */
+const MAX_NATIVE_DB_BYTES = 30 * 1024 * 1024; // 30 MB
 
 // ---------------------------------------------------------------------------
 // Native (Capacitor Filesystem)
@@ -84,8 +95,22 @@ async function saveNative(data: Uint8Array): Promise<void> {
   });
 }
 
-async function loadNative(): Promise<Uint8Array | null> {
+async function loadNative(): Promise<Uint8Array | null | 'too_large'> {
   try {
+    // Stat the file first to avoid OOM. Loading a large snapshot requires
+    // ~3× the file size in memory (base64 string + Uint8Array + WASM heap).
+    try {
+      const info = await Filesystem.stat({
+        path: DB_FILENAME,
+        directory: Directory.Documents,
+      });
+      if (info.size > MAX_NATIVE_DB_BYTES) {
+        return 'too_large';
+      }
+    } catch {
+      // File doesn't exist yet — fall through to readFile which will also fail.
+    }
+
     const result = await Filesystem.readFile({
       path: DB_FILENAME,
       directory: Directory.Documents,

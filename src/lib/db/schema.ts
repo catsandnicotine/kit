@@ -164,6 +164,20 @@ export const MIGRATE_DECK_SETTINGS_STEPS = [
   `ALTER TABLE deck_settings ADD COLUMN easy_interval INTEGER NOT NULL DEFAULT 4`,
 ];
 
+/** Deck-level tag associations (many-to-many between decks and tags). */
+export const CREATE_DECK_TAGS_TABLE = `
+  CREATE TABLE IF NOT EXISTS deck_tags (
+    deck_id    TEXT NOT NULL REFERENCES decks(id) ON DELETE CASCADE,
+    tag        TEXT NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (deck_id, tag)
+  );
+`;
+
+export const CREATE_IDX_DECK_TAGS_TAG = `
+  CREATE INDEX IF NOT EXISTS idx_deck_tags_tag ON deck_tags(tag);
+`;
+
 /** Tables and indexes in dependency order: parent tables first, then indexes. */
 export const ALL_TABLES = [
   CREATE_DECKS_TABLE,
@@ -175,6 +189,8 @@ export const ALL_TABLES = [
   CREATE_MEDIA_TABLE,
   CREATE_DECK_SETTINGS_TABLE,
   CREATE_APP_SETTINGS_TABLE,
+  CREATE_DECK_TAGS_TABLE,
   CREATE_IDX_CARDS_DECK,
   CREATE_IDX_CARD_STATES_STATE_DUE,
+  CREATE_IDX_DECK_TAGS_TAG,
 ];

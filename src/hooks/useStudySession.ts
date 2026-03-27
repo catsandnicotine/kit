@@ -40,6 +40,7 @@ import type { Card, CardWithState, LearningState, Rating } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
+import type { EditOp } from '../lib/sync/types';
 
 /** Whole days since last review (0 for first review). */
 function calcElapsedDays(lastReview: number | null, nowSec: number): number {
@@ -164,6 +165,7 @@ export function useStudySession(
   onEditCard?: (card: Card) => void,
   studyAheadLimit = 0,
   sessionReviewLimit: number | null = null,
+  onSyncEdit?: (ops: EditOp[]) => void,
 ): UseStudySessionReturn {
   // -------------------------------------------------------------------------
   // State
@@ -403,6 +405,20 @@ export function useStudySession(
       persistDatabase();
       scheduleICloudBackup();
 
+      // --- Sync edit (new per-deck architecture) ---
+      if (onSyncEdit && writeState.success) {
+        onSyncEdit([{
+          type: 'review',
+          cardId: card.id,
+          rating,
+          reviewedAt: nowSec,
+          elapsed: elapsedDays,
+          scheduledDays: resolved.scheduledDays,
+          newState: writeState.data,
+          logId,
+        }]);
+      }
+
       // --- Haptics ---
       if (rating === 'again') hapticAgain();
       else hapticSuccess();
@@ -451,7 +467,7 @@ export function useStudySession(
         showCard(queue, nextIndex);
       }
     },
-    [phase, db, deckId, currentIndex, showCard, stopTimer],
+    [phase, db, deckId, currentIndex, showCard, stopTimer, onSyncEdit],
   );
 
   // -------------------------------------------------------------------------

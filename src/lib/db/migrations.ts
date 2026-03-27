@@ -83,6 +83,56 @@ const MIGRATIONS: Migration[] = [
       );
     } catch { /* column already exists */ }
   },
+  // ── v4 → v5: tag_colors — store per-tag colour metadata ───────────────
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS tag_colors (
+        tag        TEXT    PRIMARY KEY,
+        color      TEXT    NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL DEFAULT 0
+      )
+    `);
+  },
+  // ── v5 → v6: deck_tags — deck-level tag associations ──────────────────
+  (db) => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS deck_tags (
+        deck_id    TEXT NOT NULL REFERENCES decks(id) ON DELETE CASCADE,
+        tag        TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (deck_id, tag)
+      )
+    `);
+    try {
+      db.run(`CREATE INDEX IF NOT EXISTS idx_deck_tags_tag ON deck_tags(tag)`);
+    } catch { /* index already exists */ }
+
+    // Backfill: associate every deck with the unique tags already on its cards.
+    const now = Math.floor(Date.now() / 1000);
+    const decks = db.exec('SELECT id FROM decks');
+    if (decks.length > 0 && decks[0] !== undefined) {
+      for (const row of decks[0].values) {
+        const deckId = String(row[0]);
+        const cards = db.exec(`SELECT tags FROM cards WHERE deck_id = ?`, [deckId]);
+        if (cards.length === 0 || cards[0] === undefined) continue;
+        const seen = new Set<string>();
+        for (const cardRow of cards[0].values) {
+          try {
+            const tags = JSON.parse(String(cardRow[0])) as string[];
+            for (const t of tags) if (t) seen.add(t);
+          } catch { /* malformed tags */ }
+        }
+        for (const tag of seen) {
+          try {
+            db.run(
+              `INSERT OR IGNORE INTO deck_tags (deck_id, tag, created_at) VALUES (?, ?, ?)`,
+              [deckId, tag, now],
+            );
+          } catch { /* ignore */ }
+        }
+      }
+    }
+  },
 ];
 
 // ---------------------------------------------------------------------------

@@ -39,7 +39,7 @@ import {
   getNoteTypesByDeck,
   getReviewLogsByDeck,
 } from '../db/queries';
-import { getSqlJsLocator } from './parser';
+import { getSqlJsLocator, getWasmBinary } from './parser';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -113,19 +113,34 @@ const DEFAULT_CONF: Record<string, unknown> = {
 // Public API
 // ---------------------------------------------------------------------------
 
+/** Lightweight media entry used during export. */
+export interface ExportMediaBlob {
+  filename: string;
+  data: Uint8Array;
+  mimeType: string;
+}
+
+/**
+ * Optional callback that loads all media files for a deck.
+ * Pass a filesystem-backed loader on native to avoid reading BLOBs from SQLite.
+ */
+export type LoadMediaFn = (deckId: string) => Promise<ExportMediaBlob[]>;
+
 /**
  * Export a Kit deck as a standard .apkg with ALL scheduling data stripped.
  * Every card is reset to "new" state — safe to share with a friend.
  *
- * @param kitDb  - The Kit sql.js Database instance.
- * @param deckId - UUID of the deck to export.
+ * @param kitDb     - The Kit sql.js Database instance.
+ * @param deckId    - UUID of the deck to export.
+ * @param loadMedia - Optional media loader (filesystem-backed on native).
  * @returns A Blob containing the .apkg ZIP, or an error.
  */
 export async function exportDeckAsApkgFresh(
   kitDb: Database,
   deckId: string,
+  loadMedia?: LoadMediaFn,
 ): Promise<Result<Blob>> {
-  return buildApkg(kitDb, deckId, false);
+  return buildApkg(kitDb, deckId, false, loadMedia);
 }
 
 /**
@@ -133,15 +148,17 @@ export async function exportDeckAsApkgFresh(
  * The extra file is ignored by Anki Desktop; Kit detects it on import to
  * restore FSRS states and review logs.
  *
- * @param kitDb  - The Kit sql.js Database instance.
- * @param deckId - UUID of the deck to export.
+ * @param kitDb     - The Kit sql.js Database instance.
+ * @param deckId    - UUID of the deck to export.
+ * @param loadMedia - Optional media loader (filesystem-backed on native).
  * @returns A Blob containing the .apkg ZIP, or an error.
  */
 export async function exportDeckAsApkgWithProgress(
   kitDb: Database,
   deckId: string,
+  loadMedia?: LoadMediaFn,
 ): Promise<Result<Blob>> {
-  return buildApkg(kitDb, deckId, true);
+  return buildApkg(kitDb, deckId, true, loadMedia);
 }
 
 /**
@@ -150,12 +167,14 @@ export async function exportDeckAsApkgWithProgress(
  * @param kitDb            - The Kit sql.js Database instance.
  * @param deckId           - UUID of the deck to export.
  * @param includeProgress  - When true, embeds kit_progress.json in the ZIP.
+ * @param loadMedia        - Optional media loader (filesystem-backed on native).
  * @returns A Blob containing the .apkg ZIP, or an error.
  */
 async function buildApkg(
   kitDb: Database,
   deckId: string,
   includeProgress: boolean,
+  loadMedia?: LoadMediaFn,
 ): Promise<Result<Blob>> {
   try {
     // ── 1. Fetch all data from Kit's database ─────────────────────────────
@@ -184,9 +203,16 @@ async function buildApkg(
       for (const s of statesResult.data) stateMap.set(s.cardId, s);
     }
 
-    const mediaResult = getMediaByDeck(kitDb, deckId);
-    if (!mediaResult.success) return mediaResult;
-    const mediaBlobs = mediaResult.data;
+    // If a filesystem-backed loader was supplied (native), use it to avoid
+    // reading potentially-large BLOBs from the SQLite snapshot.
+    let mediaBlobs: ExportMediaBlob[];
+    if (loadMedia) {
+      mediaBlobs = await loadMedia(deckId);
+    } else {
+      const mediaResult = getMediaByDeck(kitDb, deckId);
+      if (!mediaResult.success) return mediaResult;
+      mediaBlobs = mediaResult.data;
+    }
 
     // ── 2. Build stable numeric IDs ──────────────────────────────────────
     // Anki uses millisecond-timestamp–based numeric IDs. We generate
@@ -206,7 +232,8 @@ async function buildApkg(
     cards.forEach((c, i) => cardIdMap.set(c.id, baseTsMs + 100000 + i));
 
     // ── 3. Build the Anki SQLite database ─────────────────────────────────
-    const SQL = await initSqlJs({ locateFile: getSqlJsLocator() });
+    const wasmBinary = getWasmBinary();
+    const SQL = await initSqlJs({ locateFile: getSqlJsLocator(), ...(wasmBinary && { wasmBinary }) });
     const ankiDb = new SQL.Database();
 
     try {
