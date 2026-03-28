@@ -197,6 +197,44 @@ export async function deleteMediaForDeck(deckId: string): Promise<void> {
 }
 
 /**
+ * Evict media for decks no longer in the registry (orphaned or deleted).
+ * Call this periodically (e.g. on app init) to prevent media cache bloat.
+ *
+ * @param activeDeckIds - Set of deck IDs that are still in the registry.
+ * @returns Number of deck media directories removed.
+ */
+export async function evictOrphanedMedia(
+  activeDeckIds: Set<string>,
+): Promise<number> {
+  if (!isNativePlatform()) return 0;
+  let removed = 0;
+  try {
+    const result = await Filesystem.readdir({
+      path: MEDIA_ROOT,
+      directory: Directory.Documents,
+    });
+    for (const entry of result.files) {
+      const name = typeof entry === 'string' ? entry : entry.name;
+      if (!activeDeckIds.has(name)) {
+        try {
+          await Filesystem.rmdir({
+            path: `${MEDIA_ROOT}/${name}`,
+            directory: Directory.Documents,
+            recursive: true,
+          });
+          removed++;
+        } catch {
+          // Best effort per-directory
+        }
+      }
+    }
+  } catch {
+    // Media root may not exist yet
+  }
+  return removed;
+}
+
+/**
  * One-time migration: extract all media BLOBs from the SQLite database and
  * write them to the filesystem. After all files are saved, clears the media
  * table so the database snapshot shrinks dramatically.

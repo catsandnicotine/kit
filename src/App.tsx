@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react
 import { ThemeProvider } from './components/ThemeProvider';
 import { useDeckManager } from './hooks/useDeckManager';
 import type { UseDeckManagerReturn } from './hooks/useDeckManager';
+import { useSync } from './hooks/useSync';
+import type { SyncStatus } from './hooks/useSync';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
 import type { Database } from 'sql.js';
@@ -88,6 +90,13 @@ function AppInner() {
   // Opened when navigating to a deck page, closed when returning home.
   const [activeDeckDb, setActiveDeckDb] = useState<Database | null>(null);
 
+  // Real-time iCloud sync — watches for edits from other devices.
+  const currentDeckIdForSync = 'deckId' in route ? route.deckId : undefined;
+  const { status: syncStatus } = useSync(
+    loading ? null : deckManager,
+    currentDeckIdForSync,
+  );
+
   // Check if this is the first launch
   useEffect(() => {
     try {
@@ -167,6 +176,15 @@ function AppInner() {
     [navigateToDeck],
   );
 
+  // ── Compact + save registry when a study session completes ───────────
+  const handleSessionComplete = useCallback(() => {
+    if ('deckId' in route && route.deckId) {
+      deckManager.refreshCounts(route.deckId);
+      deckManager.compact(route.deckId).catch(() => {});
+      deckManager.saveRegistry().catch(() => {});
+    }
+  }, [route, deckManager]);
+
   // ── Sync edit handler for current deck ────────────────────────────────
   const currentDeckId = 'deckId' in route ? route.deckId : undefined;
   const handleSyncEdit = useMemo(() => {
@@ -196,6 +214,7 @@ function AppInner() {
           deckName={route.deckName}
           onExit={goHome}
           onSyncEdit={handleSyncEdit}
+          onSessionComplete={handleSessionComplete}
         />
       </Suspense>
     );
@@ -271,6 +290,7 @@ function AppInner() {
       dbError={error}
       deckEntries={deckEntries}
       deckManager={deckManager}
+      syncStatus={syncStatus}
       onStudy={goStudy}
       onBrowse={goBrowse}
       onStats={goStats}

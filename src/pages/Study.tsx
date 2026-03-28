@@ -38,6 +38,8 @@ interface StudyProps {
   onExit?: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
   onSyncEdit?: (ops: import('../lib/sync/types').EditOp[]) => void;
+  /** Called when the study session completes (all cards reviewed). */
+  onSessionComplete?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -547,7 +549,7 @@ function useLongPress(onLongPress: () => void) {
  * @param onEditCard - Called when the user long-presses the card.
  * @param onExit    - Called when the user dismisses the session-complete screen.
  */
-export default function Study({ db, deckId, deckName, onExit, onSyncEdit }: StudyProps) {
+export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSessionComplete }: StudyProps) {
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
   const [studyAheadLimit, setStudyAheadLimit] = useState(0);
@@ -586,6 +588,13 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit }: Stud
     if (theme === 'black') classes.push('black_mode');
     return classes.join(' ');
   }, [theme]);
+
+  // Notify parent when session completes (triggers compaction + registry save)
+  useEffect(() => {
+    if (phase === 'complete') {
+      onSessionComplete?.();
+    }
+  }, [phase, onSessionComplete]);
 
   // Compute next due label when session completes
   useEffect(() => {

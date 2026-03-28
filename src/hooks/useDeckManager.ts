@@ -29,6 +29,7 @@ import {
   createDeckFromSnapshot,
   syncDeck,
   refreshDeckCounts,
+  flushPendingSync,
 } from '../lib/db/deckManager';
 import { createICloudSyncStorage } from '../lib/platform/icloudSync';
 import { createBrowserSyncStorage } from '../lib/platform/browserSync';
@@ -37,6 +38,7 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import type { DeckRegistryEntry, EditOp } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
 import { getDeviceId } from '../lib/sync/deckRegistry';
+import { evictOrphanedMedia } from '../lib/platform/mediaFiles';
 
 // ---------------------------------------------------------------------------
 // Environment detection
@@ -93,6 +95,36 @@ async function saveRegistryJson(json: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Migration backup cleanup
+// ---------------------------------------------------------------------------
+
+/** Days after which the kit.db.migrated safety backup is deleted. */
+const MIGRATION_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Delete kit.db.migrated if it is older than 30 days.
+ * Non-fatal — silently ignores missing files or stat failures.
+ */
+async function cleanupMigrationBackup(): Promise<void> {
+  try {
+    const stat = await Filesystem.stat({
+      path: 'kit.db.migrated',
+      directory: Directory.Documents,
+    });
+    const modifiedMs = stat.mtime ? new Date(stat.mtime).getTime() : 0;
+    if (modifiedMs > 0 && Date.now() - modifiedMs > MIGRATION_BACKUP_MAX_AGE_MS) {
+      await Filesystem.deleteFile({
+        path: 'kit.db.migrated',
+        directory: Directory.Documents,
+      });
+      console.log('[useDeckManager] Deleted kit.db.migrated (>30 days old)');
+    }
+  } catch {
+    // File doesn't exist or stat failed — nothing to clean up
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Hook return type
 // ---------------------------------------------------------------------------
 
@@ -127,6 +159,8 @@ export interface UseDeckManagerReturn {
   createFromSnapshot: typeof createDeckFromSnapshot;
   /** Refresh cached card counts for an open deck. */
   refreshCounts: (deckId: string) => void;
+  /** Flush pending edits that were queued while offline. */
+  flushPending: () => Promise<number>;
   /** Persist the deck registry. */
   saveRegistry: () => Promise<void>;
 }
@@ -226,12 +260,25 @@ export function useDeckManager(): UseDeckManagerReturn {
           }
         }
 
-        // 6. Discover decks from iCloud
+        // 6. Clean up migration backup after 30 days
+        if (isNativePlatform() && hasRegistry) {
+          cleanupMigrationBackup().catch(() => {});
+        }
+
+        // 7. Discover decks from iCloud
         const entries = await discoverDecks();
         if (cancelled) return;
 
         setDeckEntries(entries);
         setLoading(false);
+
+        // 8. Evict media for orphaned/deleted decks (non-blocking)
+        if (isNativePlatform()) {
+          const activeIds = new Set(entries.map(e => e.deckId));
+          evictOrphanedMedia(activeIds).then(n => {
+            if (n > 0) console.log(`[useDeckManager] Evicted media for ${n} orphaned deck(s)`);
+          }).catch(() => {});
+        }
       } catch (e) {
         if (!cancelled) {
           setError(String(e));
@@ -290,6 +337,11 @@ export function useDeckManager(): UseDeckManagerReturn {
     refreshDeckCounts(deckId);
   }, []);
 
+  // ── Flush pending edits ────────────────────────────────────────────────
+  const flushPendingFn = useCallback(async (): Promise<number> => {
+    return flushPendingSync();
+  }, []);
+
   // ── Save registry ──────────────────────────────────────────────────────
   const saveRegistry = useCallback(async (): Promise<void> => {
     await saveRegistryJson(getRegistryJson());
@@ -308,6 +360,7 @@ export function useDeckManager(): UseDeckManagerReturn {
     sync,
     createFromSnapshot: createDeckFromSnapshot,
     refreshCounts: refreshCountsFn,
+    flushPending: flushPendingFn,
     saveRegistry,
   };
 }

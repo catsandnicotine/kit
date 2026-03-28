@@ -9,6 +9,7 @@
  */
 
 import { registerPlugin } from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import type { SyncStorage, PendingEdit } from '../sync/syncStorage';
 
@@ -216,6 +217,30 @@ export async function startICloudWatching(path: string): Promise<void> {
 export async function stopICloudWatching(): Promise<void> {
   if (!isNativePlatform()) return;
   await ICloudSyncPlugin.stopWatching();
+}
+
+/** Shape of the icloudFilesChanged event payload from the Swift plugin. */
+export interface ICloudFileChange {
+  path: string;
+  event: 'added' | 'changed' | 'removed';
+}
+
+/**
+ * Register a listener for iCloud file change events from other devices.
+ *
+ * @param callback - Called with an array of file changes.
+ * @returns A handle to remove the listener, or null on non-native platforms.
+ */
+export async function addICloudChangeListener(
+  callback: (changes: ICloudFileChange[]) => void,
+): Promise<PluginListenerHandle | null> {
+  if (!isNativePlatform()) return null;
+  const handle = await (ICloudSyncPlugin as unknown as {
+    addListener: (event: string, cb: (data: { files: ICloudFileChange[] }) => void) => Promise<PluginListenerHandle>;
+  }).addListener('icloudFilesChanged', (data) => {
+    callback(data.files ?? []);
+  });
+  return handle;
 }
 
 /**

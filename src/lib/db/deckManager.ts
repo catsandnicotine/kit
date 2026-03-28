@@ -20,7 +20,7 @@ import { runMigrations } from '../db/migrations';
 import type { SyncStorage } from '../sync/syncStorage';
 import type { DeckSnapshot, EditOp } from '../sync/types';
 import { createHLC, type HLCClock } from '../sync/hlc';
-import { writeEdit } from '../sync/editWriter';
+import { writeEdit, flushPendingEdits } from '../sync/editWriter';
 import { readEditsAfter, readSnapshot } from '../sync/editReader';
 import { replayEdits } from '../sync/replay';
 import { compactDeck } from '../sync/compact';
@@ -404,6 +404,16 @@ export function refreshDeckCounts(deckId: string): void {
       reviewCount: deckCounts.reviewCount,
     });
   }
+}
+
+/**
+ * Flush any pending edit files that were queued while iCloud was unavailable.
+ *
+ * @returns Number of edits flushed.
+ */
+export async function flushPendingSync(): Promise<number> {
+  if (!_storage) return 0;
+  return flushPendingEdits(_storage);
 }
 
 // ---------------------------------------------------------------------------

@@ -52,6 +52,8 @@ interface HomeProps {
   deckEntries?: import('../lib/sync/types').DeckRegistryEntry[];
   /** Deck manager for per-deck operations (new sync architecture). */
   deckManager?: import('../hooks/useDeckManager').UseDeckManagerReturn;
+  /** iCloud sync status indicator. */
+  syncStatus?: import('../hooks/useSync').SyncStatus;
   onStudy: (deckId: string, deckName: string) => void;
   onBrowse: (deckId: string, deckName: string) => void;
   onStats: (deckId: string, deckName: string) => void;
@@ -466,7 +468,7 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, onStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, onStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
@@ -816,6 +818,12 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             </div>
           </button>
           <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">Kit</span>
+          {syncStatus === 'syncing' && (
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" title="Syncing" />
+          )}
+          {syncStatus === 'synced' && (
+            <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="Synced" />
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           <button

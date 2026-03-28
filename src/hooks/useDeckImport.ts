@@ -56,7 +56,6 @@ import {
   getNotesByDeck,
   getDeckSettings,
   getTagsForDeck,
-  getDeckTags,
 } from '../lib/db/queries';
 
 // ---------------------------------------------------------------------------
