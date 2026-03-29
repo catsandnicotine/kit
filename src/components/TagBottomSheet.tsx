@@ -63,14 +63,14 @@ function ColorGrid({
 
 interface TagBottomSheetProps {
   tag: TagCount;
-  allDecks: Deck[];
-  deckAssociations: DeckAssociation[];
+  allDecks?: Deck[];
+  deckAssociations?: DeckAssociation[];
   onClose: () => void;
-  onRename: (oldTag: string, newTag: string) => boolean;
+  onRename: (oldTag: string, newTag: string) => boolean | Promise<boolean>;
   onColorChange: (tag: string, hex: string) => void;
   onDelete: (tag: string) => void;
-  onAddToDeck: (tag: string, deckId: string) => void;
-  onRemoveFromDeck: (tag: string, deckId: string) => void;
+  onAddToDeck?: ((tag: string, deckId: string) => void) | undefined;
+  onRemoveFromDeck?: ((tag: string, deckId: string) => void) | undefined;
   onTagUpdated: (newTag: string) => void;
 }
 
@@ -80,8 +80,8 @@ interface TagBottomSheetProps {
 
 export function TagBottomSheet({
   tag,
-  allDecks,
-  deckAssociations,
+  allDecks = [],
+  deckAssociations = [],
   onClose,
   onRename,
   onColorChange,
@@ -233,12 +233,14 @@ export function TagBottomSheet({
 
           {/* Action buttons */}
           <div className="border-t border-[#E5E5E5] dark:border-[#262626] px-4 py-3 flex gap-3">
-            <button
-              onClick={() => setShowDeckPicker(true)}
-              className="flex-1 py-2.5 text-sm font-medium bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-xl text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70"
-            >
-              Add to Deck
-            </button>
+            {onAddToDeck && (
+              <button
+                onClick={() => setShowDeckPicker(true)}
+                className="flex-1 py-2.5 text-sm font-medium bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-xl text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70"
+              >
+                Add to Deck
+              </button>
+            )}
             <button
               onClick={() => setConfirmDelete(true)}
               className="flex-1 py-2.5 text-sm font-medium bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-xl text-red-500 active:opacity-70"
@@ -247,8 +249,8 @@ export function TagBottomSheet({
             </button>
           </div>
 
-          {/* Deck associations */}
-          {deckAssociations.length > 0 && (
+          {/* Deck associations (only shown when deck-scoped) */}
+          {onAddToDeck && deckAssociations.length > 0 && (
             <div className="border-t border-[#E5E5E5] dark:border-[#262626]">
               <p className="px-4 pt-3 pb-1 text-xs font-medium text-[#C4C4C4] uppercase tracking-wide">
                 In Decks
@@ -261,22 +263,24 @@ export function TagBottomSheet({
                   <span className="flex-1 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] truncate">
                     {assoc.deckName}
                   </span>
-                  <button
-                    onClick={() => setRemovingDeckId(assoc.deckId)}
-                    className="w-6 h-6 flex items-center justify-center rounded-full text-[#C4C4C4] active:text-red-500"
-                    aria-label={`Remove from ${assoc.deckName}`}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
+                  {onRemoveFromDeck && (
+                    <button
+                      onClick={() => setRemovingDeckId(assoc.deckId)}
+                      className="w-6 h-6 flex items-center justify-center rounded-full text-[#C4C4C4] active:text-red-500"
+                      aria-label={`Remove from ${assoc.deckName}`}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
 
-          {deckAssociations.length === 0 && (
+          {onAddToDeck && deckAssociations.length === 0 && (
             <div className="border-t border-[#E5E5E5] dark:border-[#262626] px-4 py-4">
               <p className="text-xs text-[#C4C4C4] text-center">
                 Not added to any deck yet
@@ -287,7 +291,7 @@ export function TagBottomSheet({
       </div>
 
       {/* Deck picker overlay */}
-      {showDeckPicker && (
+      {showDeckPicker && onAddToDeck && (
         <div className="fixed inset-0 z-[60] flex flex-col bg-[var(--kit-bg)]"
           style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
@@ -307,8 +311,8 @@ export function TagBottomSheet({
                 <button
                   key={deck.id}
                   onClick={() => {
-                    if (isAdded) onRemoveFromDeck(tag.tag, deck.id);
-                    else onAddToDeck(tag.tag, deck.id);
+                    if (isAdded && onRemoveFromDeck) onRemoveFromDeck(tag.tag, deck.id);
+                    else if (onAddToDeck) onAddToDeck(tag.tag, deck.id);
                   }}
                   className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#F0F0F0] dark:border-[#1E1E1E] active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
                 >
@@ -356,7 +360,7 @@ export function TagBottomSheet({
       )}
 
       {/* Remove-from-deck confirmation */}
-      {removingDeckId && (() => {
+      {removingDeckId && onRemoveFromDeck && (() => {
         const deck = deckAssociations.find(a => a.deckId === removingDeckId);
         return deck ? (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-8">

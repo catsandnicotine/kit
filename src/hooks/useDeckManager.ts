@@ -30,29 +30,85 @@ import {
   syncDeck,
   refreshDeckCounts,
   flushPendingSync,
+  getAllGlobalTags,
+  upsertGlobalTag as upsertGlobalTagFn,
+  deleteGlobalTag as deleteGlobalTagFn,
+  renameGlobalTag as renameGlobalTagFn,
+  mergeTagsIntoGlobal as mergeTagsIntoGlobalFn,
+  removeDeck as removeDeckFn,
 } from '../lib/db/deckManager';
 import { createICloudSyncStorage } from '../lib/platform/icloudSync';
 import { createBrowserSyncStorage } from '../lib/platform/browserSync';
 import { loadDatabaseSnapshot } from '../lib/platform/persistence';
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import type { DeckRegistryEntry, EditOp } from '../lib/sync/types';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import type { DeckRegistryEntry, EditOp, GlobalTag } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
 import { getDeviceId } from '../lib/sync/deckRegistry';
 import { evictOrphanedMedia } from '../lib/platform/mediaFiles';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
-// Environment detection
+// Local snapshot persistence (on-device backup, not iCloud)
 // ---------------------------------------------------------------------------
 
-function isNativePlatform(): boolean {
+const LOCAL_DECKS_DIR = 'decks';
+
+/**
+ * Delete the local snapshot directory for a deck.
+ * Called during deck deletion to free on-device storage.
+ */
+async function deleteLocalDeckSnapshot(deckId: string): Promise<void> {
+  if (!isNativePlatform()) return;
   try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
+    await Filesystem.rmdir({
+      path: `${LOCAL_DECKS_DIR}/${deckId}`,
+      directory: Directory.Documents,
+      recursive: true,
+    });
   } catch {
-    return false;
+    // Directory may not exist — ignore
+  }
+}
+
+/**
+ * Read a deck snapshot from the local on-device store.
+ * This is the primary reliable store; iCloud is for cross-device sync only.
+ */
+async function readLocalSnapshot(deckId: string): Promise<string | null> {
+  if (!isNativePlatform()) return null;
+  try {
+    const result = await Filesystem.readFile({
+      path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+    });
+    return typeof result.data === 'string' ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Write a deck snapshot to the local on-device store.
+ * Called on every import and compaction to ensure the deck is always
+ * openable on this device regardless of iCloud availability.
+ */
+async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
+  if (!isNativePlatform()) return;
+  try {
+    await Filesystem.mkdir({
+      path: `${LOCAL_DECKS_DIR}/${deckId}`,
+      directory: Directory.Documents,
+      recursive: true,
+    });
+    await Filesystem.writeFile({
+      path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
+      data,
+      directory: Directory.Documents,
+      encoding: Encoding.UTF8,
+    });
+  } catch {
+    // Best effort — deck still openable from iCloud if this fails
   }
 }
 
@@ -69,6 +125,7 @@ async function loadRegistryJson(): Promise<string | null> {
       const result = await Filesystem.readFile({
         path: REGISTRY_PATH,
         directory: Directory.Documents,
+        encoding: Encoding.UTF8,
       });
       return typeof result.data === 'string' ? result.data : null;
     } catch {
@@ -85,6 +142,7 @@ async function saveRegistryJson(json: string): Promise<void> {
         path: REGISTRY_PATH,
         data: json,
         directory: Directory.Documents,
+        encoding: Encoding.UTF8,
       });
     } catch {
       // Best effort
@@ -92,6 +150,10 @@ async function saveRegistryJson(json: string): Promise<void> {
   } else {
     localStorage.setItem(REGISTRY_LS_KEY, json);
   }
+}
+
+async function persistRegistry(): Promise<void> {
+  await saveRegistryJson(getRegistryJson());
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +225,21 @@ export interface UseDeckManagerReturn {
   flushPending: () => Promise<number>;
   /** Persist the deck registry. */
   saveRegistry: () => Promise<void>;
+  /** Get all tags from the global catalog. */
+  getGlobalTags: () => GlobalTag[];
+  /** Create or update a tag in the global catalog (persists immediately). */
+  upsertTag: (name: string, color: string) => Promise<void>;
+  /** Delete a tag from the global catalog (persists immediately). */
+  deleteTag: (name: string) => Promise<void>;
+  /** Rename a tag in the global catalog (persists immediately). */
+  renameTag: (oldName: string, newName: string) => Promise<void>;
+  /** Merge imported tags into the global catalog (persists immediately). */
+  mergeImportedTags: (tags: Array<{ tag: string; color: string }>) => Promise<void>;
+  /**
+   * Permanently delete a deck: closes DB, removes from registry, deletes local
+   * snapshot, and best-effort deletes iCloud files. Caller must also delete media.
+   */
+  removeDeck: (deckId: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +284,7 @@ export function useDeckManager(): UseDeckManagerReturn {
         if (cancelled) return;
 
         // 4. Initialize DeckManager
-        initDeckManager({ SQL, storage, registryJson });
+        initDeckManager({ SQL, storage, registryJson, readLocalSnapshot, writeLocalSnapshot, deleteLocalSnapshot: deleteLocalDeckSnapshot });
 
         // 5. Check if migration from monolithic DB is needed
         const hasRegistry = registryJson !== null;
@@ -239,7 +316,7 @@ export function useDeckManager(): UseDeckManagerReturn {
               console.log(`[useDeckManager] Migrated ${migratedCount} decks`);
 
               // Save registry after migration
-              await saveRegistryJson(getRegistryJson());
+              await persistRegistry();
 
               // Rename old kit.db as safety backup
               if (isNativePlatform()) {
@@ -324,7 +401,7 @@ export function useDeckManager(): UseDeckManagerReturn {
   // ── Compact ────────────────────────────────────────────────────────────
   const compact = useCallback(async (deckId: string): Promise<void> => {
     await compactDeckEdits(deckId);
-    await saveRegistryJson(getRegistryJson());
+    await persistRegistry();
   }, []);
 
   // ── Sync ───────────────────────────────────────────────────────────────
@@ -344,7 +421,39 @@ export function useDeckManager(): UseDeckManagerReturn {
 
   // ── Save registry ──────────────────────────────────────────────────────
   const saveRegistry = useCallback(async (): Promise<void> => {
-    await saveRegistryJson(getRegistryJson());
+    await persistRegistry();
+  }, []);
+
+  // ── Global tag catalog ────────────────────────────────────────────────
+  const getGlobalTags = useCallback((): GlobalTag[] => {
+    return getAllGlobalTags();
+  }, []);
+
+  const upsertTag = useCallback(async (name: string, color: string): Promise<void> => {
+    upsertGlobalTagFn(name, color);
+    await persistRegistry();
+  }, []);
+
+  const deleteTagFn = useCallback(async (name: string): Promise<void> => {
+    deleteGlobalTagFn(name);
+    await persistRegistry();
+  }, []);
+
+  const renameTagFn = useCallback(async (oldName: string, newName: string): Promise<void> => {
+    renameGlobalTagFn(oldName, newName);
+    await persistRegistry();
+  }, []);
+
+  const mergeImportedTags = useCallback(async (
+    tags: Array<{ tag: string; color: string }>,
+  ): Promise<void> => {
+    mergeTagsIntoGlobalFn(tags);
+    await persistRegistry();
+  }, []);
+
+  const removeDeckFnCb = useCallback(async (deckId: string): Promise<void> => {
+    await removeDeckFn(deckId);
+    await persistRegistry();
   }, []);
 
   return {
@@ -362,5 +471,11 @@ export function useDeckManager(): UseDeckManagerReturn {
     refreshCounts: refreshCountsFn,
     flushPending: flushPendingFn,
     saveRegistry,
+    getGlobalTags,
+    upsertTag,
+    deleteTag: deleteTagFn,
+    renameTag: renameTagFn,
+    mergeImportedTags,
+    removeDeck: removeDeckFnCb,
   };
 }

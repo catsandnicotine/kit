@@ -32,7 +32,7 @@ interface BrowseProps {
   deckName: string;
   onBack: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
-  onSyncEdit?: (ops: EditOp[]) => void;
+  onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +55,7 @@ function CardFacePreview({ html }: { html: string }) {
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <div
-        className="browse-card-preview card-content bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-md overflow-hidden relative"
+        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-md overflow-hidden relative"
         style={{ minHeight: '4.5rem' }}
       >
         <div ref={ref} className="px-2 py-1.5 text-xs leading-relaxed" />
@@ -85,7 +85,7 @@ function CardPreviewRow({
 
   return (
     <div
-      className={`flex items-center border-b border-border-light dark:border-border-dark transition-colors ${
+      className={`flex items-center border-b border-[#E5E5E5] dark:border-[#262626] transition-colors ${
         selected ? 'bg-blue-50 dark:bg-blue-950/30' : ''
       }`}
     >
@@ -319,10 +319,10 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
   const selectedCount = selectedIds.size;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
-        className="flex items-center gap-3 pb-3 border-b border-border-light dark:border-border-dark shrink-0"
+        className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
           paddingTop: 'env(safe-area-inset-top)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
@@ -331,7 +331,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
       >
         <button
           onClick={() => { hapticTap(); selectionMode ? exitSelection() : onBack(); }}
-          className="text-sm text-text-muted shrink-0"
+          className="text-sm text-[#C4C4C4] shrink-0"
         >
           {selectionMode ? 'Cancel' : '← Back'}
         </button>
@@ -368,12 +368,12 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
         )}
         {!selectionMode && (
           <>
-            <span className="text-xs text-text-muted shrink-0">
+            <span className="text-xs text-[#C4C4C4] shrink-0">
               {filtered.length} {filtered.length === 1 ? 'card' : 'cards'}
             </span>
             <button
               onClick={() => { hapticTap(); setSelectionMode(true); }}
-              className="text-xs font-medium text-text-muted shrink-0 px-1"
+              className="text-xs font-medium text-[#C4C4C4] shrink-0 px-1"
             >
               Select
             </button>
@@ -390,7 +390,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
 
       {/* Search + sort bar */}
       <div
-        className="py-2 border-b border-border-light dark:border-border-dark shrink-0 flex items-center gap-2"
+        className="py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0 flex items-center gap-2"
         style={{
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -400,7 +400,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search cards or tags…"
-          className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
+          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
         />
         {allTags.length > 0 && (
           <button
@@ -408,7 +408,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             className={`shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
               sortByTag
                 ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
-                : 'text-text-muted border-border-light dark:border-border-dark'
+                : 'text-[#C4C4C4] border-[#E5E5E5] dark:border-[#262626]'
             }`}
           >
             Tag ↕
@@ -419,7 +419,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
       {/* Tag filter chips */}
       {allTags.length > 0 && (
         <div
-          className="flex gap-2 overflow-x-auto py-2 border-b border-border-light dark:border-border-dark shrink-0"
+          className="flex gap-2 overflow-x-auto py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -450,7 +450,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
       {/* Selection toolbar */}
       {selectionMode && selectedCount > 0 && (
         <div
-          className="flex items-center gap-2 py-2 border-b border-border-light dark:border-border-dark shrink-0"
+          className="flex items-center gap-2 py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -473,7 +473,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             <div className="flex flex-1 gap-1">
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="flex-1 py-2 text-sm border border-border-light dark:border-border-dark rounded-lg text-text-muted"
+                className="flex-1 py-2 text-sm border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#C4C4C4]"
               >
                 Cancel
               </button>
@@ -495,7 +495,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
       >
         {filtered.length === 0 && (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-text-muted">
+            <p className="text-sm text-[#C4C4C4]">
               {search.trim() || activeTagFilters.length > 0
                 ? 'No cards match your filters'
                 : 'No cards in this deck'}
@@ -503,10 +503,10 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           </div>
         )}
         {filtered.length > 0 && (
-          <div className="flex items-center px-4 pt-3 pb-1 border-b border-border-light dark:border-border-dark">
-            <span className="flex-1 text-[10px] font-medium text-text-muted uppercase tracking-wider">Front</span>
+          <div className="flex items-center px-4 pt-3 pb-1 border-b border-[#E5E5E5] dark:border-[#262626]">
+            <span className="flex-1 text-[10px] font-medium text-[#C4C4C4] uppercase tracking-wider">Front</span>
             <div className="w-px h-3 bg-border-light dark:bg-border-dark mx-3" />
-            <span className="flex-1 text-[10px] font-medium text-text-muted uppercase tracking-wider">Back</span>
+            <span className="flex-1 text-[10px] font-medium text-[#C4C4C4] uppercase tracking-wider">Back</span>
           </div>
         )}
         {visible.map(card => (
@@ -523,7 +523,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
         {hasMore && (
           <button
             onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-            className="w-full py-3 text-sm text-text-muted border-b border-border-light dark:border-border-dark"
+            className="w-full py-3 text-sm text-[#C4C4C4] border-b border-[#E5E5E5] dark:border-[#262626]"
           >
             Show more ({filtered.length - visibleCount} remaining)
           </button>

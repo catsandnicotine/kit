@@ -9,7 +9,7 @@
  * new decks from other devices or detect deletions.
  */
 
-import type { DeckRegistry, DeckRegistryEntry } from './types';
+import type { DeckRegistry, DeckRegistryEntry, GlobalTag } from './types';
 import { generateDeviceId } from './hlc';
 
 // ---------------------------------------------------------------------------
@@ -186,6 +186,82 @@ export function reconcileWithICloud(icloudDeckIds: string[]): void {
         cardCount: 0,
         lastAccessedAt: 0,
       };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Global tag catalog
+// ---------------------------------------------------------------------------
+
+/**
+ * Get all tags from the global catalog, sorted alphabetically.
+ *
+ * @returns Array of global tags.
+ */
+export function getAllGlobalTags(): GlobalTag[] {
+  if (!registry?.globalTags) return [];
+  return Object.values(registry.globalTags)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Create or update a tag in the global catalog.
+ *
+ * @param name  - Tag name.
+ * @param color - Hex color string (empty = uncoloured).
+ */
+export function upsertGlobalTag(name: string, color: string): void {
+  if (!registry) {
+    registry = initRegistry(null);
+  }
+  if (!registry.globalTags) {
+    registry.globalTags = {};
+  }
+  registry.globalTags[name] = { name, color };
+}
+
+/**
+ * Delete a tag from the global catalog.
+ *
+ * @param name - Tag name to remove.
+ */
+export function deleteGlobalTag(name: string): void {
+  if (registry?.globalTags) {
+    delete registry.globalTags[name];
+  }
+}
+
+/**
+ * Rename a tag in the global catalog.
+ *
+ * @param oldName - Current tag name.
+ * @param newName - New tag name.
+ */
+export function renameGlobalTag(oldName: string, newName: string): void {
+  if (!registry?.globalTags) return;
+  const entry = registry.globalTags[oldName];
+  if (!entry) return;
+  delete registry.globalTags[oldName];
+  registry.globalTags[newName] = { name: newName, color: entry.color };
+}
+
+/**
+ * Merge imported tags into the global catalog.
+ * Only adds tags that don't already exist (preserves user's color choices).
+ *
+ * @param tags - Tags discovered during import.
+ */
+export function mergeTagsIntoGlobal(tags: Array<{ tag: string; color: string }>): void {
+  if (!registry) {
+    registry = initRegistry(null);
+  }
+  if (!registry.globalTags) {
+    registry.globalTags = {};
+  }
+  for (const { tag, color } of tags) {
+    if (!registry.globalTags[tag]) {
+      registry.globalTags[tag] = { name: tag, color };
     }
   }
 }

@@ -14,7 +14,7 @@
 import type { Database, SqlJsStatic } from 'sql.js';
 import type { SyncStorage } from './syncStorage';
 import type { DeckSnapshot, SyncDeckSettings } from './types';
-import { formatHLC, generateDeviceId } from './hlc';
+import { formatHLC } from './hlc';
 import { upsertDeckEntry } from './deckRegistry';
 import {
   getAllDecks,

@@ -1,9 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
 import { useDeckManager } from './hooks/useDeckManager';
-import type { UseDeckManagerReturn } from './hooks/useDeckManager';
 import { useSync } from './hooks/useSync';
-import type { SyncStatus } from './hooks/useSync';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
 import type { Database } from 'sql.js';
@@ -29,7 +27,7 @@ type Route =
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
   | { page: 'settings' }
-  | { page: 'tags'; deckId?: string; deckName?: string };
+  | { page: 'tags' };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -85,16 +83,18 @@ function AppInner() {
 
   const [route, setRoute] = useState<Route>({ page: 'home' });
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const navSeqRef = useRef(0);
 
   // Per-deck database for the currently active deck-scoped page.
   // Opened when navigating to a deck page, closed when returning home.
   const [activeDeckDb, setActiveDeckDb] = useState<Database | null>(null);
 
+  const currentDeckId = 'deckId' in route ? route.deckId : undefined;
+
   // Real-time iCloud sync — watches for edits from other devices.
-  const currentDeckIdForSync = 'deckId' in route ? route.deckId : undefined;
   const { status: syncStatus } = useSync(
     loading ? null : deckManager,
-    currentDeckIdForSync,
+    currentDeckId,
   );
 
   // Check if this is the first launch
@@ -117,25 +117,27 @@ function AppInner() {
     }
   }, []);
 
+  const finalizeDeck = useCallback((deckId: string) => {
+    deckManager.refreshCounts(deckId);
+    deckManager.compact(deckId).catch(() => {});
+    deckManager.saveRegistry().catch(() => {});
+  }, [deckManager]);
+
   const goHome = useCallback(() => {
-    // Close the active deck DB when returning home
-    if (route.page !== 'home' && 'deckId' in route && route.deckId) {
-      // Refresh cached counts before leaving the deck
-      deckManager.refreshCounts(route.deckId);
-      // Compact edit files before leaving the deck
-      deckManager.compact(route.deckId).catch(() => {});
-      deckManager.saveRegistry().catch(() => {});
+    navSeqRef.current++; // Cancel any in-flight navigateToDeck
+    if (currentDeckId) {
+      finalizeDeck(currentDeckId);
     }
     setActiveDeckDb(null);
     setRoute({ page: 'home' });
-    // Refresh deck list in case counts changed
     deckManager.refreshDecks().catch(() => {});
-  }, [route, deckManager]);
+  }, [currentDeckId, deckManager, finalizeDeck]);
 
   const navigateToDeck = useCallback(
     async (page: Route['page'], deckId: string, deckName: string) => {
-      // Open the per-deck database
+      const seq = ++navSeqRef.current;
       const db = await deckManager.openDeckDb(deckId);
+      if (seq !== navSeqRef.current) return; // Superseded by goHome or another navigation
       setActiveDeckDb(db);
       setRoute({ page, deckId, deckName } as Route);
     },
@@ -159,34 +161,18 @@ function AppInner() {
 
   const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
 
-  const goTags = useCallback(async (deckId?: string, deckName?: string) => {
-    if (deckId) {
-      const db = await deckManager.openDeckDb(deckId);
-      setActiveDeckDb(db);
-    }
-    setRoute({
-      page: 'tags',
-      ...(deckId !== undefined ? { deckId } : {}),
-      ...(deckName !== undefined ? { deckName } : {}),
-    });
-  }, [deckManager]);
+  const goTags = useCallback(() => {
+    setRoute({ page: 'tags' });
+  }, []);
 
   const goDeckSettings = useCallback(
     (deckId: string, deckName: string) => navigateToDeck('deck-settings', deckId, deckName),
     [navigateToDeck],
   );
 
-  // ── Compact + save registry when a study session completes ───────────
   const handleSessionComplete = useCallback(() => {
-    if ('deckId' in route && route.deckId) {
-      deckManager.refreshCounts(route.deckId);
-      deckManager.compact(route.deckId).catch(() => {});
-      deckManager.saveRegistry().catch(() => {});
-    }
-  }, [route, deckManager]);
-
-  // ── Sync edit handler for current deck ────────────────────────────────
-  const currentDeckId = 'deckId' in route ? route.deckId : undefined;
+    if (currentDeckId) finalizeDeck(currentDeckId);
+  }, [currentDeckId, finalizeDeck]);
   const handleSyncEdit = useMemo(() => {
     if (!currentDeckId) return undefined;
     return (ops: EditOp[]) => {
@@ -273,11 +259,8 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <TagBrowser
-          db={activeDeckDb}
-          {...(route.deckId !== undefined ? { deckId: route.deckId } : {})}
-          {...(route.deckName !== undefined ? { deckName: route.deckName } : {})}
+          deckManager={deckManager}
           onBack={goHome}
-          onSyncEdit={handleSyncEdit}
         />
       </Suspense>
     );

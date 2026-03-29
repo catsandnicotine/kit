@@ -15,18 +15,7 @@ import type { Database } from 'sql.js';
 import { getMediaFilenames, getMediaBlobByFilename } from '../lib/db/queries';
 import { rewriteMediaUrls } from '../lib/media';
 import { listMediaFilenames, getMediaDirUri, mediaUriToWebUrl } from '../lib/platform/mediaFiles';
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Public types

@@ -10,8 +10,9 @@
 
 import { registerPlugin } from '@capacitor/core';
 import type { PluginListenerHandle } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import type { SyncStorage, PendingEdit } from '../sync/syncStorage';
+import { isNativePlatform } from './platformDetect';
 
 // ---------------------------------------------------------------------------
 // Plugin interface
@@ -35,22 +36,6 @@ interface ICloudSyncPluginInterface {
 const ICloudSyncPlugin = registerPlugin<ICloudSyncPluginInterface>('ICloudSyncPlugin');
 
 // ---------------------------------------------------------------------------
-// Environment detection
-// ---------------------------------------------------------------------------
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Pending edits storage (local filesystem)
 // ---------------------------------------------------------------------------
 
@@ -70,16 +55,24 @@ async function readPendingEdits(): Promise<PendingEdit[]> {
       directory: Directory.Documents,
     });
 
-    const edits: PendingEdit[] = [];
-    for (const file of result.files) {
-      const name = typeof file === 'string' ? file : file.name;
-      if (!name.endsWith('.json')) continue;
+    const names = result.files
+      .map(f => (typeof f === 'string' ? f : f.name))
+      .filter(n => n.endsWith('.json'));
 
-      try {
-        const content = await Filesystem.readFile({
+    const contents = await Promise.all(
+      names.map(name =>
+        Filesystem.readFile({
           path: `${PENDING_DIR}/${name}`,
           directory: Directory.Documents,
-        });
+          encoding: Encoding.UTF8,
+        }).catch(() => null),
+      ),
+    );
+
+    const edits: PendingEdit[] = [];
+    for (const content of contents) {
+      if (!content) continue;
+      try {
         const data = typeof content.data === 'string' ? content.data : '';
         const parsed = JSON.parse(data);
         if (parsed.deckId && parsed.filename && parsed.data) {
@@ -165,6 +158,7 @@ export function createICloudSyncStorage(): SyncStorage {
         path: `${PENDING_DIR}/${pendingFilename}`,
         data: content,
         directory: Directory.Documents,
+        encoding: Encoding.UTF8,
       });
     },
 

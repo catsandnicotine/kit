@@ -118,6 +118,28 @@ function filterCompactableEdits(edits: EditFile[], cutoff: number): EditFile[] {
  * @param deletedCardIds  - Set of soft-deleted card IDs.
  * @returns A DeckSnapshot, or null on failure.
  */
+/**
+ * Build a snapshot from the current in-memory DB state.
+ * Used to persist the local snapshot at session end so edits survive
+ * app restarts even when iCloud was unavailable during the session.
+ *
+ * @param db             - Current per-deck SQLite database (fully up-to-date).
+ * @param deckId         - Deck UUID.
+ * @param watermark      - HLC of the last known edit (becomes compactedThrough).
+ * @param deletedCardIds - Set of soft-deleted card IDs.
+ * @returns A DeckSnapshot, or null on failure.
+ */
+export function snapshotCurrentState(
+  db: Database,
+  deckId: string,
+  watermark: string,
+  deletedCardIds: Set<string>,
+): DeckSnapshot | null {
+  const snap = buildSnapshot(db, deckId, [], deletedCardIds);
+  if (!snap) return null;
+  return { ...snap, compactedThrough: watermark, mergedEditFiles: [] };
+}
+
 function buildSnapshot(
   db: Database,
   deckId: string,
@@ -169,7 +191,7 @@ function buildSnapshot(
   return {
     v: 1,
     deckId,
-    compactedThrough: lastEdit.hlc,
+    compactedThrough: lastEdit?.hlc ?? '',
     mergedEditFiles: compactedEdits.map(e => `${e.hlc}.json`),
     deck,
     settings: syncSettings,

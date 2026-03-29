@@ -15,18 +15,7 @@ import type { Card } from '../types';
 import { useCardEditor } from '../hooks/useCardEditor';
 import { pillTextColor } from '../lib/tagColors';
 import { saveMediaFile, getMediaFileWebUrl } from '../lib/platform/mediaFiles';
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -53,7 +42,7 @@ interface CardEditorProps {
    */
   onMediaAdded?: (filename: string, url: string) => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
-  onSyncEdit?: (ops: import('../lib/sync/types').EditOp[]) => void;
+  onSyncEdit?: ((ops: import('../lib/sync/types').EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------

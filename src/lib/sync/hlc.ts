@@ -122,8 +122,8 @@ export function parseHLC(hlc: string): HLCComponents | null {
   // Format: {13digits}_{8chars}_{4digits}
   if (parts.length < 3) return null;
 
-  const wallMs = parseInt(parts[0], 10);
-  const counter = parseInt(parts[parts.length - 1], 10);
+  const wallMs = parseInt(parts[0]!, 10);
+  const counter = parseInt(parts[parts.length - 1]!, 10);
   // deviceId is everything between first and last underscore-separated parts
   const deviceId = parts.slice(1, -1).join('_');
 

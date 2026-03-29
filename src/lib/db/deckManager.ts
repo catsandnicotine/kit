@@ -23,16 +23,20 @@ import { createHLC, type HLCClock } from '../sync/hlc';
 import { writeEdit, flushPendingEdits } from '../sync/editWriter';
 import { readEditsAfter, readSnapshot } from '../sync/editReader';
 import { replayEdits } from '../sync/replay';
-import { compactDeck } from '../sync/compact';
+import { compactDeck, snapshotCurrentState } from '../sync/compact';
 import {
   initRegistry,
   getDeviceId,
   serializeRegistry,
   upsertDeckEntry,
-  getDeckEntry,
   getAllDeckEntries,
   reconcileWithICloud,
   updateDeckMeta,
+  getAllGlobalTags,
+  upsertGlobalTag,
+  deleteGlobalTag,
+  renameGlobalTag,
+  mergeTagsIntoGlobal,
 } from '../sync/deckRegistry';
 import { listSyncedDeckIds } from '../sync/editReader';
 import type { DeckRegistryEntry } from '../sync/types';
@@ -46,7 +50,6 @@ import {
   beginTransaction,
   commitTransaction,
   getAllDecks,
-  getCardsByDeck,
   getAllDeckCardCounts,
 } from '../db/queries';
 
@@ -61,6 +64,21 @@ export interface DeckManagerConfig {
   storage: SyncStorage;
   /** Persisted registry JSON, or null for fresh start. */
   registryJson: string | null;
+  /**
+   * Read a snapshot from local device storage (not iCloud).
+   * Used as the primary/reliable store so decks survive iCloud outages.
+   */
+  readLocalSnapshot?: (deckId: string) => Promise<string | null>;
+  /**
+   * Write a snapshot to local device storage (not iCloud).
+   * Called before (or instead of) the iCloud write.
+   */
+  writeLocalSnapshot?: (deckId: string, data: string) => Promise<void>;
+  /**
+   * Delete the local snapshot directory for a deck.
+   * Called during deck deletion to reclaim local storage.
+   */
+  deleteLocalSnapshot?: (deckId: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +97,9 @@ const watermarks = new Map<string, string>();
 let _SQL: SqlJsStatic | null = null;
 let _storage: SyncStorage | null = null;
 let _clock: HLCClock | null = null;
+let _readLocalSnapshot: ((deckId: string) => Promise<string | null>) | null = null;
+let _writeLocalSnapshot: ((deckId: string, data: string) => Promise<void>) | null = null;
+let _deleteLocalSnapshot: ((deckId: string) => Promise<void>) | null = null;
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -92,6 +113,9 @@ let _clock: HLCClock | null = null;
 export function initDeckManager(config: DeckManagerConfig): void {
   _SQL = config.SQL;
   _storage = config.storage;
+  _readLocalSnapshot = config.readLocalSnapshot ?? null;
+  _writeLocalSnapshot = config.writeLocalSnapshot ?? null;
+  _deleteLocalSnapshot = config.deleteLocalSnapshot ?? null;
 
   const reg = initRegistry(config.registryJson);
   _clock = createHLC(reg.deviceId);
@@ -136,8 +160,26 @@ export async function openDeck(deckId: string): Promise<Database | null> {
   if (!_SQL || !_storage) return null;
 
   try {
-    // Read snapshot from iCloud
-    const snapshot = await readSnapshot(_storage, deckId);
+    // Try local storage first (reliable on-device), then fall back to iCloud.
+    let snapshot: DeckSnapshot | null = null;
+    if (_readLocalSnapshot) {
+      const localData = await _readLocalSnapshot(deckId);
+      if (localData) {
+        try {
+          const parsed = JSON.parse(localData) as DeckSnapshot;
+          if (parsed.v === 1) snapshot = parsed;
+        } catch {
+          // Corrupted local snapshot — fall through to iCloud
+        }
+      }
+    }
+    if (!snapshot) {
+      snapshot = await readSnapshot(_storage, deckId);
+      // Cache the iCloud snapshot locally so future opens are reliable
+      if (snapshot && _writeLocalSnapshot) {
+        _writeLocalSnapshot(deckId, JSON.stringify(snapshot)).catch(() => {});
+      }
+    }
     if (!snapshot) return null;
 
     // Create and populate DB from snapshot
@@ -155,7 +197,7 @@ export async function openDeck(deckId: string): Promise<Database | null> {
     openDbs.set(deckId, db);
     deletedCards.set(deckId, deleted);
     watermarks.set(deckId, edits.length > 0
-      ? edits[edits.length - 1].hlc
+      ? edits[edits.length - 1]!.hlc
       : snapshot.compactedThrough);
 
     // Update registry with detailed counts
@@ -208,6 +250,42 @@ export function closeDeck(deckId: string): void {
     openDbs.delete(deckId);
     deletedCards.delete(deckId);
     watermarks.delete(deckId);
+  }
+}
+
+/**
+ * Permanently delete a deck: close its DB, soft-delete in registry, and
+ * remove all local + iCloud files.
+ *
+ * @param deckId - UUID of the deck to delete.
+ */
+export async function removeDeck(deckId: string): Promise<void> {
+  // 1. Close and evict from memory
+  closeDeck(deckId);
+
+  // 2. Mark deleted in registry (prevents reconcileWithICloud from re-adding it)
+  const { softDeleteDeck } = await import('../sync/deckRegistry');
+  softDeleteDeck(deckId);
+
+  // 3. Delete local snapshot directory
+  if (_deleteLocalSnapshot) {
+    await _deleteLocalSnapshot(deckId).catch(() => {});
+  }
+
+  // 4. Delete iCloud files (best-effort — another device may still need them,
+  //    but we delete on this device to free space; iCloud handles propagation)
+  if (_storage) {
+    // snapshot.json
+    await _storage.deleteFile(`${deckId}/snapshot.json`).catch(() => {});
+    // edit files
+    try {
+      const editFiles = await _storage.listDirectory(`${deckId}/edits`);
+      await Promise.allSettled(
+        editFiles.map(f => _storage!.deleteFile(`${deckId}/edits/${f}`)),
+      );
+    } catch {
+      // Directory may not exist — ignore
+    }
   }
 }
 
@@ -276,6 +354,15 @@ export async function compactDeckEdits(deckId: string): Promise<boolean> {
   if (!db || !_storage) return false;
 
   const deleted = deletedCards.get(deckId) ?? new Set<string>();
+
+  // Always snapshot the current in-memory DB state locally.
+  // This ensures edits from this session survive app restarts even if iCloud
+  // was unavailable and edit files are still in the pending queue.
+  if (_writeLocalSnapshot) {
+    const snap = snapshotCurrentState(db, deckId, watermarks.get(deckId) ?? '', deleted);
+    if (snap) _writeLocalSnapshot(deckId, JSON.stringify(snap)).catch(() => {});
+  }
+
   return compactDeck(_storage, db, deckId, deleted);
 }
 
@@ -299,16 +386,12 @@ export async function createDeckFromSnapshot(
     const db = buildDbFromSnapshot(_SQL, snapshot);
     if (!db) return null;
 
-    // Write snapshot to iCloud
-    const snapshotPath = `${snapshot.deckId}/snapshot.json`;
-    await _storage.writeFile(snapshotPath, JSON.stringify(snapshot));
-
-    // Track state
+    // Track state locally first — deck is usable even if iCloud write fails
     openDbs.set(snapshot.deckId, db);
     deletedCards.set(snapshot.deckId, new Set(snapshot.deletedCardIds ?? []));
     watermarks.set(snapshot.deckId, snapshot.compactedThrough);
 
-    // Update registry with detailed counts
+    // Update registry so the deck appears in the UI immediately
     const now = Math.floor(Date.now() / 1000);
     const countsResult = getAllDeckCardCounts(db, now);
     const deckCounts = countsResult.success ? countsResult.data[snapshot.deckId] : undefined;
@@ -325,6 +408,20 @@ export async function createDeckFromSnapshot(
       lastAccessedAt: now,
     });
 
+    const snapshotJson = JSON.stringify(snapshot);
+
+    // Write locally first — this is the reliable on-device copy.
+    if (_writeLocalSnapshot) {
+      await _writeLocalSnapshot(snapshot.deckId, snapshotJson).catch(() => {});
+    }
+
+    // Then write to iCloud for cross-device sync (best-effort).
+    try {
+      await _storage.writeFile(`${snapshot.deckId}/snapshot.json`, snapshotJson);
+    } catch (e) {
+      console.warn('[deckManager] iCloud snapshot write failed, deck available locally:', e);
+    }
+
     return db;
   } catch (e) {
     console.warn('[deckManager] Failed to create deck from snapshot:', e);
@@ -335,6 +432,17 @@ export async function createDeckFromSnapshot(
 // ---------------------------------------------------------------------------
 // Registry persistence
 // ---------------------------------------------------------------------------
+
+/**
+ * Get the initialized sql.js static module.
+ * Exposed so callers (e.g. the import hook) can reuse the already-compiled
+ * WASM instance instead of re-instantiating it.
+ *
+ * @returns The SqlJsStatic instance, or null if not yet initialized.
+ */
+export function getSqlStatic(): SqlJsStatic | null {
+  return _SQL;
+}
 
 /**
  * Get the serialized registry JSON for persistence.
@@ -415,6 +523,18 @@ export async function flushPendingSync(): Promise<number> {
   if (!_storage) return 0;
   return flushPendingEdits(_storage);
 }
+
+// ---------------------------------------------------------------------------
+// Global tag catalog (pass-through to deckRegistry)
+// ---------------------------------------------------------------------------
+
+export {
+  getAllGlobalTags,
+  upsertGlobalTag,
+  deleteGlobalTag,
+  renameGlobalTag,
+  mergeTagsIntoGlobal,
+};
 
 // ---------------------------------------------------------------------------
 // Internal: build a Database from a DeckSnapshot

@@ -20,24 +20,9 @@
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import { uint8ToBase64, base64ToUint8 } from './persistence';
+import { isNativePlatform } from './platformDetect';
 
 const MEDIA_ROOT = 'media';
-
-// ---------------------------------------------------------------------------
-// Environment detection
-// ---------------------------------------------------------------------------
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -207,31 +192,29 @@ export async function evictOrphanedMedia(
   activeDeckIds: Set<string>,
 ): Promise<number> {
   if (!isNativePlatform()) return 0;
-  let removed = 0;
   try {
     const result = await Filesystem.readdir({
       path: MEDIA_ROOT,
       directory: Directory.Documents,
     });
-    for (const entry of result.files) {
-      const name = typeof entry === 'string' ? entry : entry.name;
-      if (!activeDeckIds.has(name)) {
-        try {
-          await Filesystem.rmdir({
-            path: `${MEDIA_ROOT}/${name}`,
-            directory: Directory.Documents,
-            recursive: true,
-          });
-          removed++;
-        } catch {
-          // Best effort per-directory
-        }
-      }
-    }
+    const orphans = result.files
+      .map(f => typeof f === 'string' ? f : f.name)
+      .filter(name => !activeDeckIds.has(name));
+
+    const results = await Promise.allSettled(
+      orphans.map(name =>
+        Filesystem.rmdir({
+          path: `${MEDIA_ROOT}/${name}`,
+          directory: Directory.Documents,
+          recursive: true,
+        }),
+      ),
+    );
+    return results.filter(r => r.status === 'fulfilled').length;
   } catch {
     // Media root may not exist yet
+    return 0;
   }
-  return removed;
 }
 
 /**

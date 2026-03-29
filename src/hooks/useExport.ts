@@ -13,6 +13,7 @@ import { Share } from '@capacitor/share';
 import { exportDeckAsApkgFresh, exportDeckAsApkgWithProgress } from '../lib/apkg/exporter';
 import type { LoadMediaFn } from '../lib/apkg/exporter';
 import { listMediaFilenames, loadMediaFile } from '../lib/platform/mediaFiles';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -31,22 +32,6 @@ export interface UseExportReturn {
   exportDeckWithProgress: (deckId: string, deckName: string) => Promise<void>;
   /** Reset back to idle. */
   reset: () => void;
-}
-
-// ---------------------------------------------------------------------------
-// Platform detection
-// ---------------------------------------------------------------------------
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
 }
 
 // ---------------------------------------------------------------------------

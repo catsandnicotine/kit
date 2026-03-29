@@ -40,10 +40,12 @@ import {
   getExistingTagNames,
 } from '../lib/db/queries';
 import { hapticCelebration } from '../lib/platform/haptics';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 import { saveMediaFile } from '../lib/platform/mediaFiles';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
 import type { UseDeckManagerReturn } from './useDeckManager';
+import { getSqlStatic } from '../lib/db/deckManager';
 import type { DeckSnapshot, SyncDeckSettings } from '../lib/sync/types';
 import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../lib/db';
 import { runMigrations } from '../lib/db/migrations';
@@ -89,18 +91,6 @@ export interface UseDeckImportReturn {
 
 /** Number of media blobs to extract and insert per batch. */
 const MEDIA_BATCH_SIZE = 50;
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // kit_progress.json shape
@@ -176,10 +166,10 @@ export function useDeckImport(
         await new Promise((r) => setTimeout(r, 0));
 
         if (useNewArch) {
-          // Create temp in-memory DB with full schema for entity insertion
-          const initSqlJs = (await import('sql.js')).default;
-          const wasmBinary = await fetch('/sql-wasm.wasm').then(r => r.arrayBuffer());
-          const SQL = await initSqlJs({ locateFile: (f: string) => `/${f}`, wasmBinary });
+          // Reuse the already-compiled SQL module from deckManager — avoids
+          // a redundant WASM fetch + instantiation (~100-300ms on device).
+          const SQL = getSqlStatic();
+          if (!SQL) throw new Error('SQL not initialized');
           tempDb = new SQL.Database();
           tempDb.run(ENABLE_FOREIGN_KEYS);
           for (const ddl of ALL_TABLES) {
@@ -233,11 +223,22 @@ export function useDeckImport(
           const decksResult = getAllDecksQ(tempDb);
           const allDecks = decksResult.success ? decksResult.data : [];
 
+          const importedTags: Array<{ tag: string; color: string }> = [];
+
           for (const deck of allDecks) {
             const snapshot = buildSnapshotFromTempDb(tempDb, deck.id);
             if (snapshot) {
               await deckManager.createFromSnapshot(snapshot);
+              // Collect tags for global catalog
+              for (const t of snapshot.tags) {
+                importedTags.push(t);
+              }
             }
+          }
+
+          // Merge imported tags into global catalog
+          if (importedTags.length > 0) {
+            await deckManager.mergeImportedTags(importedTags);
           }
 
           // Persist registry

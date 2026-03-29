@@ -29,7 +29,7 @@ interface DeckSettingsProps {
   deckName: string;
   onBack: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
-  onSyncEdit?: (ops: EditOp[]) => void;
+  onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------

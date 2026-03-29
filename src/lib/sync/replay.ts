@@ -208,8 +208,8 @@ function replayCardEdit(
   // Read current card's updatedAt to check if this edit is newer
   try {
     const rows = db.exec('SELECT updated_at FROM cards WHERE id = ?', [op.cardId]);
-    if (!rows.length || !rows[0].values.length) return;
-    const currentUpdatedAt = Number(rows[0].values[0][0]);
+    if (!rows.length || !rows[0]!.values.length) return;
+    const currentUpdatedAt = Number(rows[0]!.values[0]![0]);
 
     if (op.updatedAt > currentUpdatedAt) {
       const front = op.fields.front;
@@ -349,8 +349,8 @@ function replayNoteEdit(
 ): void {
   try {
     const rows = db.exec('SELECT updated_at FROM notes WHERE id = ?', [op.noteId]);
-    if (!rows.length || !rows[0].values.length) return;
-    const currentUpdatedAt = Number(rows[0].values[0][0]);
+    if (!rows.length || !rows[0]!.values.length) return;
+    const currentUpdatedAt = Number(rows[0]!.values[0]![0]);
 
     if (op.updatedAt > currentUpdatedAt) {
       db.run(
@@ -381,8 +381,8 @@ function setCardStateIfNewer(db: Database, state: CardState): void {
       [state.cardId],
     );
 
-    if (rows.length && rows[0].values.length) {
-      const currentLastReview = Number(rows[0].values[0][0]) || 0;
+    if (rows.length && rows[0]!.values.length) {
+      const currentLastReview = Number(rows[0]!.values[0]![0]) || 0;
       const incomingLastReview = state.lastReview ?? 0;
       if (incomingLastReview < currentLastReview) return;
     }

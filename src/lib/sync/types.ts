@@ -13,7 +13,6 @@ import type {
   Card,
   CardState,
   Deck,
-  DeckTag,
   Note,
   NoteType,
   Rating,
@@ -247,6 +246,14 @@ export interface DeckRegistryEntry {
   deleted?: boolean;
 }
 
+/** A tag in the global catalog (stored in registry, not per-deck DB). */
+export interface GlobalTag {
+  /** Tag name (unique key). */
+  name: string;
+  /** Hex color string, e.g. '#FF3B30'. Empty string = uncoloured/greyed out. */
+  color: string;
+}
+
 /** The full deck registry. */
 export interface DeckRegistry {
   /** Format version — always 1. */
@@ -255,4 +262,6 @@ export interface DeckRegistry {
   deviceId: string;
   /** Registry entries keyed by deckId. */
   decks: Record<string, DeckRegistryEntry>;
+  /** Global tag catalog: names + colors, keyed by tag name. */
+  globalTags?: Record<string, GlobalTag>;
 }

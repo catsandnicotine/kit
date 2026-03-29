@@ -58,7 +58,7 @@ interface HomeProps {
   onBrowse: (deckId: string, deckName: string) => void;
   onStats: (deckId: string, deckName: string) => void;
   onSettings: () => void;
-  onTags: (deckId?: string, deckName?: string) => void;
+  onTags: () => void;
   onDeckSettings?: (deckId: string, deckName: string) => void;
 }
 
@@ -711,12 +711,8 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     const deckId = deletingDeck.id;
 
     if (useNewArch) {
-      deckManager.closeDeckDb(deckId);
-      // Soft-delete in registry (iCloud data stays for other devices)
-      const { softDeleteDeck: softDel } = await import('../lib/sync/deckRegistry');
-      softDel(deckId);
+      await deckManager.removeDeck(deckId);
       deleteMediaForDeck(deckId);
-      await deckManager.saveRegistry();
       await deckManager.refreshDecks();
       setDeletingDeck(null);
       return;
@@ -912,7 +908,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
                 onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
                 onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
-                onTags={() => { hapticNavigate(); onTags(deck.id, deck.name); }}
+                onTags={() => { hapticNavigate(); onTags(); }}
                 onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
                 onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
                 onSetThumbnail={() => handleSetThumbnail(deck.id)}

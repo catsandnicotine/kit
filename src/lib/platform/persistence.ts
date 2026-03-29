@@ -14,31 +14,10 @@
  */
 
 import { Filesystem, Directory } from '@capacitor/filesystem';
+import { isNativePlatform } from './platformDetect';
 
 const DB_FILENAME = 'kit.db';
 const LS_KEY = 'kit_db_snapshot';
-
-// ---------------------------------------------------------------------------
-// Environment detection
-// ---------------------------------------------------------------------------
-
-/**
- * Check if we're running on a native Capacitor platform (iOS/Android).
- * When native, we use the Filesystem plugin; otherwise we fall back to
- * localStorage for browser dev mode.
- */
-function isNativePlatform(): boolean {
-  try {
-    // Capacitor sets window.Capacitor.isNativePlatform on native builds.
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Public API
