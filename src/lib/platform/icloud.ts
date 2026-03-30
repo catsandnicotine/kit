@@ -10,6 +10,7 @@
 
 import { registerPlugin } from '@capacitor/core';
 import { uint8ToBase64, base64ToUint8 } from './persistence';
+import { isNativePlatform } from './platformDetect';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,22 +41,6 @@ interface ICloudPluginInterface {
 // ---------------------------------------------------------------------------
 
 const ICloudPlugin = registerPlugin<ICloudPluginInterface>('ICloudPlugin');
-
-// ---------------------------------------------------------------------------
-// Environment detection
-// ---------------------------------------------------------------------------
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Public API

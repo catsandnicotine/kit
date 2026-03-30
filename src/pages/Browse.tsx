@@ -5,13 +5,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
-import { getCardsByDeck, deleteCards } from '../lib/db/queries';
+import { getCardsByDeck, deleteCards, renameDeck, getAllTagsWithCounts, getTagsForDeck, type TagCount } from '../lib/db/queries';
+import { sortTagsByColor } from '../lib/tagSort';
+import { pillTextColor } from '../lib/tagColors';
 import { v4 as uuidv4 } from 'uuid';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { CardEditor } from '../components/CardEditor';
 import { ReviewPassView } from '../components/ReviewPassView';
 import { hapticAgain, hapticTap } from '../lib/platform/haptics';
 import { persistAndBackup } from '../hooks/useDatabase';
+import type { EditOp } from '../lib/sync/types';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,6 +31,8 @@ interface BrowseProps {
   deckId: string;
   deckName: string;
   onBack: () => void;
+  /** Callback to emit sync edit operations (new per-deck architecture). */
+  onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,7 +55,7 @@ function CardFacePreview({ html }: { html: string }) {
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <div
-        className="browse-card-preview card-content bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-md overflow-hidden relative"
+        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-md overflow-hidden relative"
         style={{ minHeight: '4.5rem' }}
       >
         <div ref={ref} className="px-2 py-1.5 text-xs leading-relaxed" />
@@ -80,7 +85,7 @@ function CardPreviewRow({
 
   return (
     <div
-      className={`flex items-center border-b border-border-light dark:border-border-dark transition-colors ${
+      className={`flex items-center border-b border-[#E5E5E5] dark:border-[#262626] transition-colors ${
         selected ? 'bg-blue-50 dark:bg-blue-950/30' : ''
       }`}
     >
@@ -122,7 +127,7 @@ function CardPreviewRow({
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
+export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: BrowseProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
@@ -143,23 +148,66 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const { rewriteHtml } = useDeckMedia(db, deckId);
+  // Inline title editing
+  const [currentDeckName, setCurrentDeckName] = useState(deckName);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+
+  const handleTitleSave = useCallback(() => {
+    const name = titleDraft.trim();
+    setEditingTitle(false);
+    if (!name || !db || name === currentDeckName) return;
+    const now = Math.floor(Date.now() / 1000);
+    const result = renameDeck(db, deckId, name, now);
+    if (result.success) {
+      setCurrentDeckName(name);
+      if (onSyncEdit) {
+        onSyncEdit([{ type: 'deck_rename', name }]);
+      } else {
+        persistAndBackup();
+      }
+    }
+  }, [db, deckId, titleDraft, currentDeckName, onSyncEdit]);
+
+  const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
+
+  const loadCardsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadCards = useCallback(() => {
+    if (loadCardsTimer.current) clearTimeout(loadCardsTimer.current);
     if (!db) return;
-    const result = getCardsByDeck(db, deckId);
-    if (result.success) setCards(result.data);
+    // Defer card loading by one tick so the Browse page renders before we
+    // block the thread with the full card query.
+    loadCardsTimer.current = setTimeout(() => {
+      loadCardsTimer.current = null;
+      console.time('[Browse] getCardsByDeck');
+      const result = getCardsByDeck(db, deckId);
+      console.timeEnd('[Browse] getCardsByDeck');
+      if (result.success) setCards(result.data);
+    }, 0);
   }, [db, deckId]);
 
   useEffect(() => { loadCards(); }, [loadCards]);
+  useEffect(() => () => { if (loadCardsTimer.current) clearTimeout(loadCardsTimer.current); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [search, activeTagFilters, sortByTag]);
 
-  // All unique tags across the deck's cards
-  const allTags = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of cards) for (const t of c.tags) if (t) set.add(t);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [cards]);
+  // All tags (global, sorted by color) for the filter bar
+  const [allTags, setAllTags] = useState<TagCount[]>([]);
+  const loadAllTags = useCallback(() => {
+    if (!db) return;
+    const result = getAllTagsWithCounts(db);
+    if (result.success) setAllTags(sortTagsByColor(result.data));
+  }, [db]);
+  useEffect(() => { loadAllTags(); }, [loadAllTags]);
+
+  // Deck-level tags (only tags added to this deck) for card editing
+  const [deckTags, setDeckTags] = useState<TagCount[]>([]);
+  const loadDeckTags = useCallback(() => {
+    if (!db) return;
+    const result = getTagsForDeck(db, deckId);
+    if (result.success) setDeckTags(sortTagsByColor(result.data));
+  }, [db, deckId]);
+  useEffect(() => { loadDeckTags(); }, [loadDeckTags]);
 
   const filtered = useMemo(() => {
     let list = cards;
@@ -239,11 +287,15 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
     const ids = Array.from(selectedIds);
     const result = deleteCards(db, ids);
     if (result.success) {
-      persistAndBackup();
+      if (onSyncEdit) {
+        onSyncEdit(ids.map(cardId => ({ type: 'card_delete' as const, cardId })));
+      } else {
+        persistAndBackup();
+      }
       setCards(prev => prev.filter(c => !selectedIds.has(c.id)));
       exitSelection();
     }
-  }, [db, selectedIds, exitSelection]);
+  }, [db, selectedIds, exitSelection, onSyncEdit]);
 
   const handleReviewSelected = useCallback(() => {
     const toReview = cards.filter(c => selectedIds.has(c.id));
@@ -268,7 +320,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
     return (
       <ReviewPassView
         cards={reviewPassCards}
-        contextLabel={deckName}
+        contextLabel={currentDeckName}
         rewriteHtml={rewriteHtml}
         onDone={() => setReviewPassCards(null)}
       />
@@ -278,10 +330,10 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
   const selectedCount = selectedIds.size;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-background-light dark:bg-background-dark text-text-light dark:text-text-dark">
+    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
-        className="flex items-center gap-3 pb-3 border-b border-border-light dark:border-border-dark shrink-0"
+        className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
           paddingTop: 'env(safe-area-inset-top)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
@@ -290,23 +342,49 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
       >
         <button
           onClick={() => { hapticTap(); selectionMode ? exitSelection() : onBack(); }}
-          className="text-sm text-text-muted shrink-0"
+          className="text-sm text-[#C4C4C4] shrink-0"
         >
           {selectionMode ? 'Cancel' : '← Back'}
         </button>
-        <span className="text-sm font-semibold truncate flex-1">
-          {selectionMode
-            ? selectedCount > 0 ? `${selectedCount} selected` : 'Select cards'
-            : deckName}
-        </span>
+        {editingTitle && !selectionMode ? (
+          <input
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            value={titleDraft}
+            onChange={e => setTitleDraft(e.target.value)}
+            onBlur={handleTitleSave}
+            onKeyDown={e => {
+              if (e.key === 'Enter') handleTitleSave();
+              if (e.key === 'Escape') setEditingTitle(false);
+            }}
+            className="flex-1 text-sm font-semibold bg-transparent border-b border-[#1c1c1e] dark:border-[#E5E5E5] outline-none text-[#1c1c1e] dark:text-[#E5E5E5] min-w-0"
+          />
+        ) : selectionMode ? (
+          <span className="flex-1 text-sm font-semibold truncate text-[#1c1c1e] dark:text-[#E5E5E5]">
+            {selectedCount > 0 ? `${selectedCount} selected` : 'Select cards'}
+          </span>
+        ) : (
+          <button
+            onClick={() => { setTitleDraft(currentDeckName); setEditingTitle(true); }}
+            className="flex-1 flex items-center gap-1.5 min-w-0 text-left"
+          >
+            <span className="text-sm font-semibold truncate text-[#1c1c1e] dark:text-[#E5E5E5] border-b border-dashed border-[#C4C4C4]">
+              {currentDeckName}
+            </span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+        )}
         {!selectionMode && (
           <>
-            <span className="text-xs text-text-muted shrink-0">
+            <span className="text-xs text-[#C4C4C4] shrink-0">
               {filtered.length} {filtered.length === 1 ? 'card' : 'cards'}
             </span>
             <button
               onClick={() => { hapticTap(); setSelectionMode(true); }}
-              className="text-xs font-medium text-text-muted shrink-0 px-1"
+              className="text-xs font-medium text-[#C4C4C4] shrink-0 px-1"
             >
               Select
             </button>
@@ -323,7 +401,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
 
       {/* Search + sort bar */}
       <div
-        className="py-2 border-b border-border-light dark:border-border-dark shrink-0 flex items-center gap-2"
+        className="py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0 flex items-center gap-2"
         style={{
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -333,7 +411,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search cards or tags…"
-          className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
+          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
         />
         {allTags.length > 0 && (
           <button
@@ -341,7 +419,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
             className={`shrink-0 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
               sortByTag
                 ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
-                : 'text-text-muted border-border-light dark:border-border-dark'
+                : 'text-[#C4C4C4] border-[#E5E5E5] dark:border-[#262626]'
             }`}
           >
             Tag ↕
@@ -352,33 +430,38 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
       {/* Tag filter chips */}
       {allTags.length > 0 && (
         <div
-          className="flex gap-2 overflow-x-auto py-2 border-b border-border-light dark:border-border-dark shrink-0"
+          className="flex gap-2 overflow-x-auto py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
             scrollbarWidth: 'none',
           }}
         >
-          {allTags.map(tag => (
-            <button
-              key={tag}
-              onClick={() => toggleTagFilter(tag)}
-              className={`shrink-0 px-3 py-1 text-xs rounded-full border transition-colors ${
-                activeTagFilters.includes(tag)
-                  ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
-                  : 'text-text-muted border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark'
-              }`}
-            >
-              {tag}
-            </button>
-          ))}
+          {allTags.map(tc => {
+            const isActive = activeTagFilters.includes(tc.tag);
+            const bg = tc.color || '#8E8E93';
+            const textColor = tc.color ? pillTextColor(tc.color) : '#ffffff';
+            return (
+              <button
+                key={tc.tag}
+                onClick={() => toggleTagFilter(tc.tag)}
+                className="shrink-0 px-3 py-1 text-xs rounded-full transition-all active:scale-95"
+                style={isActive
+                  ? { background: bg, color: textColor, boxShadow: `0 0 0 2px var(--kit-bg), 0 0 0 4px ${bg}` }
+                  : { background: bg, color: textColor, opacity: 0.45 }
+                }
+              >
+                {tc.tag}
+              </button>
+            );
+          })}
         </div>
       )}
 
       {/* Selection toolbar */}
       {selectionMode && selectedCount > 0 && (
         <div
-          className="flex items-center gap-2 py-2 border-b border-border-light dark:border-border-dark shrink-0"
+          className="flex items-center gap-2 py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -401,7 +484,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
             <div className="flex flex-1 gap-1">
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="flex-1 py-2 text-sm border border-border-light dark:border-border-dark rounded-lg text-text-muted"
+                className="flex-1 py-2 text-sm border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#C4C4C4]"
               >
                 Cancel
               </button>
@@ -423,7 +506,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
       >
         {filtered.length === 0 && (
           <div className="px-4 py-12 text-center">
-            <p className="text-sm text-text-muted">
+            <p className="text-sm text-[#C4C4C4]">
               {search.trim() || activeTagFilters.length > 0
                 ? 'No cards match your filters'
                 : 'No cards in this deck'}
@@ -431,10 +514,10 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
           </div>
         )}
         {filtered.length > 0 && (
-          <div className="flex items-center px-4 pt-3 pb-1 border-b border-border-light dark:border-border-dark">
-            <span className="flex-1 text-[10px] font-medium text-text-muted uppercase tracking-wider">Front</span>
+          <div className="flex items-center px-4 pt-3 pb-1 border-b border-[#E5E5E5] dark:border-[#262626]">
+            <span className="flex-1 text-[10px] font-medium text-[#C4C4C4] uppercase tracking-wider">Front</span>
             <div className="w-px h-3 bg-border-light dark:bg-border-dark mx-3" />
-            <span className="flex-1 text-[10px] font-medium text-text-muted uppercase tracking-wider">Back</span>
+            <span className="flex-1 text-[10px] font-medium text-[#C4C4C4] uppercase tracking-wider">Back</span>
           </div>
         )}
         {visible.map(card => (
@@ -451,7 +534,7 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
         {hasMore && (
           <button
             onClick={() => setVisibleCount(prev => prev + PAGE_SIZE)}
-            className="w-full py-3 text-sm text-text-muted border-b border-border-light dark:border-border-dark"
+            className="w-full py-3 text-sm text-[#C4C4C4] border-b border-[#E5E5E5] dark:border-[#262626]"
           >
             Show more ({filtered.length - visibleCount} remaining)
           </button>
@@ -468,7 +551,9 @@ export default function Browse({ db, deckId, deckName, onBack }: BrowseProps) {
           onDelete={handleEditorDelete}
           onDismiss={() => { setEditingCard(null); setIsNewCard(false); }}
           isNew={isNewCard}
-          allTags={allTags}
+          deckTags={deckTags}
+          onMediaAdded={addMediaFile}
+          onSyncEdit={onSyncEdit}
         />
       )}
     </div>

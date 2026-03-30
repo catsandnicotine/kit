@@ -20,11 +20,12 @@ import type { Database } from 'sql.js';
 import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../lib/db';
 import { runMigrations } from '../lib/db/migrations';
-import { configureSqlJsPath } from '../lib/apkg';
+import { configureSqlJsPath, configureWasmBinary } from '../lib/apkg';
 import {
   loadDatabaseSnapshot,
   saveDatabaseSnapshot,
 } from '../lib/platform/persistence';
+import { migrateMediaBlobsToFiles } from '../lib/platform/mediaFiles';
 import { seedWelcomeDeck } from '../lib/db/welcomeDeck';
 import {
   checkForBackup,
@@ -63,7 +64,9 @@ export function persistDatabase(): void {
     _debounceTimer = null;
     if (!_db) return;
     try {
+      console.time('[db] export');
       const data = _db.export();
+      console.timeEnd('[db] export');
       saveDatabaseSnapshot(data);
     } catch (e) {
       console.warn('[useDatabase] Failed to persist database:', e);
@@ -108,6 +111,13 @@ export interface UseDatabaseReturn {
   /** Non-empty string if initialisation failed. */
   error: string;
   /**
+   * True when the on-disk snapshot is too large to safely load (would OOM
+   * the WKWebView process). The UI should offer a data-reset path.
+   */
+  dbTooLarge: boolean;
+  /** Wipe the on-disk snapshot and all media files, then reload. */
+  resetDatabase: () => Promise<void>;
+  /**
    * Non-null when no local DB exists but an iCloud backup was found.
    * The UI should prompt the user to restore or skip.
    */
@@ -128,6 +138,7 @@ export function useDatabase(): UseDatabaseReturn {
   const [db, setDb] = useState<Database | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [dbTooLarge, setDbTooLarge] = useState(false);
   const [icloudBackupAvailable, setIcloudBackupAvailable] = useState<BackupMeta | null>(null);
   const [sqlRef, setSqlRef] = useState<SqlJsStatic | null>(null);
 
@@ -139,13 +150,29 @@ export function useDatabase(): UseDatabaseReturn {
         const locateFile = (file: string) => `/${file}`;
         configureSqlJsPath(locateFile);
 
-        const SQL = await initSqlJs({ locateFile });
+        // Pre-fetch the WASM binary before calling initSqlJs.
+        // On Capacitor iOS, WKURLSchemeHandler serves .wasm without
+        // Content-Type: application/wasm, causing WebAssembly.instantiateStreaming
+        // to fail. The ArrayBuffer fallback then also fails because the iOS
+        // networking process hasn't finished launching at cold start.
+        // Handing the bytes directly to sql.js bypasses both fetch attempts.
+        const wasmBinary = await fetch('/sql-wasm.wasm').then(r => r.arrayBuffer());
+        configureWasmBinary(wasmBinary);
+        const SQL = await initSqlJs({ locateFile, wasmBinary });
         if (cancelled) return;
         setSqlRef(SQL);
 
         // Try to restore a previously-persisted database.
         const snapshot = await loadDatabaseSnapshot();
         if (cancelled) return;
+
+        if (snapshot === 'too_large') {
+          // Snapshot is too large to load safely — would OOM WKWebView.
+          // Surface the error so the UI can offer a reset path.
+          setDbTooLarge(true);
+          setLoading(false);
+          return;
+        }
 
         if (snapshot) {
           // Local snapshot found — use it directly.
@@ -158,6 +185,9 @@ export function useDatabase(): UseDatabaseReturn {
           _db = database;
           setDb(database);
           setLoading(false);
+          // One-time async migration: extract media BLOBs to the filesystem
+          // so future snapshots won't be bloated by binary data.
+          migrateMediaBlobsToFiles(database, saveDatabaseSnapshot).catch(() => {});
           return;
         }
 
@@ -252,5 +282,20 @@ export function useDatabase(): UseDatabaseReturn {
     setDb(database);
   }, [sqlRef]);
 
-  return { db, loading, error, icloudBackupAvailable, acceptRestore, declineRestore };
+  // ── Reset database (for the too-large / crash-loop case) ────────────
+  const resetDatabase = useCallback(async () => {
+    try {
+      const { Filesystem, Directory } = await import('@capacitor/filesystem');
+      try {
+        await Filesystem.deleteFile({ path: 'kit.db', directory: Directory.Documents });
+      } catch { /* file may not exist */ }
+      try {
+        await Filesystem.rmdir({ path: 'media', directory: Directory.Documents, recursive: true });
+      } catch { /* directory may not exist */ }
+    } catch { /* Filesystem not available in browser */ }
+    // Reload the page so useDatabase re-initialises from scratch.
+    window.location.reload();
+  }, []);
+
+  return { db, loading, error, dbTooLarge, resetDatabase, icloudBackupAvailable, acceptRestore, declineRestore };
 }

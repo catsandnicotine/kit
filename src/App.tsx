@@ -1,9 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
-import { useDatabase } from './hooks/useDatabase';
-import { useBackup } from './hooks/useBackup';
+import { useDeckManager } from './hooks/useDeckManager';
+import { useSync } from './hooks/useSync';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
+import type { Database } from 'sql.js';
+import type { EditOp } from './lib/sync/types';
 
 // Lazy-loaded pages — keeps KaTeX, Konva, and other heavy deps out of the
 // initial chunk so the WKWebView doesn't OOM during database init.
@@ -25,7 +27,7 @@ type Route =
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
   | { page: 'settings' }
-  | { page: 'tags'; deckId?: string; deckName?: string };
+  | { page: 'tags' };
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -72,80 +74,28 @@ function Onboarding({ onDismiss }: { onDismiss: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
-// iCloud restore prompt
-// ---------------------------------------------------------------------------
-
-function ICloudRestorePrompt({
-  cardCount,
-  timestamp,
-  onRestore,
-  onSkip,
-}: {
-  cardCount: number;
-  timestamp: number;
-  onRestore: () => void;
-  onSkip: () => void;
-}) {
-  const date = new Date(timestamp * 1000);
-  const formatted = date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  return (
-    <div
-      className="min-h-screen bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex items-center justify-center"
-      style={{
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-        paddingLeft: 'max(1.5rem, env(safe-area-inset-left))',
-        paddingRight: 'max(1.5rem, env(safe-area-inset-right))',
-      }}
-    >
-      <div className="max-w-sm w-full bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-xl p-6 flex flex-col gap-4">
-        <h2 className="text-base font-semibold text-center">iCloud Backup Found</h2>
-        <p className="text-sm text-[#C4C4C4] text-center">
-          A backup with {cardCount} {cardCount === 1 ? 'card' : 'cards'} from {formatted} was
-          found in iCloud Drive. Would you like to restore it?
-        </p>
-        <button
-          onClick={onRestore}
-          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
-        >
-          Restore Backup
-        </button>
-        <button
-          onClick={onSkip}
-          className="w-full py-3 text-sm text-[#C4C4C4] active:text-[#1c1c1e] dark:active:text-[#E5E5E5] transition-colors"
-        >
-          Start Fresh
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // App inner (has access to theme context)
 // ---------------------------------------------------------------------------
 
 function AppInner() {
-  const {
-    db,
-    loading: dbLoading,
-    error: dbError,
-    icloudBackupAvailable,
-    acceptRestore,
-    declineRestore,
-  } = useDatabase();
-
-  // Initialize the backup system — sets up the module-level _backupDb reference
-  // so that scheduleICloudBackup() works from any hook.
-  useBackup(db);
+  const deckManager = useDeckManager();
+  const { loading, error, deckEntries } = deckManager;
 
   const [route, setRoute] = useState<Route>({ page: 'home' });
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const navSeqRef = useRef(0);
+
+  // Per-deck database for the currently active deck-scoped page.
+  // Opened when navigating to a deck page, closed when returning home.
+  const [activeDeckDb, setActiveDeckDb] = useState<Database | null>(null);
+
+  const currentDeckId = 'deckId' in route ? route.deckId : undefined;
+
+  // Real-time iCloud sync — watches for edits from other devices.
+  const { status: syncStatus } = useSync(
+    loading ? null : deckManager,
+    currentDeckId,
+  );
 
   // Check if this is the first launch
   useEffect(() => {
@@ -167,49 +117,84 @@ function AppInner() {
     }
   }, []);
 
-  const goHome = useCallback(() => setRoute({ page: 'home' }), []);
+  const finalizeDeck = useCallback((deckId: string) => {
+    deckManager.refreshCounts(deckId);
+    deckManager.compact(deckId).catch(() => {});
+    deckManager.saveRegistry().catch(() => {});
+  }, [deckManager]);
 
-  const goStudy = useCallback((deckId: string, deckName: string) => {
-    setRoute({ page: 'study', deckId, deckName });
-  }, []);
+  const goHome = useCallback(() => {
+    navSeqRef.current++; // Cancel any in-flight navigateToDeck
+    if (currentDeckId) {
+      finalizeDeck(currentDeckId);
+    }
+    setActiveDeckDb(null);
+    setRoute({ page: 'home' });
+    deckManager.refreshDecks();
+  }, [currentDeckId, deckManager, finalizeDeck]);
 
-  const goBrowse = useCallback((deckId: string, deckName: string) => {
-    setRoute({ page: 'browse', deckId, deckName });
-  }, []);
+  const navigateToDeck = useCallback(
+    (page: Route['page'], deckId: string, deckName: string) => {
+      const seq = ++navSeqRef.current;
 
-  const goStats = useCallback((deckId: string, deckName: string) => {
-    setRoute({ page: 'stats', deckId, deckName });
-  }, []);
+      // Navigate immediately — the screen shows its loading skeleton while the
+      // database hydrates in the background. Only clear the old DB when coming
+      // from Home (no prior deck); deck-to-deck keeps the old content visible
+      // until the new DB arrives, avoiding an empty flash.
+      if (!currentDeckId) setActiveDeckDb(null);
+      setRoute({ page, deckId, deckName } as Route);
 
-  const goDeckSettings = useCallback((deckId: string, deckName: string) => {
-    setRoute({ page: 'deck-settings', deckId, deckName });
-  }, []);
+      console.time(`[nav] openDeckDb(${deckName})`);
+      deckManager.openDeckDb(deckId).then(db => {
+        console.timeEnd(`[nav] openDeckDb(${deckName})`);
+        if (seq !== navSeqRef.current) return; // Superseded by goHome or another tap
+        setActiveDeckDb(db);
+      }).catch(() => {
+        console.timeEnd(`[nav] openDeckDb(${deckName})`);
+      });
+    },
+    [deckManager, currentDeckId],
+  );
+
+  const goStudy = useCallback(
+    (deckId: string, deckName: string) => navigateToDeck('study', deckId, deckName),
+    [navigateToDeck],
+  );
+
+  const goBrowse = useCallback(
+    (deckId: string, deckName: string) => navigateToDeck('browse', deckId, deckName),
+    [navigateToDeck],
+  );
+
+  const goStats = useCallback(
+    (deckId: string, deckName: string) => navigateToDeck('stats', deckId, deckName),
+    [navigateToDeck],
+  );
 
   const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
 
-  const goTags = useCallback((deckId?: string, deckName?: string) => {
-    setRoute({
-      page: 'tags',
-      ...(deckId !== undefined ? { deckId } : {}),
-      ...(deckName !== undefined ? { deckName } : {}),
-    });
+  const goTags = useCallback(() => {
+    setRoute({ page: 'tags' });
   }, []);
+
+  const goDeckSettings = useCallback(
+    (deckId: string, deckName: string) => navigateToDeck('deck-settings', deckId, deckName),
+    [navigateToDeck],
+  );
+
+  const handleSessionComplete = useCallback(() => {
+    if (currentDeckId) finalizeDeck(currentDeckId);
+  }, [currentDeckId, finalizeDeck]);
+  const handleSyncEdit = useMemo(() => {
+    if (!currentDeckId) return undefined;
+    return (ops: EditOp[]) => {
+      deckManager.writeEdit(currentDeckId, ops).catch(() => {});
+    };
+  }, [currentDeckId, deckManager]);
 
   // ── Onboarding (first launch) ────────────────────────────────────────
   if (showOnboarding) {
     return <Onboarding onDismiss={dismissOnboarding} />;
-  }
-
-  // ── iCloud restore prompt (first launch only) ────────────────────────
-  if (icloudBackupAvailable && !db) {
-    return (
-      <ICloudRestorePrompt
-        cardCount={icloudBackupAvailable.cardCount}
-        timestamp={icloudBackupAvailable.timestamp}
-        onRestore={acceptRestore}
-        onSkip={declineRestore}
-      />
-    );
   }
 
   const pageFallback = (
@@ -222,10 +207,12 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <Study
-          db={db}
+          db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onExit={goHome}
+          onSyncEdit={handleSyncEdit}
+          onSessionComplete={handleSessionComplete}
         />
       </Suspense>
     );
@@ -235,10 +222,11 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <Browse
-          db={db}
+          db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onBack={goHome}
+          onSyncEdit={handleSyncEdit}
         />
       </Suspense>
     );
@@ -248,7 +236,7 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <DeckStats
-          db={db}
+          db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onBack={goHome}
@@ -261,10 +249,11 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <DeckSettings
-          db={db}
+          db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onBack={goHome}
+          onSyncEdit={handleSyncEdit}
         />
       </Suspense>
     );
@@ -273,7 +262,7 @@ function AppInner() {
   if (route.page === 'settings') {
     return (
       <Suspense fallback={pageFallback}>
-        <Settings db={db} onBack={goHome} />
+        <Settings db={activeDeckDb} onBack={goHome} />
       </Suspense>
     );
   }
@@ -282,9 +271,7 @@ function AppInner() {
     return (
       <Suspense fallback={pageFallback}>
         <TagBrowser
-          db={db}
-          {...(route.deckId !== undefined ? { deckId: route.deckId } : {})}
-          {...(route.deckName !== undefined ? { deckName: route.deckName } : {})}
+          deckManager={deckManager}
           onBack={goHome}
         />
       </Suspense>
@@ -293,15 +280,18 @@ function AppInner() {
 
   return (
     <Home
-      db={db}
-      dbLoading={dbLoading}
-      dbError={dbError}
+      db={null}
+      dbLoading={loading}
+      dbError={error}
+      deckEntries={deckEntries}
+      deckManager={deckManager}
+      syncStatus={syncStatus}
       onStudy={goStudy}
       onBrowse={goBrowse}
       onStats={goStats}
-      onDeckSettings={goDeckSettings}
       onSettings={goSettings}
       onTags={goTags}
+      onDeckSettings={goDeckSettings}
     />
   );
 }

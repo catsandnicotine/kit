@@ -17,6 +17,7 @@ import {
 } from '../lib/db/queries';
 import { persistDatabase } from '../hooks/useDatabase';
 import { hapticTap } from '../lib/platform/haptics';
+import type { EditOp } from '../lib/sync/types';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -27,6 +28,8 @@ interface DeckSettingsProps {
   deckId: string;
   deckName: string;
   onBack: () => void;
+  /** Callback to emit sync edit operations (new per-deck architecture). */
+  onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +265,7 @@ const LEECH_OPTIONS = [0, 4, 6, 8, 10, 12, 15, 20]; // 0 = disabled
  * @param deckName - Human-readable deck name.
  * @param onBack   - Navigate back.
  */
-export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSettingsProps) {
+export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit }: DeckSettingsProps) {
   const [settings, setSettings] = useState<DeckSettingsType | null>(null);
   const [limit, setLimit] = useState(20);
   const [maxReviews, setMaxReviews] = useState(200);
@@ -290,6 +293,15 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     }
   }, [db, deckId]);
 
+  /** Persist after a settings change — emits sync edit or falls back to old path. */
+  const persistSettingsChange = useCallback((partial: Partial<DeckSettingsType>) => {
+    if (onSyncEdit) {
+      onSyncEdit([{ type: 'deck_settings', settings: partial }]);
+    } else {
+      persistDatabase();
+    }
+  }, [onSyncEdit]);
+
   /** Save all learning-related settings at once. */
   const saveLearningSettings = useCallback((
     newSteps: number[],
@@ -300,9 +312,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = setDeckLearningSteps(db, deckId, newSteps, grad, easy);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, againSteps: newSteps, graduatingInterval: grad, easyInterval: easy } : prev);
-      persistDatabase();
+      persistSettingsChange({ againSteps: newSteps, graduatingInterval: grad, easyInterval: easy });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   const handleSaveLimit = useCallback((val: number) => {
     if (!db) return;
@@ -310,9 +322,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = setNewCardsPerDay(db, deckId, val);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, newCardsPerDay: val } : prev);
-      persistDatabase();
+      persistSettingsChange({ newCardsPerDay: val });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   const handleSaveMaxReviews = useCallback((val: number) => {
     if (!db) return;
@@ -320,9 +332,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = setDeckSetting(db, deckId, 'max_reviews_per_day', val);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, maxReviewsPerDay: val } : prev);
-      persistDatabase();
+      persistSettingsChange({ maxReviewsPerDay: val });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   const handleSaveMaxInterval = useCallback((val: number) => {
     if (!db) return;
@@ -330,9 +342,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = setDeckSetting(db, deckId, 'max_interval', val);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, maxInterval: val } : prev);
-      persistDatabase();
+      persistSettingsChange({ maxInterval: val });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   const handleSaveLeechThreshold = useCallback((val: number) => {
     if (!db) return;
@@ -340,9 +352,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = setDeckSetting(db, deckId, 'leech_threshold', val);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, leechThreshold: val } : prev);
-      persistDatabase();
+      persistSettingsChange({ leechThreshold: val });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   const handleSaveRetention = useCallback((val: number) => {
     if (!db) return;
@@ -350,9 +362,9 @@ export default function DeckSettings({ db, deckId, deckName, onBack }: DeckSetti
     const result = saveDesiredRetention(db, deckId, val);
     if (result.success) {
       setSettings(prev => prev ? { ...prev, desiredRetention: val } : prev);
-      persistDatabase();
+      persistSettingsChange({ desiredRetention: val });
     }
-  }, [db, deckId]);
+  }, [db, deckId, persistSettingsChange]);
 
   if (!settings) {
     return (

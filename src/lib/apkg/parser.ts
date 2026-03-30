@@ -159,6 +159,12 @@ export interface ParsedApkgLazy {
 let wasmLocator: (filename: string) => string = (f) => f;
 
 /**
+ * Pre-loaded WASM binary. When set, passed directly to initSqlJs so it never
+ * needs to fetch the file itself — bypassing Capacitor iOS MIME-type issues.
+ */
+let wasmBinaryCache: ArrayBuffer | undefined;
+
+/**
  * Configure how sql.js resolves its WASM binary.
  * Call once at application startup before any .apkg parsing.
  *
@@ -172,6 +178,17 @@ export function configureSqlJsPath(locateFile: (filename: string) => string): vo
 }
 
 /**
+ * Store a pre-fetched WASM binary so that initSqlJs calls in the parser and
+ * exporter can skip fetching entirely. Call once at app startup alongside
+ * configureSqlJsPath.
+ *
+ * @param binary - The raw sql-wasm.wasm bytes.
+ */
+export function configureWasmBinary(binary: ArrayBuffer): void {
+  wasmBinaryCache = binary;
+}
+
+/**
  * Get the currently configured WASM locator function.
  * Used by the exporter to reuse the same configuration.
  *
@@ -179,6 +196,16 @@ export function configureSqlJsPath(locateFile: (filename: string) => string): vo
  */
 export function getSqlJsLocator(): (filename: string) => string {
   return wasmLocator;
+}
+
+/**
+ * Get the pre-loaded WASM binary, if one has been configured.
+ * Used by the exporter to reuse the same binary.
+ *
+ * @returns The cached WASM binary, or undefined if not pre-loaded.
+ */
+export function getWasmBinary(): ArrayBuffer | undefined {
+  return wasmBinaryCache;
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +240,7 @@ export async function parseApkg(
     // 3. Load sql.js
     let SQL: Awaited<ReturnType<typeof initSqlJs>>;
     try {
-      SQL = await initSqlJs({ locateFile: wasmLocator });
+      SQL = await initSqlJs({ locateFile: wasmLocator, ...(wasmBinaryCache && { wasmBinary: wasmBinaryCache }) });
     } catch (e) {
       return { success: false, error: `Failed to load sql.js WASM: ${String(e)}` };
     }
@@ -291,7 +318,7 @@ export async function parseApkgLazy(
     // Load sql.js
     let SQL: Awaited<ReturnType<typeof initSqlJs>>;
     try {
-      SQL = await initSqlJs({ locateFile: wasmLocator });
+      SQL = await initSqlJs({ locateFile: wasmLocator, ...(wasmBinaryCache && { wasmBinary: wasmBinaryCache }) });
     } catch (e) {
       return { success: false, error: `Failed to load sql.js WASM: ${String(e)}` };
     }

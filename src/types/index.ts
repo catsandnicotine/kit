@@ -112,6 +112,13 @@ export type Rating = 'again' | 'hard' | 'good' | 'easy';
 
 export type LearningState = 'new' | 'learning' | 'review' | 'relearning';
 
+/** A deck-level tag association (many-to-many). */
+export interface DeckTag {
+  deckId: string;
+  tag: string;
+  createdAt: number;
+}
+
 export type Theme = 'light' | 'dark' | 'black';
 
 /** A single daily reminder time (24-hour clock). */

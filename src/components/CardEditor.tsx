@@ -13,6 +13,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { useCardEditor } from '../hooks/useCardEditor';
+import { pillTextColor } from '../lib/tagColors';
+import { saveMediaFile, getMediaFileWebUrl } from '../lib/platform/mediaFiles';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -31,8 +34,15 @@ interface CardEditorProps {
   onDismiss: () => void;
   /** If true, this is a new card being created (not editing existing). */
   isNew?: boolean;
-  /** Existing tags in the deck — used for autocomplete suggestions. */
-  allTags?: string[];
+  /** Tags available in this deck — shown as toggle pills for card tagging. */
+  deckTags?: import('../lib/db/queries').TagCount[];
+  /**
+   * Called after a user-inserted image is saved to the filesystem so the
+   * caller can update its media URL cache and display the image immediately.
+   */
+  onMediaAdded?: (filename: string, url: string) => void;
+  /** Callback to emit sync edit operations (new per-deck architecture). */
+  onSyncEdit?: ((ops: import('../lib/sync/types').EditOp[]) => void) | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,9 +262,8 @@ function MediaInventory({
 // Component
 // ---------------------------------------------------------------------------
 
-export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew, allTags = [] }: CardEditorProps) {
-  const editor = useCardEditor(db, card, isNew);
-  const [tagInput, setTagInput] = useState('');
+export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew, deckTags = [], onMediaAdded, onSyncEdit }: CardEditorProps) {
+  const editor = useCardEditor(db, card, isNew, onSyncEdit);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState('');
 
@@ -262,6 +271,8 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
   const backRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const imageTargetRef = useRef<'front' | 'back'>('back');
+  /** Maps capacitor:// URL → filename for user-inserted images (native only). */
+  const userInsertedRef = useRef<Map<string, string>>(new Map());
 
   // ── Media references ────────────────────────────────────────────────────
 
@@ -334,27 +345,51 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
   // ── Image insertion ─────────────────────────────────────────────────────
 
   const handleImageFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
       e.target.value = '';
 
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === 'string') {
-          const target = imageTargetRef.current === 'front' ? frontRef.current : backRef.current;
-          if (!target) return;
-          target.focus();
-          const img = document.createElement('img');
-          img.src = reader.result;
-          img.style.maxWidth = '100%';
-          target.appendChild(img);
-          editor.markContentDirty();
-        }
-      };
-      reader.readAsDataURL(file);
+      if (isNativePlatform()) {
+        // Save to filesystem — avoids embedding large base64 data URIs in the DB.
+        const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+        const filename = `user_${crypto.randomUUID()}.${ext}`;
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        await saveMediaFile(card.deckId, filename, bytes);
+        const url = await getMediaFileWebUrl(card.deckId, filename);
+        if (!url) return;
+
+        userInsertedRef.current.set(url, filename);
+        onMediaAdded?.(filename, url);
+
+        const target = imageTargetRef.current === 'front' ? frontRef.current : backRef.current;
+        if (!target) return;
+        target.focus();
+        const img = document.createElement('img');
+        img.src = url;
+        img.style.maxWidth = '100%';
+        target.appendChild(img);
+        editor.markContentDirty();
+      } else {
+        // Browser dev mode: embed as data URI (no Capacitor filesystem).
+        const reader = new FileReader();
+        reader.onload = () => {
+          if (typeof reader.result === 'string') {
+            const target = imageTargetRef.current === 'front' ? frontRef.current : backRef.current;
+            if (!target) return;
+            target.focus();
+            const img = document.createElement('img');
+            img.src = reader.result;
+            img.style.maxWidth = '100%';
+            target.appendChild(img);
+            editor.markContentDirty();
+          }
+        };
+        reader.readAsDataURL(file);
+      }
     },
-    [editor],
+    [editor, card.deckId, onMediaAdded],
   );
 
   const handleAddImage = useCallback(
@@ -370,9 +405,14 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
     let front = frontRef.current?.innerHTML ?? card.front;
     let back = backRef.current?.innerHTML ?? card.back;
 
-    // Convert blob: URLs back to original filenames for storage
-    front = unrewriteHtml(front, reverseMap);
-    back = unrewriteHtml(back, reverseMap);
+    // Convert blob: / capacitor: URLs back to filenames for storage.
+    // Merge the static reverse map (from rewriteHtml) with any URLs for
+    // images the user inserted during this editing session.
+    const fullReverseMap = userInsertedRef.current.size > 0
+      ? new Map([...reverseMap, ...userInsertedRef.current])
+      : reverseMap;
+    front = unrewriteHtml(front, fullReverseMap);
+    back = unrewriteHtml(back, fullReverseMap);
 
     // Re-inject [sound:] tags that were stripped for display
     const frontSounds = frontRefs.filter(r => r.type === 'sound');
@@ -401,22 +441,6 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
     }
   }, [editor, onDelete]);
 
-  const handleAddTag = useCallback(() => {
-    if (tagInput.trim()) {
-      editor.addTag(tagInput);
-      setTagInput('');
-    }
-  }, [editor, tagInput]);
-
-  const handleTagKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleAddTag();
-      }
-    },
-    [handleAddTag],
-  );
 
   return (
     <>
@@ -517,64 +541,39 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
           {/* Back Media Inventory */}
           <MediaInventory refs={backRefs} side="Back" rewriteHtml={rewriteHtml} />
 
-          {/* Tags */}
-          <div>
-            <label className="block text-xs font-medium text-text-muted mb-1">
-              Tags
-            </label>
-            <div className="flex flex-wrap gap-1.5 mb-2">
-              {editor.tags.map((tag, i) => (
-                <button
-                  key={`${tag}-${i}`}
-                  onClick={() => editor.removeTag(i)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 text-xs bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-full text-text-light dark:text-text-dark"
-                >
-                  {tag}
-                  <span className="text-text-muted">&times;</span>
-                </button>
-              ))}
-            </div>
-            <div className="relative">
-              <div className="flex gap-2">
-                <input
-                  value={tagInput}
-                  onChange={e => setTagInput(e.target.value)}
-                  onKeyDown={handleTagKeyDown}
-                  placeholder="Add tag..."
-                  className="flex-1 px-3 py-1.5 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark"
-                  autoComplete="off"
-                />
-                <button
-                  onClick={handleAddTag}
-                  disabled={!tagInput.trim()}
-                  className="px-3 py-1.5 text-sm font-medium text-accent-light dark:text-accent-dark disabled:opacity-40"
-                >
-                  Add
-                </button>
+          {/* Tags — toggle pills from deck's tag list */}
+          {deckTags.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-text-muted mb-2">Tags</label>
+              <div className="flex flex-wrap gap-1.5">
+                {deckTags.map(tc => {
+                  const isOn = editor.tags.includes(tc.tag);
+                  const bg = tc.color || '#9E9E9E';
+                  const textCol = tc.color ? pillTextColor(tc.color) : '#ffffff';
+                  return (
+                    <button
+                      key={tc.tag}
+                      onClick={() => {
+                        if (isOn) {
+                          const idx = editor.tags.indexOf(tc.tag);
+                          if (idx !== -1) editor.removeTag(idx);
+                        } else {
+                          editor.addTag(tc.tag);
+                        }
+                      }}
+                      className="px-2.5 py-1 text-xs rounded-full transition-all active:scale-95"
+                      style={isOn
+                        ? { background: bg, color: textCol, boxShadow: `0 0 0 2px var(--kit-bg), 0 0 0 3.5px ${bg}` }
+                        : { background: bg, color: textCol, opacity: 0.35 }
+                      }
+                    >
+                      {tc.tag}
+                    </button>
+                  );
+                })}
               </div>
-              {/* Autocomplete dropdown */}
-              {tagInput.trim() && (() => {
-                const q = tagInput.trim().toLowerCase();
-                const suggestions = allTags.filter(
-                  t => t.toLowerCase().includes(q) && !editor.tags.includes(t),
-                );
-                return suggestions.length > 0 ? (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-10 bg-[var(--kit-surface)] border border-border-light dark:border-border-dark rounded-lg overflow-hidden shadow-lg">
-                    {suggestions.slice(0, 6).map(s => (
-                      <button
-                        key={s}
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => { editor.addTag(s); setTagInput(''); }}
-                        className="w-full text-left px-3 py-2 text-sm text-text-light dark:text-text-dark hover:bg-[#F0F0F0] dark:hover:bg-[#262626] border-b border-border-light dark:border-border-dark last:border-b-0"
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                ) : null;
-              })()}
             </div>
-          </div>
+          )}
 
           {/* Delete Card */}
           {isNew ? null : !showDeleteConfirm ? (

@@ -35,10 +35,30 @@ import {
   insertNoteType,
   insertReviewLog,
   setCardState,
+  upsertTagColor,
+  addTagToDeck,
+  getExistingTagNames,
 } from '../lib/db/queries';
 import { hapticCelebration } from '../lib/platform/haptics';
+import { isNativePlatform } from '../lib/platform/platformDetect';
+import { saveMediaFile } from '../lib/platform/mediaFiles';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
+import type { UseDeckManagerReturn } from './useDeckManager';
+import { getSqlStatic } from '../lib/db/deckManager';
+import type { DeckSnapshot, SyncDeckSettings } from '../lib/sync/types';
+import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../lib/db';
+import { runMigrations } from '../lib/db/migrations';
+import {
+  getAllDecks as getAllDecksQ,
+  getCardsByDeck as getCardsByDeckQ,
+  getCardStatesByDeck,
+  getReviewLogsByDeck,
+  getNoteTypesByDeck,
+  getNotesByDeck,
+  getDeckSettings,
+  getTagsForDeck,
+} from '../lib/db/queries';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -89,13 +109,15 @@ interface KitProgressData {
 /**
  * Hook that drives the .apkg import pipeline.
  *
- * @param db         - sql.js Database instance (null while loading).
- * @param onComplete - Called after a successful import with the new deck ID.
+ * @param db          - sql.js Database instance (null while loading or when using new arch).
+ * @param onComplete  - Called after a successful import with the new deck ID.
+ * @param deckManager - Optional deck manager for per-deck architecture.
  * @returns Import state and actions.
  */
 export function useDeckImport(
   db: Database | null,
   onComplete?: (deckId: string) => void,
+  deckManager?: UseDeckManagerReturn,
 ): UseDeckImportReturn {
   const [phase, setPhase] = useState<ImportPhase>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -111,7 +133,8 @@ export function useDeckImport(
 
   const importFile = useCallback(
     async (file: File) => {
-      if (!db) {
+      const useNewArch = !!deckManager;
+      if (!db && !useNewArch) {
         setPhase('error');
         setErrorMessage('Database is not ready yet. Please try again.');
         return;
@@ -119,10 +142,12 @@ export function useDeckImport(
       if (busyRef.current) return;
       busyRef.current = true;
 
+      // For new arch: create a temporary in-memory DB for import
+      let tempDb: Database | null = null;
+      let workDb: Database;
+
       try {
         // ── Phase 1: Parsing ──────────────────────────────────────────────
-        // Uses parseApkgLazy so media blobs stay in the ZIP — only metadata
-        // is extracted into memory.
         setPhase('parsing');
         setErrorMessage('');
 
@@ -137,12 +162,26 @@ export function useDeckImport(
         const parsed = parseResult.data;
 
         // ── Phase 2: Storing cards ────────────────────────────────────────
-        // Entire entity graph is inserted inside one transaction.
-        // Yield to let React paint the phase indicator before blocking.
         setPhase('storing-cards');
         await new Promise((r) => setTimeout(r, 0));
 
-        // Check for embedded Kit progress data (ignored by Anki Desktop).
+        if (useNewArch) {
+          // Reuse the already-compiled SQL module from deckManager — avoids
+          // a redundant WASM fetch + instantiation (~100-300ms on device).
+          const SQL = getSqlStatic();
+          if (!SQL) throw new Error('SQL not initialized');
+          tempDb = new SQL.Database();
+          tempDb.run(ENABLE_FOREIGN_KEYS);
+          for (const ddl of ALL_TABLES) {
+            tempDb.run(ddl);
+          }
+          runMigrations(tempDb);
+          workDb = tempDb;
+        } else {
+          workDb = db!;
+        }
+
+        // Check for embedded Kit progress data
         let progressData: KitProgressData | undefined;
         try {
           const progressFile = parsed.zip.file('kit_progress.json');
@@ -155,27 +194,60 @@ export function useDeckImport(
           // Not a Kit-exported deck — silently ignore.
         }
 
-        const storeResult = storeEntities(db, parsed, progressData);
+        const storeResult = storeEntities(workDb, parsed, progressData);
         if (!storeResult.success) {
           setPhase('error');
           setErrorMessage(storeResult.error);
           busyRef.current = false;
+          if (tempDb) try { tempDb.close(); } catch { /* ignore */ }
           return;
         }
 
-        const deckId = storeResult.data;
+        const primaryDeckId = storeResult.data;
 
         // ── Phase 3: Storing media in batches ─────────────────────────────
-        // Each batch: extract N blobs from the ZIP → insert → release.
         setPhase('storing-media');
         await new Promise((r) => setTimeout(r, 0));
 
-        const mediaResult = await storeMediaBatched(db, parsed, deckId);
+        const mediaResult = await storeMediaBatched(workDb, parsed, primaryDeckId);
         if (!mediaResult.success) {
           setPhase('error');
           setErrorMessage(mediaResult.error);
           busyRef.current = false;
+          if (tempDb) try { tempDb.close(); } catch { /* ignore */ }
           return;
+        }
+
+        // ── New arch: build snapshots and create per-deck DBs ─────────────
+        if (useNewArch && tempDb) {
+          const decksResult = getAllDecksQ(tempDb);
+          const allDecks = decksResult.success ? decksResult.data : [];
+
+          const importedTags: Array<{ tag: string; color: string }> = [];
+
+          for (const deck of allDecks) {
+            const snapshot = buildSnapshotFromTempDb(tempDb, deck.id);
+            if (snapshot) {
+              await deckManager.createFromSnapshot(snapshot);
+              // Collect tags for global catalog
+              for (const t of snapshot.tags) {
+                importedTags.push(t);
+              }
+            }
+          }
+
+          // Merge imported tags into global catalog
+          if (importedTags.length > 0) {
+            await deckManager.mergeImportedTags(importedTags);
+          }
+
+          // Persist registry
+          await deckManager.saveRegistry();
+          await deckManager.refreshDecks();
+
+          // Clean up temp DB
+          try { tempDb.close(); } catch { /* ignore */ }
+          tempDb = null;
         }
 
         // ── Done ──────────────────────────────────────────────────────────
@@ -190,18 +262,23 @@ export function useDeckImport(
             : `${cardCount} cards, no media`,
         );
         setPhase('done');
-        persistDatabase();
-        scheduleICloudBackup();
+
+        if (!useNewArch) {
+          persistDatabase();
+          scheduleICloudBackup();
+        }
+
         hapticCelebration();
-        onComplete?.(deckId);
+        onComplete?.(primaryDeckId);
       } catch (e) {
         setPhase('error');
         setErrorMessage(`Import failed unexpectedly: ${String(e)}`);
+        if (tempDb) try { tempDb.close(); } catch { /* ignore */ }
       } finally {
         busyRef.current = false;
       }
     },
-    [db, onComplete],
+    [db, deckManager, onComplete],
   );
 
   return { phase, errorMessage, importInfo, importFile, reset };
@@ -223,11 +300,45 @@ export function useDeckImport(
  * @param parsed - Lazily-parsed .apkg data (no media blobs in memory).
  * @returns The primary deck ID on success, or an error.
  */
+/**
+ * Resolve imported tag names against existing tags to avoid collisions.
+ * If "animals" already exists, the new tag becomes "animals (2)", etc.
+ *
+ * @param importedTags - Unique tags from the imported deck.
+ * @param existing     - Currently known tag names in tag_colors.
+ * @returns Map from original tag name → resolved (possibly renamed) tag name.
+ */
+function resolveTagNames(importedTags: string[], existing: Set<string>): Map<string, string> {
+  const resolved = new Map<string, string>();
+  const claimed = new Set(existing);
+  for (const tag of importedTags) {
+    if (!claimed.has(tag)) {
+      resolved.set(tag, tag);
+      claimed.add(tag);
+    } else {
+      let n = 2;
+      while (claimed.has(`${tag} (${n})`)) n++;
+      const newName = `${tag} (${n})`;
+      resolved.set(tag, newName);
+      claimed.add(newName);
+    }
+  }
+  return resolved;
+}
+
 function storeEntities(
   db: Database,
   parsed: ParsedApkgLazy,
   progressData?: KitProgressData,
 ): Result<string> {
+  // Collect unique tags from all imported notes before starting the transaction.
+  const rawTags = new Set<string>();
+  for (const pn of parsed.notes) {
+    for (const t of pn.tags) rawTags.add(t);
+  }
+  const existingTagNames = getExistingTagNames(db);
+  const tagRenameMap = resolveTagNames([...rawTags], existingTagNames);
+
   const txn = beginTransaction(db);
   if (!txn.success) return txn;
 
@@ -339,7 +450,7 @@ function storeEntities(
         deckId: primaryDeckId,
         noteTypeId: kitNoteTypeId,
         fields,
-        tags: pn.tags,
+        tags: pn.tags.map(t => tagRenameMap.get(t) ?? t),
         createdAt: pn.createdAt || now,
         updatedAt: now,
       };
@@ -394,7 +505,7 @@ function storeEntities(
         noteId: kitNoteId,
         front,
         back,
-        tags: parsedNote.tags,
+        tags: parsedNote.tags.map(t => tagRenameMap.get(t) ?? t),
         createdAt: parsedNote.createdAt || now,
         updatedAt: now,
       };
@@ -428,6 +539,12 @@ function storeEntities(
           }
         }
       }
+    }
+
+    // ── Tags: create in tag_colors (greyed out) + associate with deck ─────
+    for (const resolvedTag of tagRenameMap.values()) {
+      upsertTagColor(db, resolvedTag, '', now);
+      addTagToDeck(db, primaryDeckId, resolvedTag, now);
     }
 
     const commit = commitTransaction(db);
@@ -474,31 +591,40 @@ async function storeMediaBatched(
     return { success: true, data: { storedCount: 0, totalBytes: 0 } };
   }
 
+  const native = isNativePlatform();
   const now = Math.floor(Date.now() / 1000);
   let storedCount = 0;
   let totalBytes = 0;
 
-  // Wrap all media inserts in a single transaction
-  const txn = beginTransaction(db);
-  if (!txn.success) return txn;
+  // On non-native (browser dev), store blobs in the DB as before.
+  // On native, write to the filesystem to avoid bloating the SQLite snapshot.
+  let txn: Result<void> | undefined;
+  if (!native) {
+    txn = beginTransaction(db);
+    if (!txn.success) return txn;
+  }
 
   try {
     for (let i = 0; i < mediaManifest.length; i += MEDIA_BATCH_SIZE) {
       const batch = await extractMediaBatch(zip, mediaManifest, i, MEDIA_BATCH_SIZE, mediaIsCompressed);
 
       for (const pm of batch) {
-        const media: Media = {
-          id: uuidv4(),
-          deckId,
-          filename: pm.filename,
-          data: pm.data,
-          mimeType: pm.mimeType,
-          createdAt: now,
-        };
-        const r = insertMedia(db, media);
-        if (!r.success) {
-          rollbackTransaction(db);
-          return r;
+        if (native) {
+          await saveMediaFile(deckId, pm.filename, pm.data);
+        } else {
+          const media: Media = {
+            id: uuidv4(),
+            deckId,
+            filename: pm.filename,
+            data: pm.data,
+            mimeType: pm.mimeType,
+            createdAt: now,
+          };
+          const r = insertMedia(db, media);
+          if (!r.success) {
+            rollbackTransaction(db);
+            return r;
+          }
         }
         storedCount++;
         totalBytes += pm.data.byteLength;
@@ -506,12 +632,14 @@ async function storeMediaBatched(
       // Batch references go out of scope here → GC can reclaim blob memory
     }
 
-    const commit = commitTransaction(db);
-    if (!commit.success) return commit;
+    if (!native) {
+      const commit = commitTransaction(db);
+      if (!commit.success) return commit;
+    }
 
     return { success: true, data: { storedCount, totalBytes } };
   } catch (e) {
-    rollbackTransaction(db);
+    if (!native) rollbackTransaction(db);
     return { success: false, error: `Failed to store media: ${String(e)}` };
   }
 }
@@ -540,6 +668,91 @@ function friendlyParseError(raw: string): string {
     return 'Failed to load the database engine. Please reload the app and try again.';
   }
   return `Import error: ${raw}`;
+}
+
+/**
+ * Build a DeckSnapshot from a temporary in-memory database after import.
+ * Used by the new per-deck architecture to create per-deck snapshots.
+ *
+ * @param db     - Temporary in-memory database with imported data.
+ * @param deckId - The Kit deck UUID to extract.
+ * @returns A DeckSnapshot, or null on failure.
+ */
+function buildSnapshotFromTempDb(
+  db: Database,
+  deckId: string,
+): DeckSnapshot | null {
+  const decksResult = getAllDecksQ(db);
+  if (!decksResult.success) return null;
+  const deck = decksResult.data.find(d => d.id === deckId);
+  if (!deck) return null;
+
+  const cardsResult = getCardsByDeckQ(db, deckId);
+  if (!cardsResult.success) return null;
+
+  const statesResult = getCardStatesByDeck(db, deckId);
+  const cardStates = statesResult.success ? statesResult.data : [];
+
+  const logsResult = getReviewLogsByDeck(db, deckId);
+  const reviewLogs = logsResult.success ? logsResult.data : [];
+
+  const notesResult = getNotesByDeck(db, deckId);
+  const notes = notesResult.success ? notesResult.data : [];
+
+  const noteTypesResult = getNoteTypesByDeck(db, deckId);
+  const noteTypes = noteTypesResult.success ? noteTypesResult.data : [];
+
+  const settingsResult = getDeckSettings(db, deckId);
+  const settings: SyncDeckSettings = settingsResult.success
+    ? {
+        deckId,
+        newCardsPerDay: settingsResult.data.newCardsPerDay,
+        maxReviewsPerDay: settingsResult.data.maxReviewsPerDay,
+        againSteps: settingsResult.data.againSteps,
+        graduatingInterval: settingsResult.data.graduatingInterval,
+        easyInterval: settingsResult.data.easyInterval,
+        maxInterval: settingsResult.data.maxInterval,
+        leechThreshold: settingsResult.data.leechThreshold,
+        desiredRetention: settingsResult.data.desiredRetention,
+      }
+    : {
+        deckId,
+        newCardsPerDay: 20,
+        maxReviewsPerDay: 200,
+        againSteps: [1, 10],
+        graduatingInterval: 1,
+        easyInterval: 4,
+        maxInterval: 36500,
+        leechThreshold: 8,
+        desiredRetention: 0.9,
+      };
+
+  const tagsResult = getTagsForDeck(db, deckId);
+  const tags = tagsResult.success ? tagsResult.data : [];
+
+  return {
+    v: 1,
+    deckId,
+    compactedThrough: '',
+    mergedEditFiles: [],
+    deck,
+    settings,
+    noteTypes,
+    notes,
+    cards: cardsResult.data,
+    cardStates,
+    reviewLogs: reviewLogs.map(log => ({
+      id: log.id,
+      cardId: log.cardId,
+      rating: log.rating,
+      reviewedAt: log.reviewedAt,
+      elapsed: log.elapsed,
+      scheduledDays: log.scheduledDays,
+    })),
+    tags: tags.map(t => ({ tag: t.tag, color: t.color ?? '' })),
+    deckTags: tags.map(t => t.tag),
+    deletedCardIds: [],
+  };
 }
 
 /**

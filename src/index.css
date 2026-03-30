@@ -14,6 +14,12 @@
     -webkit-font-smoothing: antialiased;
   }
 
+  /* Eliminate 300ms tap delay in WKWebView on all interactive elements.
+     The viewport meta tag alone isn't always sufficient in Capacitor. */
+  button, a, [role="button"], input, select, textarea, label {
+    touch-action: manipulation;
+  }
+
   body {
     overscroll-behavior: none;
     -webkit-user-select: none;

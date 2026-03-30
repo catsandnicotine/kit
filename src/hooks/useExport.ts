@@ -11,6 +11,9 @@ import type { Result } from '../types';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { exportDeckAsApkgFresh, exportDeckAsApkgWithProgress } from '../lib/apkg/exporter';
+import type { LoadMediaFn } from '../lib/apkg/exporter';
+import { listMediaFilenames, loadMediaFile } from '../lib/platform/mediaFiles';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -32,22 +35,6 @@ export interface UseExportReturn {
 }
 
 // ---------------------------------------------------------------------------
-// Platform detection
-// ---------------------------------------------------------------------------
-
-function isNativePlatform(): boolean {
-  try {
-    return !!(
-      typeof window !== 'undefined' &&
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window as any).Capacitor?.isNativePlatform?.()
-    );
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
 
@@ -66,11 +53,32 @@ export function useExport(db: Database | null): UseExportReturn {
     setErrorMessage('');
   }, []);
 
+  // Build a filesystem-backed media loader for native exports.
+  const nativeMediaLoader: LoadMediaFn = useCallback(async (deckId: string) => {
+    const filenames = await listMediaFilenames(deckId);
+    const result = [];
+    for (const filename of filenames) {
+      const data = await loadMediaFile(deckId, filename);
+      if (data) {
+        // Infer a basic mime type from the extension.
+        const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+        const mimeMap: Record<string, string> = {
+          jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
+          gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml',
+          mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4',
+          mp4: 'video/mp4', webm: 'video/webm',
+        };
+        result.push({ filename, data, mimeType: mimeMap[ext] ?? 'application/octet-stream' });
+      }
+    }
+    return result;
+  }, []);
+
   const runExport = useCallback(
     async (
       deckId: string,
       deckName: string,
-      exporter: (db: Database, id: string) => Promise<Result<Blob>>,
+      exporter: (db: Database, id: string, loadMedia?: LoadMediaFn) => Promise<Result<Blob>>,
     ) => {
       if (!db) {
         setPhase('error');
@@ -81,8 +89,10 @@ export function useExport(db: Database | null): UseExportReturn {
       setPhase('exporting');
       setErrorMessage('');
 
+      const mediaLoader = isNativePlatform() ? nativeMediaLoader : undefined;
+
       try {
-        const result = await exporter(db, deckId);
+        const result = await exporter(db, deckId, mediaLoader);
         if (!result.success) {
           setPhase('error');
           setErrorMessage(result.error);
@@ -112,12 +122,14 @@ export function useExport(db: Database | null): UseExportReturn {
   );
 
   const exportDeckFresh = useCallback(
-    (deckId: string, deckName: string) => runExport(deckId, deckName, exportDeckAsApkgFresh),
+    (deckId: string, deckName: string) =>
+      runExport(deckId, deckName, exportDeckAsApkgFresh as (db: Database, id: string, loadMedia?: LoadMediaFn) => Promise<Result<Blob>>),
     [runExport],
   );
 
   const exportDeckWithProgress = useCallback(
-    (deckId: string, deckName: string) => runExport(deckId, deckName, exportDeckAsApkgWithProgress),
+    (deckId: string, deckName: string) =>
+      runExport(deckId, deckName, exportDeckAsApkgWithProgress as (db: Database, id: string, loadMedia?: LoadMediaFn) => Promise<Result<Blob>>),
     [runExport],
   );
 

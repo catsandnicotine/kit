@@ -14,6 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import { getMediaFilenames, getMediaBlobByFilename } from '../lib/db/queries';
 import { rewriteMediaUrls } from '../lib/media';
+import { listMediaFilenames, getMediaDirUri, mediaUriToWebUrl } from '../lib/platform/mediaFiles';
+import { isNativePlatform } from '../lib/platform/platformDetect';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -30,6 +32,14 @@ export interface UseDeckMediaReturn {
   rewriteHtml: (html: string) => string;
   /** True while media filenames are being loaded from the database. */
   loading: boolean;
+  /**
+   * Register a newly saved media file so it resolves immediately via rewriteHtml.
+   * Call this after saving a user-inserted image during card editing.
+   *
+   * @param filename - Media filename (e.g. "user_abc.jpg").
+   * @param url      - Web-accessible URL (capacitor:// or blob:).
+   */
+  addMediaFile: (filename: string, url: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,10 +68,10 @@ export function useDeckMedia(
   /** Stable ref to the db for use in the rewrite callback. */
   const dbRef = useRef<Database | null>(null);
 
-  // Revoke all current object URLs.
+  // Revoke all blob: URLs (capacitor:// URLs are not object URLs, skip them).
   const revokeAll = useCallback(() => {
     for (const url of urlCacheRef.current.values()) {
-      URL.revokeObjectURL(url);
+      if (url.startsWith('blob:')) URL.revokeObjectURL(url);
     }
     urlCacheRef.current = new Map();
     knownFilesRef.current = new Set();
@@ -73,20 +83,39 @@ export function useDeckMedia(
     setLoading(true);
     dbRef.current = db;
 
-    if (!db) {
-      setLoading(false);
-      return;
-    }
+    let cancelled = false;
 
-    // Only fetch filenames — no blob data loaded here.
-    const result = getMediaFilenames(db);
-    if (result.success) {
-      knownFilesRef.current = result.data;
+    if (isNativePlatform()) {
+      // On native: load filenames + directory URI from the filesystem, then
+      // pre-populate the URL cache with capacitor:// URLs so resolveUrl is sync.
+      (async () => {
+        const [filenames, dirUri] = await Promise.all([
+          listMediaFilenames(deckId),
+          getMediaDirUri(deckId),
+        ]);
+        if (cancelled) return;
+        knownFilesRef.current = new Set(filenames);
+        if (dirUri) {
+          for (const filename of filenames) {
+            urlCacheRef.current.set(filename, mediaUriToWebUrl(dirUri, filename));
+          }
+        }
+        setLoading(false);
+      })();
+    } else {
+      // Browser dev mode: use DB blobs as before.
+      if (db) {
+        const result = getMediaFilenames(db);
+        if (result.success) knownFilesRef.current = result.data;
+      }
+      setLoading(false);
     }
-    setLoading(false);
 
     // Revoke on unmount or before next effect run.
-    return revokeAll;
+    return () => {
+      cancelled = true;
+      revokeAll();
+    };
   }, [db, deckId, revokeAll]);
 
   /**
@@ -120,6 +149,11 @@ export function useDeckMedia(
     return objectUrl;
   }, []);
 
+  const addMediaFile = useCallback((filename: string, url: string) => {
+    knownFilesRef.current.add(filename);
+    urlCacheRef.current.set(filename, url);
+  }, []);
+
   const rewriteHtml = useCallback(
     (html: string): string => {
       // Build a lazy proxy map that resolves URLs on demand
@@ -138,5 +172,5 @@ export function useDeckMedia(
     [resolveUrl],
   );
 
-  return { rewriteHtml, loading };
+  return { rewriteHtml, loading, addMediaFile };
 }
