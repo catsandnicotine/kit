@@ -18,11 +18,11 @@ export default {
       },
       colors: {
         background: {
-          dark: '#0A0A0A',
+          dark: '#1a1a1a',
           light: '#FAFAFA',
         },
         surface: {
-          dark: '#141414',
+          dark: '#252525',
           light: '#FFFFFF',
         },
         text: {

@@ -128,9 +128,13 @@ function StepsEditor({
       ) : (
         <button
           onClick={() => setIsAdding(true)}
-          className="flex items-center justify-center w-8 h-8 rounded-lg border border-dashed border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4] text-xl leading-none"
+          className="p-1.5 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+          aria-label="Add step"
         >
-          +
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="4" x2="12" y2="20" />
+            <line x1="4" y1="12" x2="20" y2="12" />
+          </svg>
         </button>
       )}
     </div>
@@ -444,21 +448,24 @@ export default function Settings({ db, onBack }: SettingsProps) {
   ];
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] page-enter">
       {/* Header */}
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
-          paddingTop: 'env(safe-area-inset-top)',
+          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
         <button
           onClick={() => { hapticTap(); onBack(); }}
-          className="text-sm font-medium text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors mr-3"
+          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+          aria-label="Back"
         >
-          ← Back
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
         </button>
         <span className="text-base font-bold">
           Settings
