@@ -679,7 +679,7 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         <header
           className="flex items-center gap-3 shrink-0"
           style={{
-            paddingTop: 'env(safe-area-inset-top)',
+            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
             paddingBottom: '0.5rem',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -687,9 +687,10 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
+            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+            aria-label="Back"
           >
-            ← Back
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
         </header>
         <div className="flex-1 flex items-center justify-center">
@@ -705,7 +706,7 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         <header
           className="flex items-center gap-3 shrink-0"
           style={{
-            paddingTop: 'env(safe-area-inset-top)',
+            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
             paddingBottom: '0.5rem',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -713,9 +714,10 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
+            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+            aria-label="Back"
           >
-            ← Back
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
         </header>
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
@@ -731,16 +733,17 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         <header
           className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
-            paddingTop: 'env(safe-area-inset-top)',
+            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="text-sm font-medium text-[#C4C4C4] shrink-0"
+            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+            aria-label="Back"
           >
-            &larr; Back
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
           <span className="text-sm font-semibold truncate">
             {deckName ?? 'Study'}
@@ -769,7 +772,7 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
       <header
         className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
         style={{
-          paddingTop: 'env(safe-area-inset-top)',
+          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
           paddingBottom: '0.5rem',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -777,9 +780,10 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
       >
         <button
           onClick={() => { hapticTap(); onExit?.(); }}
-          className="text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0"
+          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+          aria-label="Back"
         >
-          ← Back
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
         <span className="text-sm font-medium text-[#C4C4C4] dark:text-[#C4C4C4] truncate flex-1 text-center">
           {deckName ?? 'Study'}

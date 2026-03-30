@@ -39,6 +39,8 @@ import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics'
 import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
 import { PixelCat } from '../components/PixelCat';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
+import { TabBar, TAB_BAR_TOTAL_HEIGHT } from '../components/TabBar';
+import type { AppMode } from '../App';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -54,7 +56,12 @@ interface HomeProps {
   deckManager?: import('../hooks/useDeckManager').UseDeckManagerReturn;
   /** iCloud sync status indicator. */
   syncStatus?: import('../hooks/useSync').SyncStatus;
+  /** Current app mode (learn vs review). */
+  mode: AppMode;
+  /** Called when user switches tabs. */
+  onModeChange: (mode: AppMode) => void;
   onStudy: (deckId: string, deckName: string) => void;
+  onReviewStudy: (deckId: string, deckName: string) => void;
   onBrowse: (deckId: string, deckName: string) => void;
   onStats: (deckId: string, deckName: string) => void;
   onSettings: () => void;
@@ -97,6 +104,7 @@ function PlusIcon() {
   );
 }
 
+
 const IMPORT_LABELS: Record<string, string> = {
   parsing: 'Parsing .apkg file…',
   'storing-cards': 'Storing cards — this may take a moment for large decks…',
@@ -138,14 +146,15 @@ function DeckActionMenu({
         ···
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-10 min-w-[180px] bg-[#FDFBF7] dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 z-10 min-w-[200px] w-max bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden dropdown-enter">
           <button
             onClick={() => { setOpen(false); onBrowse(); }}
             className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <rect x="2" y="5" width="20" height="14" rx="2" />
-              <line x1="2" y1="10" x2="22" y2="10" />
+              <rect x="3" y="4" width="18" height="16" rx="2" fill="currentColor" fillOpacity="0.12" />
+              <line x1="7" y1="10" x2="17" y2="10" />
+              <line x1="7" y1="14" x2="13" y2="14" />
             </svg>
             Cards
           </button>
@@ -232,6 +241,7 @@ function DeckRow({
   counts,
   thumbnail,
   matchedTag,
+  mode,
   onTap,
   onBrowse,
   onStats,
@@ -246,6 +256,7 @@ function DeckRow({
   counts: DeckCardCounts | undefined;
   thumbnail: string | undefined;
   matchedTag?: string;
+  mode: AppMode;
   onTap: () => void;
   onBrowse: () => void;
   onStats: () => void;
@@ -271,13 +282,13 @@ function DeckRow({
           className="flex-1 text-left px-4 py-3 flex items-center active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors min-w-0 gap-3"
         >
           {/* Thumbnail */}
-          {thumbnail ? (
+          {thumbnail && (
             <img
               src={thumbnail}
               alt=""
               className="w-10 h-10 rounded-lg object-cover shrink-0"
             />
-          ) : null}
+          )}
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
             <span
               className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] truncate"
@@ -289,12 +300,17 @@ function DeckRow({
               {matchedTag ? `Contains: ${matchedTag}` : `${totalCount} ${totalCount === 1 ? 'card' : 'cards'}`}
             </span>
           </div>
-          {totalCount > 0 && (
+          {mode === 'learn' && totalCount > 0 && (
             <div className="flex gap-2 ml-4 shrink-0 text-sm font-semibold tabular-nums">
               <span className="text-blue-500">{newCount}</span>
               <span className="text-red-500">{learningCount}</span>
               <span className="text-green-500">{reviewCount}</span>
             </div>
+          )}
+          {mode === 'review' && totalCount > 0 && (
+            <span className="ml-4 shrink-0 text-sm font-bold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums">
+              {totalCount}
+            </span>
           )}
         </button>
         <DeckActionMenu
@@ -309,8 +325,8 @@ function DeckRow({
         />
       </div>
 
-      {/* Progress bar */}
-      {totalCount > 0 && (
+      {/* Progress bar — only in Learn mode */}
+      {mode === 'learn' && totalCount > 0 && (
         <div className="px-4 pb-2 pt-0.5">
           <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
             <div
@@ -349,7 +365,7 @@ function PlusMenu({
         <PlusIcon />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] bg-[#FDFBF7] dark:bg-[#1A1A1A] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden dropdown-enter">
           <button
             onClick={() => { setOpen(false); onCreateDeck(); }}
             className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
@@ -385,7 +401,7 @@ function SelectorFab({
       {/* Dim backdrop */}
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/25"
+          className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
           onClick={close}
         />
       )}
@@ -393,7 +409,7 @@ function SelectorFab({
       <div
         className="fixed z-50 flex flex-col items-start gap-2.5"
         style={{
-          bottom: 'max(1.5rem, env(safe-area-inset-bottom))',
+          bottom: 'calc(56px + env(safe-area-inset-bottom) + 1.5rem)',
           left: 'max(1rem, env(safe-area-inset-left))',
         }}
       >
@@ -402,7 +418,8 @@ function SelectorFab({
           <>
             <button
               onClick={() => { close(); hapticNavigate(); onTags(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              style={{ animationDelay: '0.04s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
@@ -412,7 +429,8 @@ function SelectorFab({
             </button>
             <button
               onClick={() => { close(); hapticNavigate(); onSettings(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              style={{ animationDelay: '0s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3" />
@@ -430,8 +448,8 @@ function SelectorFab({
           aria-label="Actions"
         >
           <svg
-            width="20" height="20" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" strokeWidth="3"
+            width="24" height="24" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2.5"
             strokeLinecap="round" strokeLinejoin="round"
             style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
           >
@@ -468,7 +486,7 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, onStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
@@ -479,12 +497,17 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   // Search / sort state
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOrder, setSortOrder] = useState<'alpha' | 'alpha-desc' | 'due'>('alpha');
+  const [sortOrder, setSortOrder] = useState<'alpha' | 'alpha-desc' | 'due' | 'recent'>('alpha');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
+
+  // Default sort order per mode
+  useEffect(() => {
+    setSortOrder(mode === 'review' ? 'recent' : 'alpha');
+  }, [mode]);
 
   // ── Synthesize decks + counts from registry entries (new arch) ──────
   useEffect(() => {
@@ -551,6 +574,8 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       combined.sort((a, b) => a.deck.name.localeCompare(b.deck.name));
     } else if (sortOrder === 'alpha-desc') {
       combined.sort((a, b) => b.deck.name.localeCompare(a.deck.name));
+    } else if (sortOrder === 'recent') {
+      combined.sort((a, b) => (b.deck.updatedAt ?? 0) - (a.deck.updatedAt ?? 0));
     } else {
       combined.sort((a, b) => {
         const ca = counts[a.deck.id];
@@ -600,6 +625,28 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     useExport(db);
 
   const isExporting = exportPhase === 'exporting';
+
+  // ── Import toast ─────────────────────────────────────────────────────
+  const [importToast, setImportToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const importToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (importPhase === 'done') {
+      if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current);
+      setImportToast({ type: 'success', message: `Deck imported successfully!${importInfo ? ` (${importInfo})` : ''}` });
+      importToastTimerRef.current = setTimeout(() => {
+        setImportToast(null);
+        resetImport();
+      }, 3000);
+    } else if (importPhase === 'error' && importError) {
+      if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current);
+      setImportToast({ type: 'error', message: importError });
+    }
+  }, [importPhase, importInfo, importError, resetImport]);
+
+  useEffect(() => {
+    return () => { if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current); };
+  }, []);
 
   // ── Rename handler ──────────────────────────────────────────────────
   const handleRename = useCallback(
@@ -875,7 +922,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       )}
 
       {/* Main content area */}
-      <div className="flex flex-col flex-1 min-h-0 overflow-auto">
+      <div className="flex flex-col flex-1 min-h-0 overflow-auto" style={{ paddingBottom: TAB_BAR_TOTAL_HEIGHT }}>
         {dbError ? (
           <div className="px-4 py-4">
             <p className="text-xs text-red-500">{dbError}</p>
@@ -904,8 +951,9 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 deck={deck}
                 counts={counts[deck.id]}
                 thumbnail={thumbnails[deck.id]}
+                mode={mode}
                 {...(matchedTag !== undefined && { matchedTag })}
-                onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
+                onTap={() => { hapticNavigate(); mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name); }}
                 onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
                 onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
                 onTags={() => { hapticNavigate(); onTags(); }}
@@ -923,25 +971,22 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       {/* Import progress */}
       {isImporting && <ImportProgress phase={importPhase} />}
 
-      {/* Import success */}
-      {importPhase === 'done' && (
-        <div className="px-4 py-3">
-          <p className="text-sm text-green-600 dark:text-green-400">
-            Deck imported successfully!{importInfo ? ` (${importInfo})` : ''}
-          </p>
-        </div>
-      )}
-
-      {/* Import error */}
-      {importPhase === 'error' && importError && (
-        <div className="px-4 py-3 flex flex-col gap-2">
-          <p className="text-sm text-red-500">{importError}</p>
-          <button
-            onClick={resetImport}
-            className="text-xs text-[#C4C4C4] underline self-start"
-          >
-            Dismiss
-          </button>
+      {/* Import toast — fixed at top of screen */}
+      {importToast && (
+        <div
+          className="fixed left-4 right-4 z-[100] toast-enter"
+          style={{ top: 'calc(env(safe-area-inset-top) + 0.75rem)' }}
+          onClick={() => {
+            if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current);
+            setImportToast(null);
+            if (importPhase === 'error') resetImport();
+          }}
+        >
+          <div className={`rounded-xl px-4 py-3 shadow-lg text-sm font-medium text-white ${
+            importToast.type === 'success' ? 'bg-green-500' : 'bg-red-500'
+          }`}>
+            {importToast.message}
+          </div>
         </div>
       )}
 
@@ -1044,6 +1089,11 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       {/* Selector FAB */}
       {!dbLoading && !dbError && (
         <SelectorFab onTags={() => onTags()} onSettings={onSettings} />
+      )}
+
+      {/* Bottom tab bar */}
+      {!dbLoading && !dbError && (
+        <TabBar mode={mode} onChange={onModeChange} />
       )}
     </div>
   );

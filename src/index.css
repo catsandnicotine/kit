@@ -45,8 +45,8 @@
     background-color: var(--kit-bg);
   }
   html[data-theme="dark"] {
-    --kit-bg: #1c1c1e;
-    --kit-surface: #2c2c2e;
+    --kit-bg: #1a1a1a;
+    --kit-surface: #252525;
     background-color: var(--kit-bg);
   }
   html[data-theme="black"] {
@@ -85,10 +85,13 @@
     background-color: transparent;
   }
 
-  /* Images: scale to fit, never overflow */
+  /* Images: scale to fit viewport, never overflow */
   .card-content img {
     max-width: 100%;
+    max-height: 50vh;
     height: auto;
+    width: auto;
+    object-fit: contain;
     display: block;
     margin: 0.5rem auto;
   }
@@ -122,7 +125,7 @@
   /* Dark mode card defaults — low specificity so deck CSS wins */
   .card-content .night_mode .card {
     color: #E5E5E5;
-    background-color: #141414;
+    background-color: transparent;
   }
   .card-content .night_mode table {
     border-color: #404040;
@@ -134,7 +137,7 @@
 
   /* Black mode card defaults */
   .card-content .black_mode .card {
-    background-color: #0A0A0A;
+    background-color: transparent;
   }
 
   /* Cloze highlight — works in all themes */
@@ -148,6 +151,7 @@
     position: relative;
     display: inline-block;
     max-width: 100%;
+    max-height: 50vh;
     font-size: 0;
     line-height: 0;
     overflow: hidden;
@@ -155,6 +159,7 @@
   .card-content #image-occlusion-container img {
     display: block;
     width: 100%;
+    max-height: 50vh;
     height: auto;
   }
 
@@ -207,20 +212,29 @@
 
   /* Browse page: mini card previews */
   .browse-card-preview {
-    height: 5rem;
+    height: 12rem;
     pointer-events: none;
   }
   .browse-card-preview img {
-    max-height: 3rem;
+    max-height: 10rem;
+    height: auto;
     width: auto;
     max-width: 100%;
+    object-fit: contain;
+  }
+  /* Scale image-occlusion containers to fit preview — masks use absolute pixel
+     positioning, so we shrink the entire container uniformly via zoom. */
+  .browse-card-preview #image-occlusion-container {
+    max-width: 100%;
+    transform-origin: top left;
+    zoom: 0.35;
   }
   .browse-card-fade {
     position: absolute;
     bottom: 0;
     left: 0;
     right: 0;
-    height: 1.5rem;
+    height: 2.5rem;
     background: linear-gradient(transparent, var(--tw-surface, #f5f5f5));
     pointer-events: none;
   }
@@ -256,6 +270,52 @@
   @keyframes kit-loading {
     0%   { left: -40%; }
     100% { left: 100%; }
+  }
+
+  /* Page enter animation (tags, settings) */
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateX(16px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .page-enter {
+    animation: page-enter 0.22s ease-out;
+  }
+
+  /* Toast notification enter */
+  @keyframes toast-enter {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .toast-enter {
+    animation: toast-enter 0.2s ease-out;
+  }
+
+  /* FAB action button enter (slides up) */
+  @keyframes fab-item-enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fab-item-enter {
+    animation: fab-item-enter 0.18s ease-out both;
+  }
+
+  /* Dropdown menu enter */
+  @keyframes dropdown-enter {
+    from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .dropdown-enter {
+    animation: dropdown-enter 0.15s ease-out;
+    transform-origin: top right;
+  }
+
+  /* Dim backdrop fade in */
+  @keyframes backdrop-enter {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  .backdrop-enter {
+    animation: backdrop-enter 0.2s ease-out;
   }
 
   /* Cat bounce animation (header tap) */

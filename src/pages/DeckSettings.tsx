@@ -372,12 +372,12 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
         <header
           className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
-            paddingTop: 'env(safe-area-inset-top)',
+            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button onClick={() => { hapticTap(); onBack(); }} className="text-sm font-medium text-[#C4C4C4] mr-3">&larr; Back</button>
+          <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
           <span className="text-base font-bold truncate">{deckName}</span>
         </header>
         <div className="flex items-center justify-center py-12">
@@ -393,12 +393,12 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
-          paddingTop: 'env(safe-area-inset-top)',
+          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
-        <button onClick={() => { hapticTap(); onBack(); }} className="text-sm font-medium text-[#C4C4C4] mr-3">&larr; Back</button>
+        <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
         <span className="text-sm font-semibold truncate">Settings — {deckName}</span>
       </header>
 

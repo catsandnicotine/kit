@@ -11,8 +11,8 @@ import { pillTextColor } from '../lib/tagColors';
 import { v4 as uuidv4 } from 'uuid';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { CardEditor } from '../components/CardEditor';
-import { ReviewPassView } from '../components/ReviewPassView';
 import { hapticAgain, hapticTap } from '../lib/platform/haptics';
+import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { persistAndBackup } from '../hooks/useDatabase';
 import type { EditOp } from '../lib/sync/types';
 
@@ -50,13 +50,13 @@ function stripHtml(html: string): string {
 function CardFacePreview({ html }: { html: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.innerHTML = html;
+    if (ref.current) ref.current.innerHTML = `<div class="card">${html}</div>`;
   }, [html]);
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <div
-        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-md overflow-hidden relative"
-        style={{ minHeight: '4.5rem' }}
+        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-md relative"
+        style={{ height: '12rem', overflow: 'hidden' }}
       >
         <div ref={ref} className="px-2 py-1.5 text-xs leading-relaxed" />
         <div className="browse-card-fade" />
@@ -80,8 +80,8 @@ function CardPreviewRow({
   onTap: () => void;
   onToggleSelect: () => void;
 }) {
-  const front = rewriteHtml(card.front);
-  const back = rewriteHtml(card.back);
+  const front = renderImageOcclusion(rewriteHtml(card.front), 'front');
+  const back = renderImageOcclusion(rewriteHtml(card.back), 'back');
 
   return (
     <div
@@ -143,7 +143,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
   const [sortByTag, setSortByTag] = useState(false);
 
   // Review pass
-  const [reviewPassCards, setReviewPassCards] = useState<Card[] | null>(null);
 
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -297,14 +296,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     }
   }, [db, selectedIds, exitSelection, onSyncEdit]);
 
-  const handleReviewSelected = useCallback(() => {
-    const toReview = cards.filter(c => selectedIds.has(c.id));
-    if (toReview.length === 0) return;
-    hapticTap();
-    setReviewPassCards(toReview);
-    exitSelection();
-  }, [cards, selectedIds, exitSelection]);
-
   // ── Tag filter toggle ──────────────────────────────────────────────────
 
   const toggleTagFilter = useCallback((tag: string) => {
@@ -314,37 +305,29 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     );
   }, []);
 
-  // ── Review pass ────────────────────────────────────────────────────────
-
-  if (reviewPassCards) {
-    return (
-      <ReviewPassView
-        cards={reviewPassCards}
-        contextLabel={currentDeckName}
-        rewriteHtml={rewriteHtml}
-        onDone={() => setReviewPassCards(null)}
-      />
-    );
-  }
-
   const selectedCount = selectedIds.size;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
         className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
-          paddingTop: 'env(safe-area-inset-top)',
+          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
         <button
           onClick={() => { hapticTap(); selectionMode ? exitSelection() : onBack(); }}
-          className="text-sm text-[#C4C4C4] shrink-0"
+          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 text-sm"
+          aria-label="Back"
         >
-          {selectionMode ? 'Cancel' : '← Back'}
+          {selectionMode ? 'Cancel' : (
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          )}
         </button>
         {editingTitle && !selectionMode ? (
           <input
@@ -390,10 +373,13 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             </button>
             <button
               onClick={handleAddCard}
-              className="w-7 h-7 flex items-center justify-center rounded-full border border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4] text-lg leading-none shrink-0 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
+              className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
               aria-label="Add card"
             >
-              +
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="4" x2="12" y2="20" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+              </svg>
             </button>
           </>
         )}
@@ -411,7 +397,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search cards or tags…"
-          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[#141414] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
+          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
         />
         {allTags.length > 0 && (
           <button
@@ -467,12 +453,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button
-            onClick={handleReviewSelected}
-            className="flex-1 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-          >
-            Review ({selectedCount})
-          </button>
           {!confirmDelete ? (
             <button
               onClick={() => { hapticAgain(); setConfirmDelete(true); }}
