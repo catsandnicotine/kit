@@ -11,8 +11,8 @@ import { pillTextColor } from '../lib/tagColors';
 import { v4 as uuidv4 } from 'uuid';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { CardEditor } from '../components/CardEditor';
-import { ReviewPassView } from '../components/ReviewPassView';
 import { hapticAgain, hapticTap } from '../lib/platform/haptics';
+import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { persistAndBackup } from '../hooks/useDatabase';
 import type { EditOp } from '../lib/sync/types';
 
@@ -50,13 +50,13 @@ function stripHtml(html: string): string {
 function CardFacePreview({ html }: { html: string }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (ref.current) ref.current.innerHTML = html;
+    if (ref.current) ref.current.innerHTML = `<div class="card">${html}</div>`;
   }, [html]);
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <div
-        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-md overflow-hidden relative"
-        style={{ minHeight: '12rem' }}
+        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-md relative"
+        style={{ height: '12rem', overflow: 'hidden' }}
       >
         <div ref={ref} className="px-2 py-1.5 text-xs leading-relaxed" />
         <div className="browse-card-fade" />
@@ -80,8 +80,8 @@ function CardPreviewRow({
   onTap: () => void;
   onToggleSelect: () => void;
 }) {
-  const front = rewriteHtml(card.front);
-  const back = rewriteHtml(card.back);
+  const front = renderImageOcclusion(rewriteHtml(card.front), 'front');
+  const back = renderImageOcclusion(rewriteHtml(card.back), 'back');
 
   return (
     <div
@@ -143,7 +143,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
   const [sortByTag, setSortByTag] = useState(false);
 
   // Review pass
-  const [reviewPassCards, setReviewPassCards] = useState<Card[] | null>(null);
 
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -297,14 +296,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     }
   }, [db, selectedIds, exitSelection, onSyncEdit]);
 
-  const handleReviewSelected = useCallback(() => {
-    const toReview = cards.filter(c => selectedIds.has(c.id));
-    if (toReview.length === 0) return;
-    hapticTap();
-    setReviewPassCards(toReview);
-    exitSelection();
-  }, [cards, selectedIds, exitSelection]);
-
   // ── Tag filter toggle ──────────────────────────────────────────────────
 
   const toggleTagFilter = useCallback((tag: string) => {
@@ -314,23 +305,10 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     );
   }, []);
 
-  // ── Review pass ────────────────────────────────────────────────────────
-
-  if (reviewPassCards) {
-    return (
-      <ReviewPassView
-        cards={reviewPassCards}
-        contextLabel={currentDeckName}
-        rewriteHtml={rewriteHtml}
-        onDone={() => setReviewPassCards(null)}
-      />
-    );
-  }
-
   const selectedCount = selectedIds.size;
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       {/* Header */}
       <header
         className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -475,12 +453,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button
-            onClick={handleReviewSelected}
-            className="flex-1 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-          >
-            Review ({selectedCount})
-          </button>
           {!confirmDelete ? (
             <button
               onClick={() => { hapticAgain(); setConfirmDelete(true); }}

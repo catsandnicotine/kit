@@ -85,10 +85,13 @@
     background-color: transparent;
   }
 
-  /* Images: scale to fit, never overflow */
+  /* Images: scale to fit viewport, never overflow */
   .card-content img {
     max-width: 100%;
+    max-height: 50vh;
     height: auto;
+    width: auto;
+    object-fit: contain;
     display: block;
     margin: 0.5rem auto;
   }
@@ -122,7 +125,7 @@
   /* Dark mode card defaults — low specificity so deck CSS wins */
   .card-content .night_mode .card {
     color: #E5E5E5;
-    background-color: #141414;
+    background-color: transparent;
   }
   .card-content .night_mode table {
     border-color: #404040;
@@ -134,7 +137,7 @@
 
   /* Black mode card defaults */
   .card-content .black_mode .card {
-    background-color: #0A0A0A;
+    background-color: transparent;
   }
 
   /* Cloze highlight — works in all themes */
@@ -148,6 +151,7 @@
     position: relative;
     display: inline-block;
     max-width: 100%;
+    max-height: 50vh;
     font-size: 0;
     line-height: 0;
     overflow: hidden;
@@ -155,6 +159,7 @@
   .card-content #image-occlusion-container img {
     display: block;
     width: 100%;
+    max-height: 50vh;
     height: auto;
   }
 
@@ -212,8 +217,17 @@
   }
   .browse-card-preview img {
     max-height: 10rem;
+    height: auto;
     width: auto;
     max-width: 100%;
+    object-fit: contain;
+  }
+  /* Scale image-occlusion containers to fit preview — masks use absolute pixel
+     positioning, so we shrink the entire container uniformly via zoom. */
+  .browse-card-preview #image-occlusion-container {
+    max-width: 100%;
+    transform-origin: top left;
+    zoom: 0.35;
   }
   .browse-card-fade {
     position: absolute;

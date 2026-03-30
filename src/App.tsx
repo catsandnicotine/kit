@@ -15,6 +15,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const DeckStats = lazy(() => import('./pages/DeckStats'));
 const DeckSettings = lazy(() => import('./pages/DeckSettings'));
 const TagBrowser = lazy(() => import('./pages/TagBrowser'));
+const ReviewStudy = lazy(() => import('./pages/ReviewStudy'));
 
 // ---------------------------------------------------------------------------
 // Route state
@@ -23,11 +24,14 @@ const TagBrowser = lazy(() => import('./pages/TagBrowser'));
 type Route =
   | { page: 'home' }
   | { page: 'study'; deckId: string; deckName: string }
+  | { page: 'review-study'; deckId: string; deckName: string }
   | { page: 'browse'; deckId: string; deckName: string }
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
   | { page: 'settings' }
   | { page: 'tags' };
+
+export type AppMode = 'learn' | 'review';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,6 +86,7 @@ function AppInner() {
   const { loading, error, deckEntries } = deckManager;
 
   const [route, setRoute] = useState<Route>({ page: 'home' });
+  const [mode, setMode] = useState<AppMode>('learn');
   const [showOnboarding, setShowOnboarding] = useState(false);
   const navSeqRef = useRef(0);
 
@@ -161,6 +166,11 @@ function AppInner() {
     [navigateToDeck],
   );
 
+  const goReviewStudy = useCallback(
+    (deckId: string, deckName: string) => navigateToDeck('review-study', deckId, deckName),
+    [navigateToDeck],
+  );
+
   const goBrowse = useCallback(
     (deckId: string, deckName: string) => navigateToDeck('browse', deckId, deckName),
     [navigateToDeck],
@@ -213,6 +223,19 @@ function AppInner() {
           onExit={goHome}
           onSyncEdit={handleSyncEdit}
           onSessionComplete={handleSessionComplete}
+        />
+      </Suspense>
+    );
+  }
+
+  if (route.page === 'review-study') {
+    return (
+      <Suspense fallback={pageFallback}>
+        <ReviewStudy
+          db={activeDeckDb}
+          deckId={route.deckId}
+          deckName={route.deckName}
+          onExit={goHome}
         />
       </Suspense>
     );
@@ -286,7 +309,10 @@ function AppInner() {
       deckEntries={deckEntries}
       deckManager={deckManager}
       syncStatus={syncStatus}
+      mode={mode}
+      onModeChange={setMode}
       onStudy={goStudy}
+      onReviewStudy={goReviewStudy}
       onBrowse={goBrowse}
       onStats={goStats}
       onSettings={goSettings}

@@ -39,6 +39,8 @@ import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics'
 import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
 import { PixelCat } from '../components/PixelCat';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
+import { TabBar, TAB_BAR_TOTAL_HEIGHT } from '../components/TabBar';
+import type { AppMode } from '../App';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -54,7 +56,12 @@ interface HomeProps {
   deckManager?: import('../hooks/useDeckManager').UseDeckManagerReturn;
   /** iCloud sync status indicator. */
   syncStatus?: import('../hooks/useSync').SyncStatus;
+  /** Current app mode (learn vs review). */
+  mode: AppMode;
+  /** Called when user switches tabs. */
+  onModeChange: (mode: AppMode) => void;
   onStudy: (deckId: string, deckName: string) => void;
+  onReviewStudy: (deckId: string, deckName: string) => void;
   onBrowse: (deckId: string, deckName: string) => void;
   onStats: (deckId: string, deckName: string) => void;
   onSettings: () => void;
@@ -234,6 +241,7 @@ function DeckRow({
   counts,
   thumbnail,
   matchedTag,
+  mode,
   onTap,
   onBrowse,
   onStats,
@@ -248,6 +256,7 @@ function DeckRow({
   counts: DeckCardCounts | undefined;
   thumbnail: string | undefined;
   matchedTag?: string;
+  mode: AppMode;
   onTap: () => void;
   onBrowse: () => void;
   onStats: () => void;
@@ -291,12 +300,17 @@ function DeckRow({
               {matchedTag ? `Contains: ${matchedTag}` : `${totalCount} ${totalCount === 1 ? 'card' : 'cards'}`}
             </span>
           </div>
-          {totalCount > 0 && (
+          {mode === 'learn' && totalCount > 0 && (
             <div className="flex gap-2 ml-4 shrink-0 text-sm font-semibold tabular-nums">
               <span className="text-blue-500">{newCount}</span>
               <span className="text-red-500">{learningCount}</span>
               <span className="text-green-500">{reviewCount}</span>
             </div>
+          )}
+          {mode === 'review' && totalCount > 0 && (
+            <span className="ml-4 shrink-0 text-sm font-bold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums">
+              {totalCount}
+            </span>
           )}
         </button>
         <DeckActionMenu
@@ -311,8 +325,8 @@ function DeckRow({
         />
       </div>
 
-      {/* Progress bar */}
-      {totalCount > 0 && (
+      {/* Progress bar — only in Learn mode */}
+      {mode === 'learn' && totalCount > 0 && (
         <div className="px-4 pb-2 pt-0.5">
           <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
             <div
@@ -395,7 +409,7 @@ function SelectorFab({
       <div
         className="fixed z-50 flex flex-col items-start gap-2.5"
         style={{
-          bottom: 'max(1.5rem, env(safe-area-inset-bottom))',
+          bottom: 'calc(56px + env(safe-area-inset-bottom) + 1.5rem)',
           left: 'max(1rem, env(safe-area-inset-left))',
         }}
       >
@@ -472,7 +486,7 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, onStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
@@ -483,12 +497,17 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   // Search / sort state
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOrder, setSortOrder] = useState<'alpha' | 'alpha-desc' | 'due'>('alpha');
+  const [sortOrder, setSortOrder] = useState<'alpha' | 'alpha-desc' | 'due' | 'recent'>('alpha');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (searchOpen) searchInputRef.current?.focus();
   }, [searchOpen]);
+
+  // Default sort order per mode
+  useEffect(() => {
+    setSortOrder(mode === 'review' ? 'recent' : 'alpha');
+  }, [mode]);
 
   // ── Synthesize decks + counts from registry entries (new arch) ──────
   useEffect(() => {
@@ -555,6 +574,8 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       combined.sort((a, b) => a.deck.name.localeCompare(b.deck.name));
     } else if (sortOrder === 'alpha-desc') {
       combined.sort((a, b) => b.deck.name.localeCompare(a.deck.name));
+    } else if (sortOrder === 'recent') {
+      combined.sort((a, b) => (b.deck.updatedAt ?? 0) - (a.deck.updatedAt ?? 0));
     } else {
       combined.sort((a, b) => {
         const ca = counts[a.deck.id];
@@ -901,7 +922,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       )}
 
       {/* Main content area */}
-      <div className="flex flex-col flex-1 min-h-0 overflow-auto">
+      <div className="flex flex-col flex-1 min-h-0 overflow-auto" style={{ paddingBottom: TAB_BAR_TOTAL_HEIGHT }}>
         {dbError ? (
           <div className="px-4 py-4">
             <p className="text-xs text-red-500">{dbError}</p>
@@ -930,8 +951,9 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 deck={deck}
                 counts={counts[deck.id]}
                 thumbnail={thumbnails[deck.id]}
+                mode={mode}
                 {...(matchedTag !== undefined && { matchedTag })}
-                onTap={() => { hapticNavigate(); onStudy(deck.id, deck.name); }}
+                onTap={() => { hapticNavigate(); mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name); }}
                 onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
                 onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
                 onTags={() => { hapticNavigate(); onTags(); }}
@@ -1067,6 +1089,11 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       {/* Selector FAB */}
       {!dbLoading && !dbError && (
         <SelectorFab onTags={() => onTags()} onSettings={onSettings} />
+      )}
+
+      {/* Bottom tab bar */}
+      {!dbLoading && !dbError && (
+        <TabBar mode={mode} onChange={onModeChange} />
       )}
     </div>
   );
