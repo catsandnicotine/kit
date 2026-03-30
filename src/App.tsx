@@ -130,18 +130,30 @@ function AppInner() {
     }
     setActiveDeckDb(null);
     setRoute({ page: 'home' });
-    deckManager.refreshDecks().catch(() => {});
+    deckManager.refreshDecks();
   }, [currentDeckId, deckManager, finalizeDeck]);
 
   const navigateToDeck = useCallback(
-    async (page: Route['page'], deckId: string, deckName: string) => {
+    (page: Route['page'], deckId: string, deckName: string) => {
       const seq = ++navSeqRef.current;
-      const db = await deckManager.openDeckDb(deckId);
-      if (seq !== navSeqRef.current) return; // Superseded by goHome or another navigation
-      setActiveDeckDb(db);
+
+      // Navigate immediately — the screen shows its loading skeleton while the
+      // database hydrates in the background. Only clear the old DB when coming
+      // from Home (no prior deck); deck-to-deck keeps the old content visible
+      // until the new DB arrives, avoiding an empty flash.
+      if (!currentDeckId) setActiveDeckDb(null);
       setRoute({ page, deckId, deckName } as Route);
+
+      console.time(`[nav] openDeckDb(${deckName})`);
+      deckManager.openDeckDb(deckId).then(db => {
+        console.timeEnd(`[nav] openDeckDb(${deckName})`);
+        if (seq !== navSeqRef.current) return; // Superseded by goHome or another tap
+        setActiveDeckDb(db);
+      }).catch(() => {
+        console.timeEnd(`[nav] openDeckDb(${deckName})`);
+      });
     },
-    [deckManager],
+    [deckManager, currentDeckId],
   );
 
   const goStudy = useCallback(

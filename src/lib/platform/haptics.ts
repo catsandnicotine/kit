@@ -5,6 +5,10 @@
 
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 
+// Warm the native bridge on module load so the first user-facing tap
+// doesn't pay the Capacitor bridge initialisation cost (~100-300ms).
+Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+
 /** Card flip haptic - medium impact */
 export async function hapticFlip(): Promise<void> {
   await Haptics.impact({ style: ImpactStyle.Medium });

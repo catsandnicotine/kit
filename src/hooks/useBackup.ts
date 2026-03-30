@@ -37,6 +37,14 @@ let _backupDb: Database | null = null;
 let _backupTimer: ReturnType<typeof setTimeout> | null = null;
 let _lastBackupTime = 0;
 
+/**
+ * Module-level cache for backup metadata.
+ * Populated on the first iCloud check; reused on subsequent Settings opens
+ * so we never scan iCloud more than once per session.
+ */
+let _cachedBackupMeta: BackupMeta | null = null;
+let _backupMetaFetched = false;
+
 // Restore last backup time from localStorage on module load.
 try {
   const raw = localStorage.getItem(LS_LAST_BACKUP_KEY);
@@ -65,7 +73,12 @@ export function scheduleICloudBackup(): void {
     try {
       const countResult = getTotalCardCount(_backupDb);
       const cardCount = countResult.success ? countResult.data : 0;
+      // Yield one tick before the blocking export so pending UI frames can flush.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (!_backupDb) return;
+      console.time('[backup] db.export');
       const data = _backupDb.export();
+      console.timeEnd('[backup] db.export');
       const success = await backupDatabase(data, cardCount);
 
       if (success) {
@@ -132,20 +145,32 @@ export function useBackup(db: Database | null): UseBackupReturn {
   }, [db]);
 
   // ── Check for existing backup on mount ──────────────────────────────
+  // Uses a module-level cache so re-opening Settings never hits iCloud twice.
+  // The cache is updated after a successful backupNow().
   useEffect(() => {
     let cancelled = false;
 
     async function check() {
+      // Fast path: already fetched this session — apply cached result immediately.
+      if (_backupMetaFetched) {
+        if (!cancelled) {
+          setLastBackup(_cachedBackupMeta);
+          if (_cachedBackupMeta) _lastBackupTime = _cachedBackupMeta.timestamp * 1000;
+          setChecking(false);
+        }
+        return;
+      }
+
       try {
         const meta = await checkForBackup();
+        _cachedBackupMeta = meta;
+        _backupMetaFetched = true;
         if (!cancelled) {
           setLastBackup(meta);
-          if (meta) {
-            _lastBackupTime = meta.timestamp * 1000;
-          }
+          if (meta) _lastBackupTime = meta.timestamp * 1000;
         }
       } catch {
-        // Not critical — just means we don't know the last backup time.
+        _backupMetaFetched = true; // Don't retry on transient error.
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -200,6 +225,9 @@ export function useBackup(db: Database | null): UseBackupReturn {
           appVersion: '1.0.0',
         };
         setLastBackup(meta);
+        // Update module-level cache so re-opening Settings reflects the new backup.
+        _cachedBackupMeta = meta;
+        _backupMetaFetched = true;
         _lastBackupTime = Date.now();
         try {
           localStorage.setItem(LS_LAST_BACKUP_KEY, String(_lastBackupTime));

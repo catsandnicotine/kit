@@ -43,7 +43,7 @@ import { loadDatabaseSnapshot } from '../lib/platform/persistence';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import type { DeckRegistryEntry, EditOp, GlobalTag } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
-import { getDeviceId } from '../lib/sync/deckRegistry';
+import { getDeviceId, getAllDeckEntries } from '../lib/sync/deckRegistry';
 import { evictOrphanedMedia } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
 
@@ -119,6 +119,9 @@ async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
 const REGISTRY_PATH = 'deck_registry.json';
 const REGISTRY_LS_KEY = 'kit_deck_registry';
 
+/** localStorage key — set when a deck is deleted; cleared after eviction runs. */
+const LS_EVICT_MEDIA_KEY = 'kit_evict_media';
+
 async function loadRegistryJson(): Promise<string | null> {
   if (isNativePlatform()) {
     try {
@@ -163,11 +166,19 @@ async function persistRegistry(): Promise<void> {
 /** Days after which the kit.db.migrated safety backup is deleted. */
 const MIGRATION_BACKUP_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** localStorage key — set once we've confirmed kit.db.migrated is gone. */
+const LS_MIG_BACKUP_GONE = 'kit_mig_backup_gone';
+
 /**
  * Delete kit.db.migrated if it is older than 30 days.
- * Non-fatal — silently ignores missing files or stat failures.
+ * Once the file is confirmed absent (deleted or never existed) the result is
+ * cached in localStorage so we never stat the filesystem again.
  */
 async function cleanupMigrationBackup(): Promise<void> {
+  try {
+    if (localStorage.getItem(LS_MIG_BACKUP_GONE)) return;
+  } catch { /* localStorage unavailable */ }
+
   try {
     const stat = await Filesystem.stat({
       path: 'kit.db.migrated',
@@ -180,9 +191,12 @@ async function cleanupMigrationBackup(): Promise<void> {
         directory: Directory.Documents,
       });
       console.log('[useDeckManager] Deleted kit.db.migrated (>30 days old)');
+      try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch {}
     }
+    // File still exists but isn't old enough yet — check again next launch.
   } catch {
-    // File doesn't exist or stat failed — nothing to clean up
+    // stat failed → file doesn't exist; remember so we never check again.
+    try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch {}
   }
 }
 
@@ -197,8 +211,8 @@ export interface UseDeckManagerReturn {
   error: string;
   /** List of known decks (from registry). */
   deckEntries: DeckRegistryEntry[];
-  /** Refresh deck list from iCloud. */
-  refreshDecks: () => Promise<void>;
+  /** Refresh deck list from the in-memory registry. */
+  refreshDecks: () => void;
   /**
    * Open a deck and get its Database instance.
    * Returns null if the deck can't be loaded.
@@ -286,22 +300,26 @@ export function useDeckManager(): UseDeckManagerReturn {
         // 4. Initialize DeckManager
         initDeckManager({ SQL, storage, registryJson, readLocalSnapshot, writeLocalSnapshot, deleteLocalSnapshot: deleteLocalDeckSnapshot });
 
-        // 5. Check if migration from monolithic DB is needed
+        // 5. Check if migration from monolithic DB is needed.
+        // If the registry already exists, migration already happened — skip the
+        // filesystem stat entirely.
         const hasRegistry = registryJson !== null;
         let hasMonolithicDb = false;
 
-        if (isNativePlatform()) {
-          try {
-            const stat = await Filesystem.stat({
-              path: 'kit.db',
-              directory: Directory.Documents,
-            });
-            hasMonolithicDb = stat.size > 0;
-          } catch {
-            hasMonolithicDb = false;
+        if (!hasRegistry) {
+          if (isNativePlatform()) {
+            try {
+              const stat = await Filesystem.stat({
+                path: 'kit.db',
+                directory: Directory.Documents,
+              });
+              hasMonolithicDb = stat.size > 0;
+            } catch {
+              hasMonolithicDb = false;
+            }
+          } else {
+            hasMonolithicDb = localStorage.getItem('kit_db_snapshot') !== null;
           }
-        } else {
-          hasMonolithicDb = localStorage.getItem('kit_db_snapshot') !== null;
         }
 
         if (needsMigration(hasMonolithicDb, hasRegistry)) {
@@ -349,12 +367,18 @@ export function useDeckManager(): UseDeckManagerReturn {
         setDeckEntries(entries);
         setLoading(false);
 
-        // 8. Evict media for orphaned/deleted decks (non-blocking)
+        // 8. Evict media for orphaned/deleted decks — only when a deck was recently
+        //    deleted (flagged via LS_EVICT_MEDIA_KEY). Skipped on normal cold starts.
         if (isNativePlatform()) {
-          const activeIds = new Set(entries.map(e => e.deckId));
-          evictOrphanedMedia(activeIds).then(n => {
-            if (n > 0) console.log(`[useDeckManager] Evicted media for ${n} orphaned deck(s)`);
-          }).catch(() => {});
+          let needsEviction = false;
+          try { needsEviction = localStorage.getItem(LS_EVICT_MEDIA_KEY) === '1'; } catch {}
+          if (needsEviction) {
+            try { localStorage.removeItem(LS_EVICT_MEDIA_KEY); } catch {}
+            const activeIds = new Set(entries.map(e => e.deckId));
+            evictOrphanedMedia(activeIds).then(n => {
+              if (n > 0) console.log(`[useDeckManager] Evicted media for ${n} orphaned deck(s)`);
+            }).catch(() => {});
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -370,9 +394,11 @@ export function useDeckManager(): UseDeckManagerReturn {
   }, []);
 
   // ── Refresh deck list ──────────────────────────────────────────────────
-  const refreshDecks = useCallback(async () => {
-    const entries = await discoverDecks();
-    setDeckEntries(entries);
+  // The real-time iCloud watcher (useSync) handles incoming changes from other
+  // devices. refreshDecks just re-reads the in-memory registry so the UI
+  // reflects any writes that happened since the last render.
+  const refreshDecks = useCallback(() => {
+    setDeckEntries(getAllDeckEntries());
   }, []);
 
   // ── Open a deck ────────────────────────────────────────────────────────
@@ -454,6 +480,8 @@ export function useDeckManager(): UseDeckManagerReturn {
   const removeDeckFnCb = useCallback(async (deckId: string): Promise<void> => {
     await removeDeckFn(deckId);
     await persistRegistry();
+    // Flag that media eviction is needed on the next cold start.
+    try { localStorage.setItem(LS_EVICT_MEDIA_KEY, '1'); } catch {}
   }, []);
 
   return {

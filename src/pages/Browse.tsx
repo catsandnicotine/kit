@@ -171,13 +171,24 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
 
   const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
 
+  const loadCardsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const loadCards = useCallback(() => {
+    if (loadCardsTimer.current) clearTimeout(loadCardsTimer.current);
     if (!db) return;
-    const result = getCardsByDeck(db, deckId);
-    if (result.success) setCards(result.data);
+    // Defer card loading by one tick so the Browse page renders before we
+    // block the thread with the full card query.
+    loadCardsTimer.current = setTimeout(() => {
+      loadCardsTimer.current = null;
+      console.time('[Browse] getCardsByDeck');
+      const result = getCardsByDeck(db, deckId);
+      console.timeEnd('[Browse] getCardsByDeck');
+      if (result.success) setCards(result.data);
+    }, 0);
   }, [db, deckId]);
 
   useEffect(() => { loadCards(); }, [loadCards]);
+  useEffect(() => () => { if (loadCardsTimer.current) clearTimeout(loadCardsTimer.current); }, []);
   useEffect(() => { setVisibleCount(PAGE_SIZE); }, [search, activeTagFilters, sortByTag]);
 
   // All tags (global, sorted by color) for the filter bar
