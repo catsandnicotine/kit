@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card, Result } from '../types';
 import type { EditOp } from '../lib/sync/types';
-import { deleteCard, insertCard, updateCard } from '../lib/db/queries';
+import { deleteCard, insertCard, updateCard, addTagToDeck } from '../lib/db/queries';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
 
@@ -112,6 +112,10 @@ export function useCardEditor(
         const insertResult = insertCard(db, newCard);
         if (!insertResult.success) return insertResult;
 
+        // Sync new tags to deck_tags so pills stay visible
+        for (const t of tags) {
+          addTagToDeck(db, card.deckId, t, now);
+        }
         if (onSyncEdit) {
           onSyncEdit([{ type: 'card_add', card: newCard }]);
         } else {
@@ -123,6 +127,11 @@ export function useCardEditor(
 
       const result = updateCard(db, card.id, front, back, tags, now);
       if (result.success) {
+        // Sync new tags to deck_tags so pills stay visible
+        const newTags = tags.filter(t => !card.tags.includes(t));
+        for (const t of newTags) {
+          addTagToDeck(db, card.deckId, t, now);
+        }
         if (onSyncEdit) {
           onSyncEdit([{
             type: 'card_edit',

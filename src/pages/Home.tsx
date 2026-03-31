@@ -116,7 +116,6 @@ const IMPORT_LABELS: Record<string, string> = {
 function DeckActionMenu({
   onBrowse,
   onStats,
-  onTags,
   onExportFresh,
   onExportWithProgress,
   onSetThumbnail,
@@ -125,7 +124,6 @@ function DeckActionMenu({
 }: {
   onBrowse: () => void;
   onStats: () => void;
-  onTags: () => void;
   onExportFresh: () => void;
   onExportWithProgress: () => void;
   onSetThumbnail: () => void;
@@ -168,16 +166,6 @@ function DeckActionMenu({
               <line x1="6" y1="20" x2="6" y2="14" />
             </svg>
             Statistics
-          </button>
-          <button
-            onClick={() => { setOpen(false); onTags(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-              <line x1="7" y1="7" x2="7.01" y2="7" />
-            </svg>
-            Tags
           </button>
           <button
             onClick={() => { setOpen(false); onSetThumbnail(); }}
@@ -245,7 +233,6 @@ function DeckRow({
   onTap,
   onBrowse,
   onStats,
-  onTags,
   onExportFresh,
   onExportWithProgress,
   onSetThumbnail,
@@ -260,7 +247,6 @@ function DeckRow({
   onTap: () => void;
   onBrowse: () => void;
   onStats: () => void;
-  onTags: () => void;
   onExportFresh: () => void;
   onExportWithProgress: () => void;
   onSetThumbnail: () => void;
@@ -316,7 +302,6 @@ function DeckRow({
         <DeckActionMenu
           onBrowse={onBrowse}
           onStats={onStats}
-          onTags={onTags}
           onExportFresh={onExportFresh}
           onExportWithProgress={onExportWithProgress}
           onSetThumbnail={onSetThumbnail}
@@ -325,14 +310,16 @@ function DeckRow({
         />
       </div>
 
-      {/* Progress bar — only in Learn mode */}
-      {mode === 'learn' && totalCount > 0 && (
+      {/* Progress bar — visible in Learn mode, invisible spacer in Review mode */}
+      {totalCount > 0 && (
         <div className="px-4 pb-2 pt-0.5">
-          <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
-            <div
-              className="deck-progress-fill bg-[#1c1c1e] dark:bg-[#E5E5E5]"
-              style={{ width: `${Math.round(progress * 100)}%` }}
-            />
+          <div className={`deck-progress-track w-full ${mode === 'learn' ? 'bg-[#E5E5E5] dark:bg-[#262626]' : 'bg-transparent'}`}>
+            {mode === 'learn' && (
+              <div
+                className="deck-progress-fill bg-[#1c1c1e] dark:bg-[#E5E5E5]"
+                style={{ width: `${Math.round(progress * 100)}%` }}
+              />
+            )}
           </div>
         </div>
       )}
@@ -384,7 +371,7 @@ function PlusMenu({
   );
 }
 
-/** Bottom-left selector FAB — expands upward to a list of navigation actions. */
+/** Bottom-left selector FAB — expands upward to Tags + Settings. */
 function SelectorFab({
   onTags,
   onSettings,
@@ -393,19 +380,16 @@ function SelectorFab({
   onSettings: () => void;
 }) {
   const [open, setOpen] = useState(false);
-
   const close = () => setOpen(false);
 
   return (
     <>
-      {/* Dim backdrop */}
       {open && (
         <div
           className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
           onClick={close}
         />
       )}
-
       <div
         className="fixed z-50 flex flex-col items-start gap-2.5"
         style={{
@@ -413,7 +397,6 @@ function SelectorFab({
           left: 'max(1rem, env(safe-area-inset-left))',
         }}
       >
-        {/* Options — appear above the FAB when open */}
         {open && (
           <>
             <button
@@ -440,8 +423,6 @@ function SelectorFab({
             </button>
           </>
         )}
-
-        {/* FAB button */}
         <button
           onClick={() => { hapticTap(); setOpen(v => !v); }}
           className="w-12 h-12 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] shadow-lg flex items-center justify-center active:scale-95 transition-transform"
@@ -837,7 +818,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col">
+    <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col page-enter">
       {/* Header */}
       <header
         className="flex items-center justify-between pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -956,7 +937,6 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 onTap={() => { hapticNavigate(); mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name); }}
                 onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
                 onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
-                onTags={() => { hapticNavigate(); onTags(); }}
                 onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
                 onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
                 onSetThumbnail={() => handleSetThumbnail(deck.id)}
