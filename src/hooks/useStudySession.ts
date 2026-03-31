@@ -378,16 +378,13 @@ export function useStudySession(
       // --- DB writes ---
       const logId = uuidv4();
 
-      console.time('[study] updateCardAfterReview');
       const writeState = updateCardAfterReview(db, card.id, resolved, nowSec, elapsedDays);
-      console.timeEnd('[study] updateCardAfterReview');
       if (!writeState.success) {
         setErrorMessage(writeState.error);
         setPhase('error');
         return;
       }
 
-      console.time('[study] insertReviewLog');
       const writeLog = insertReviewLog(db, {
         id: logId,
         cardId: card.id,
@@ -396,7 +393,6 @@ export function useStudySession(
         elapsed: elapsedDays,
         scheduledDays: resolved.scheduledDays,
       });
-      console.timeEnd('[study] insertReviewLog');
       if (!writeLog.success) {
         setErrorMessage(writeLog.error);
         setPhase('error');

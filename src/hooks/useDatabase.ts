@@ -64,9 +64,7 @@ export function persistDatabase(): void {
     _debounceTimer = null;
     if (!_db) return;
     try {
-      console.time('[db] export');
       const data = _db.export();
-      console.timeEnd('[db] export');
       saveDatabaseSnapshot(data);
     } catch (e) {
       console.warn('[useDatabase] Failed to persist database:', e);

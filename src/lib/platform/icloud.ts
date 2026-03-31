@@ -58,7 +58,6 @@ export async function backupDatabase(
   cardCount: number,
 ): Promise<boolean> {
   if (!isNativePlatform()) {
-    console.log('[icloud] backupDatabase no-op (browser mode)');
     return false;
   }
 
@@ -91,7 +90,6 @@ export async function backupDatabase(
  */
 export async function restoreDatabase(): Promise<Uint8Array | null> {
   if (!isNativePlatform()) {
-    console.log('[icloud] restoreDatabase no-op (browser mode)');
     return null;
   }
 
@@ -111,7 +109,6 @@ export async function restoreDatabase(): Promise<Uint8Array | null> {
  */
 export async function checkForBackup(): Promise<BackupMeta | null> {
   if (!isNativePlatform()) {
-    console.log('[icloud] checkForBackup no-op (browser mode)');
     return null;
   }
 

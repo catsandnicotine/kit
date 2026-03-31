@@ -149,13 +149,10 @@ function AppInner() {
       if (!currentDeckId) setActiveDeckDb(null);
       setRoute({ page, deckId, deckName } as Route);
 
-      console.time(`[nav] openDeckDb(${deckName})`);
       deckManager.openDeckDb(deckId).then(db => {
-        console.timeEnd(`[nav] openDeckDb(${deckName})`);
         if (seq !== navSeqRef.current) return; // Superseded by goHome or another tap
         setActiveDeckDb(db);
       }).catch(() => {
-        console.timeEnd(`[nav] openDeckDb(${deckName})`);
       });
     },
     [deckManager, currentDeckId],

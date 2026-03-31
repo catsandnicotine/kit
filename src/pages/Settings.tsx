@@ -715,6 +715,39 @@ export default function Settings({ db, onBack }: SettingsProps) {
           </div>
         </section>
 
+        {/* ── About / Support ── */}
+        <section className="pb-4">
+          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">About</h2>
+          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg divide-y divide-[#E5E5E5] dark:divide-[#262626]">
+            <a
+              href="mailto:support@getkit.app"
+              className="flex items-center justify-between px-4 py-3 active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
+              onClick={() => hapticTap()}
+            >
+              <span className="text-sm">Contact Support</span>
+              <span className="text-sm text-[#C4C4C4]">support@getkit.app</span>
+            </a>
+            <a
+              href="/privacy.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center justify-between px-4 py-3 active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
+              onClick={() => hapticTap()}
+            >
+              <span className="text-sm">Privacy Policy</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#C4C4C4]">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
+            </a>
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm text-[#C4C4C4]">Version</span>
+              <span className="text-sm text-[#C4C4C4]">1.0.0</span>
+            </div>
+          </div>
+        </section>
+
         {/* ── Global Stats ── */}
         {globalStats && (
           <section className="pb-4">

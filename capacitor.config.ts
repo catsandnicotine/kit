@@ -10,7 +10,7 @@ const devServer =
     : undefined;
 
 const config: CapacitorConfig = {
-  appId: 'com.kit.app',
+  appId: 'com.kai.kit',
   appName: 'Kit',
   webDir: 'dist',
   ...(devServer && { server: devServer }),
