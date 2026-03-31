@@ -740,7 +740,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
 
     if (useNewArch) {
       await deckManager.removeDeck(deckId);
-      deleteMediaForDeck(deckId);
+      await deleteMediaForDeck(deckId);
       await deckManager.refreshDecks();
       setDeletingDeck(null);
       return;
@@ -748,7 +748,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     if (!db) return;
     const result = deleteDeck(db, deckId);
     if (result.success) {
-      deleteMediaForDeck(deckId);
+      await deleteMediaForDeck(deckId);
       persistAndBackup();
       refreshDecks();
     }
