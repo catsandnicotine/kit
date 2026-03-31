@@ -205,25 +205,35 @@ function replayCardEdit(
 ): void {
   if (deletedCardIds.has(op.cardId)) return;
 
-  // Read current card's updatedAt to check if this edit is newer
   try {
-    const rows = db.exec('SELECT updated_at FROM cards WHERE id = ?', [op.cardId]);
+    const rows = db.exec(
+      'SELECT updated_at, front, back, tags FROM cards WHERE id = ?',
+      [op.cardId],
+    );
     if (!rows.length || !rows[0]!.values.length) return;
-    const currentUpdatedAt = Number(rows[0]!.values[0]![0]);
+    const row = rows[0]!.values[0]!;
+    const currentUpdatedAt = Number(row[0]);
 
     if (op.updatedAt > currentUpdatedAt) {
       const front = op.fields.front;
       const back = op.fields.back;
       const tags = op.fields.tags;
 
-      // Build SET clause dynamically based on which fields are present
+      // Only update fields present in the op — preserve current values for the rest
       if (front !== undefined || back !== undefined || tags !== undefined) {
+        const curFront = String(row[1] ?? '');
+        const curBack = String(row[2] ?? '');
+        let curTags: string[] = [];
+        if (row[3]) {
+          try { curTags = JSON.parse(String(row[3])); } catch { /* keep empty */ }
+        }
+
         updateCard(
           db,
           op.cardId,
-          front ?? '',
-          back ?? '',
-          tags ?? [],
+          front ?? curFront,
+          back ?? curBack,
+          tags ?? curTags,
           op.updatedAt,
         );
       }

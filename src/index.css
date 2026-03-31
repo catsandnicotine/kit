@@ -214,6 +214,8 @@
   .browse-card-preview {
     height: 12rem;
     pointer-events: none;
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
   .browse-card-preview img {
     max-height: 10rem;

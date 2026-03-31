@@ -182,10 +182,7 @@ function AppInner() {
   );
 
   const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
-
-  const goTags = useCallback(() => {
-    setRoute({ page: 'tags' });
-  }, []);
+  const goTags = useCallback(() => setRoute({ page: 'tags' }), []);
 
   const goDeckSettings = useCallback(
     (deckId: string, deckName: string) => navigateToDeck('deck-settings', deckId, deckName),

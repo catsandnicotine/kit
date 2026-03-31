@@ -565,6 +565,37 @@ export function updateCard(
 }
 
 /**
+ * Update only the tags on a card (lightweight — skips front/back).
+ *
+ * @param db        - sql.js Database instance.
+ * @param id        - Card UUID.
+ * @param tags      - New tags array.
+ * @param updatedAt - Unix timestamp (seconds).
+ * @returns The updated Card on success, or an error.
+ */
+export function updateCardTags(
+  db: Database,
+  id: string,
+  tags: string[],
+  updatedAt: number,
+): Result<Card> {
+  try {
+    db.run(
+      'UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(tags), updatedAt, id],
+    );
+    const stmt = db.prepare('SELECT * FROM cards WHERE id = ?');
+    stmt.bind([id]);
+    const found = stmt.step() ? toCard(stmt.getAsObject() as Row) : null;
+    stmt.free();
+    if (!found) return { success: false, error: `Card ${id} not found after update` };
+    return { success: true, data: found };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Delete a single card and its state/logs via CASCADE.
  * @param db - sql.js Database instance.
  * @param id - Card UUID.
