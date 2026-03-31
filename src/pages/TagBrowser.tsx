@@ -11,6 +11,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { UseDeckManagerReturn } from '../hooks/useDeckManager';
 import type { GlobalTag } from '../lib/sync/types';
 import type { TagCount } from '../lib/db/queries';
+import { addTagToDeck, removeTagFromDeck, getDecksByTag, upsertTagColor } from '../lib/db/queries';
+import type { DeckAssociation } from '../hooks/useTagSheet';
 import { hapticTap } from '../lib/platform/haptics';
 import { TAG_PALETTE, pillTextColor } from '../lib/tagColors';
 import { sortTagsByColor, groupTagsByFamily } from '../lib/tagSort';
@@ -104,6 +106,64 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
     loadTags();
     setSelectedTag(null);
   }, [deckManager, loadTags]);
+
+  // ── Deck associations (add/remove tag from decks) ─────────────────────
+
+  const allDecks = useMemo(
+    () => deckManager.deckEntries.map(e => ({ id: e.deckId, name: e.name, description: '', createdAt: 0, updatedAt: 0 })),
+    [deckManager.deckEntries],
+  );
+
+  const [deckAssociations, setDeckAssociations] = useState<DeckAssociation[]>([]);
+
+  const loadAssociations = useCallback(async (tagName: string) => {
+    // Check each deck's DB to find which decks have this tag
+    const assocs: DeckAssociation[] = [];
+    for (const entry of deckManager.deckEntries) {
+      const db = await deckManager.openDeckDb(entry.deckId);
+      if (!db) continue;
+      const result = getDecksByTag(db, tagName);
+      if (result.success && result.data.some(a => a.deckId === entry.deckId)) {
+        assocs.push({ deckId: entry.deckId, deckName: entry.name });
+      }
+    }
+    setDeckAssociations(assocs);
+  }, [deckManager]);
+
+  // Load associations when a tag is selected
+  useEffect(() => {
+    if (selectedTag) loadAssociations(selectedTag.tag);
+    else setDeckAssociations([]);
+  }, [selectedTag, loadAssociations]);
+
+  const handleAddToDeck = useCallback(async (tag: string, deckId: string) => {
+    const db = await deckManager.openDeckDb(deckId);
+    if (!db) return;
+    const now = Math.floor(Date.now() / 1000);
+    addTagToDeck(db, deckId, tag, now);
+    // Also write the tag color into the deck's tag_colors table so Browse can read it
+    const globalTag = deckManager.getGlobalTags().find(t => t.name === tag);
+    if (globalTag?.color) upsertTagColor(db, tag, globalTag.color, now);
+    await deckManager.writeEdit(deckId, [{ type: 'deck_tag_add', tag }]);
+    // Snapshot immediately so the tag survives app restarts — TagBrowser
+    // doesn't go through the normal finalizeDeck path on navigate-away.
+    deckManager.compact(deckId).catch(() => {});
+    hapticTap();
+    const entry = deckManager.deckEntries.find(e => e.deckId === deckId);
+    if (entry) {
+      setDeckAssociations(prev => [...prev, { deckId, deckName: entry.name }]);
+    }
+  }, [deckManager]);
+
+  const handleRemoveFromDeck = useCallback(async (tag: string, deckId: string) => {
+    const db = await deckManager.openDeckDb(deckId);
+    if (!db) return;
+    removeTagFromDeck(db, deckId, tag);
+    await deckManager.writeEdit(deckId, [{ type: 'deck_tag_remove', tag }]);
+    deckManager.compact(deckId).catch(() => {});
+    hapticTap();
+    setDeckAssociations(prev => prev.filter(a => a.deckId !== deckId));
+  }, [deckManager]);
 
   const totalTags = tags.length;
 
@@ -231,11 +291,15 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
       {selectedTag && (
         <TagBottomSheet
           tag={selectedTag}
+          allDecks={allDecks}
+          deckAssociations={deckAssociations}
           onClose={() => setSelectedTag(null)}
           onRename={(oldTag, newTag) => handleRename(oldTag, newTag)}
           onColorChange={(tag, hex) => handleColorChange(tag, hex)}
           onDelete={tag => handleDelete(tag)}
-          onTagUpdated={newName => setSelectedTag(prev => prev ? { ...prev, tag: newName } : null)}
+          onAddToDeck={handleAddToDeck}
+          onRemoveFromDeck={handleRemoveFromDeck}
+          onTagUpdated={newName => { setSelectedTag(prev => prev ? { ...prev, tag: newName } : null); }}
         />
       )}
 

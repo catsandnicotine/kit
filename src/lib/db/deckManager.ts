@@ -336,7 +336,7 @@ export async function applyAndSync(
 ): Promise<string | null> {
   if (!_storage || !_clock || ops.length === 0) return null;
 
-  // Write edit file to iCloud (async, non-blocking for local writes)
+  // Write edit file to persistent storage
   const hlc = await writeEdit(_storage, _clock, deckId, ops);
 
   // Update watermark
@@ -383,12 +383,21 @@ export async function compactDeckEdits(deckId: string): Promise<boolean> {
 
   const deleted = deletedCards.get(deckId) ?? new Set<string>();
 
-  // Always snapshot the current in-memory DB state locally.
-  // This ensures edits from this session survive app restarts even if iCloud
-  // was unavailable and edit files are still in the pending queue.
-  if (_writeLocalSnapshot) {
-    const snap = snapshotCurrentState(db, deckId, watermarks.get(deckId) ?? '', deleted);
-    if (snap) _writeLocalSnapshot(deckId, JSON.stringify(snap)).catch(() => {});
+  // Always snapshot the current in-memory DB state so edits from this
+  // session survive app restarts — even if individual edit files are lost
+  // or iCloud was unavailable during the session.
+  const snap = snapshotCurrentState(db, deckId, watermarks.get(deckId) ?? '', deleted);
+  if (snap) {
+    const snapJson = JSON.stringify(snap);
+    // Write to native local storage (iOS) — awaited so the snapshot is
+    // reliably on disk before the function returns. This is the primary
+    // persistence path; iCloud is secondary (best-effort).
+    if (_writeLocalSnapshot) {
+      try { await _writeLocalSnapshot(deckId, snapJson); } catch { /* best effort */ }
+    }
+    // Write to sync storage (iCloud on native, localStorage in browser)
+    // so the snapshot is available on next openDeck regardless of platform
+    _storage.writeFile(`${deckId}/snapshot.json`, snapJson).catch(() => {});
   }
 
   return compactDeck(_storage, db, deckId, deleted);

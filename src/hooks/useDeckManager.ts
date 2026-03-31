@@ -101,14 +101,18 @@ async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
       directory: Directory.Documents,
       recursive: true,
     });
+  } catch {
+    // Directory already exists — expected on subsequent writes
+  }
+  try {
     await Filesystem.writeFile({
       path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
       data,
       directory: Directory.Documents,
       encoding: Encoding.UTF8,
     });
-  } catch {
-    // Best effort — deck still openable from iCloud if this fails
+  } catch (e) {
+    console.warn('[snapshot] Failed to write local snapshot:', e);
   }
 }
 
