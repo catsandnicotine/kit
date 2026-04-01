@@ -41,7 +41,7 @@ import {
 } from '../lib/db/queries';
 import { hapticCelebration } from '../lib/platform/haptics';
 import { isNativePlatform } from '../lib/platform/platformDetect';
-import { saveMediaFile } from '../lib/platform/mediaFiles';
+import { saveMediaFile, deleteMediaForDeck } from '../lib/platform/mediaFiles';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
 import type { UseDeckManagerReturn } from './useDeckManager';
@@ -67,10 +67,19 @@ import {
 export type ImportPhase =
   | 'idle'
   | 'parsing'
+  | 'duplicate-found'
   | 'storing-cards'
   | 'storing-media'
   | 'done'
   | 'error';
+
+/** Info about an existing deck that conflicts with an incoming import. */
+export interface ConflictInfo {
+  /** Kit UUID of the existing deck that has the same name. */
+  existingId: string;
+  /** Display name of the conflicting deck. */
+  deckName: string;
+}
 
 export interface UseDeckImportReturn {
   /** Current phase of the import pipeline. */
@@ -79,8 +88,16 @@ export interface UseDeckImportReturn {
   errorMessage: string;
   /** Summary of what was imported (shown on success). */
   importInfo: string;
+  /** Set when phase is 'duplicate-found'; null otherwise. */
+  conflictInfo: ConflictInfo | null;
   /** Start importing a .apkg File. */
   importFile: (file: File) => Promise<void>;
+  /**
+   * Resolve a duplicate-found conflict.
+   * 'new'     — import alongside the existing deck (keep both).
+   * 'replace' — delete the existing deck, then import fresh.
+   */
+  resolveConflict: (action: 'new' | 'replace') => void;
   /** Reset back to idle so the user can import again. */
   reset: () => void;
 }
@@ -122,13 +139,28 @@ export function useDeckImport(
   const [phase, setPhase] = useState<ImportPhase>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const [importInfo, setImportInfo] = useState('');
+  const [conflictInfo, setConflictInfo] = useState<ConflictInfo | null>(null);
   const busyRef = useRef(false);
+  // When phase === 'duplicate-found', calling this resolves the suspended Promise
+  // inside importFile so the import can continue or be cancelled.
+  type ConflictAction = 'new' | 'replace' | 'cancel';
+  const conflictResolveRef = useRef<((action: ConflictAction) => void) | null>(null);
 
   const reset = useCallback(() => {
+    // Cancel any suspended import that's waiting on a conflict decision.
+    conflictResolveRef.current?.('cancel');
+    conflictResolveRef.current = null;
+    setConflictInfo(null);
     setPhase('idle');
     setErrorMessage('');
     setImportInfo('');
     busyRef.current = false;
+  }, []);
+
+  const resolveConflict = useCallback((action: 'new' | 'replace') => {
+    conflictResolveRef.current?.(action);
+    conflictResolveRef.current = null;
+    setConflictInfo(null);
   }, []);
 
   const importFile = useCallback(
@@ -160,6 +192,39 @@ export function useDeckImport(
         }
 
         const parsed = parseResult.data;
+
+        // ── Duplicate deck check (new arch only) ──────────────────────────
+        // Find the root deck name (first entry; Anki orders parent before children).
+        if (useNewArch && deckManager && parsed.decks.length > 0) {
+          const incomingName = (parsed.decks[0]?.name ?? '').trim().toLowerCase();
+          const conflict = incomingName
+            ? deckManager.deckEntries.find(
+                e => e.name.trim().toLowerCase() === incomingName,
+              )
+            : undefined;
+
+          if (conflict) {
+            // Pause the import and wait for the user to decide.
+            const action = await new Promise<ConflictAction>((resolve) => {
+              conflictResolveRef.current = resolve;
+              setConflictInfo({ existingId: conflict.deckId, deckName: conflict.name });
+              setPhase('duplicate-found');
+            });
+
+            if (action === 'cancel') {
+              setPhase('idle');
+              busyRef.current = false;
+              return;
+            }
+
+            if (action === 'replace') {
+              await deckManager.removeDeck(conflict.deckId);
+              await deleteMediaForDeck(conflict.deckId);
+              await deckManager.refreshDecks();
+            }
+            // 'new' falls through and imports alongside the existing deck.
+          }
+        }
 
         // ── Phase 2: Storing cards ────────────────────────────────────────
         setPhase('storing-cards');
@@ -281,7 +346,7 @@ export function useDeckImport(
     [db, deckManager, onComplete],
   );
 
-  return { phase, errorMessage, importInfo, importFile, reset };
+  return { phase, errorMessage, importInfo, conflictInfo, importFile, resolveConflict, reset };
 }
 
 // ---------------------------------------------------------------------------
