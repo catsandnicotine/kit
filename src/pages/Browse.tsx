@@ -373,9 +373,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     // block the thread with the full card query.
     loadCardsTimer.current = setTimeout(() => {
       loadCardsTimer.current = null;
-      console.time('[Browse] getCardsByDeck');
       const result = getCardsByDeck(db, deckId);
-      console.timeEnd('[Browse] getCardsByDeck');
       if (result.success) setCards(result.data);
     }, 0);
   }, [db, deckId]);

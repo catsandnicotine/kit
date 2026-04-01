@@ -149,6 +149,15 @@ export function renderImageOcclusion(
   // Remove the <div id="err"> placeholder
   result = result.replace(/<div\s+id=["']err["']\s*>\s*<\/div>/gi, '');
 
+  // Remove Anki IO template buttons (Toggle Masks, Hide Masks) — these call
+  // toggle_masks() / hide_masks() which don't exist in Kit's context.
+  result = result.replace(
+    /<button\b[^>]*onclick=["'][^"']*_masks[^"']*["'][^>]*>[\s\S]*?<\/button>/gi,
+    '',
+  );
+  // Also strip the io-buttons container if it's now empty (or was button-only)
+  result = result.replace(/<div\b[^>]*id=["']io-buttons["'][^>]*>\s*<\/div>/gi, '');
+
   // Insert SVG overlay right after the <img> tag inside the container.
   // Container and image styling is handled by CSS in index.css.
   const containerPattern = /(id=["']image-occlusion-container["'][^>]*>[\s\S]*?<img\b[^>]*>)/i;

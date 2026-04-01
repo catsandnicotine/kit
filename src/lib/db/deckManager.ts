@@ -161,11 +161,9 @@ export async function openDeck(deckId: string): Promise<Database | null> {
   if (!_SQL || !_storage) return null;
 
   try {
-    console.time(`[deckManager] openDeck(${deckId})`);
 
     // Try local storage first (reliable on-device), then fall back to iCloud.
     let snapshot: DeckSnapshot | null = null;
-    console.time('[deckManager] readSnapshot');
     if (_readLocalSnapshot) {
       const localData = await _readLocalSnapshot(deckId);
       if (localData) {
@@ -184,7 +182,6 @@ export async function openDeck(deckId: string): Promise<Database | null> {
         _writeLocalSnapshot(deckId, JSON.stringify(snapshot)).catch(() => {});
       }
     }
-    console.timeEnd('[deckManager] readSnapshot');
     if (!snapshot) return null;
 
     // Create and populate DB from snapshot
@@ -193,13 +190,9 @@ export async function openDeck(deckId: string): Promise<Database | null> {
 
     // Replay any edits newer than the snapshot
     const deleted = new Set(snapshot.deletedCardIds ?? []);
-    console.time('[deckManager] readEditsAfter');
     const edits = await readEditsAfter(_storage, deckId, snapshot.compactedThrough);
-    console.timeEnd('[deckManager] readEditsAfter');
     if (edits.length > 0) {
-      console.time(`[deckManager] replayEdits(${edits.length})`);
       replayEdits(db, edits, deleted);
-      console.timeEnd(`[deckManager] replayEdits(${edits.length})`);
     }
 
     // Track state
@@ -225,14 +218,12 @@ export async function openDeck(deckId: string): Promise<Database | null> {
       });
     } else {
       // First open for this deck — query name and counts once.
-      console.time('[deckManager] getAllDeckCardCounts (first open)');
       const decksResult = getAllDecks(db);
       const deckName = decksResult.success
         ? (decksResult.data.find(d => d.id === deckId)?.name ?? '')
         : '';
       const countsResult = getAllDeckCardCounts(db, now);
       const deckCounts = countsResult.success ? countsResult.data[deckId] : undefined;
-      console.timeEnd('[deckManager] getAllDeckCardCounts (first open)');
 
       upsertDeckEntry({
         deckId,
@@ -247,10 +238,8 @@ export async function openDeck(deckId: string): Promise<Database | null> {
       });
     }
 
-    console.timeEnd(`[deckManager] openDeck(${deckId})`);
     return db;
   } catch (e) {
-    console.timeEnd(`[deckManager] openDeck(${deckId})`);
     console.warn('[deckManager] Failed to open deck:', deckId, e);
     return null;
   }
@@ -599,18 +588,15 @@ async function buildDbFromSnapshot(
   snapshot: DeckSnapshot,
 ): Promise<Database | null> {
   try {
-    console.time(`[deckManager] buildDbFromSnapshot(${snapshot.cards.length} cards)`);
 
     const db = new SQL.Database();
     db.run(ENABLE_FOREIGN_KEYS);
 
     // Create schema
-    console.time('[deckManager] schema+migrations');
     for (const ddl of ALL_TABLES) {
       db.run(ddl);
     }
     runMigrations(db);
-    console.timeEnd('[deckManager] schema+migrations');
 
     // Populate from snapshot in a single transaction.
     // The DB is brand-new and not yet in openDbs, so yielding mid-transaction
@@ -625,28 +611,21 @@ async function buildDbFromSnapshot(
         insertNoteType(db, nt);
       }
 
-      console.time(`[deckManager] insert notes(${snapshot.notes.length})`);
       for (let i = 0; i < snapshot.notes.length; i++) {
         insertNote(db, snapshot.notes[i]!);
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
-      console.timeEnd(`[deckManager] insert notes(${snapshot.notes.length})`);
 
-      console.time(`[deckManager] insert cards(${snapshot.cards.length})`);
       for (let i = 0; i < snapshot.cards.length; i++) {
         insertCard(db, snapshot.cards[i]!);
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
-      console.timeEnd(`[deckManager] insert cards(${snapshot.cards.length})`);
 
-      console.time(`[deckManager] insert cardStates(${snapshot.cardStates.length})`);
       for (let i = 0; i < snapshot.cardStates.length; i++) {
         setCardState(db, snapshot.cardStates[i]!);
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
-      console.timeEnd(`[deckManager] insert cardStates(${snapshot.cardStates.length})`);
 
-      console.time(`[deckManager] insert reviewLogs(${snapshot.reviewLogs.length})`);
       for (let i = 0; i < snapshot.reviewLogs.length; i++) {
         const log = snapshot.reviewLogs[i]!;
         insertReviewLog(db, {
@@ -659,7 +638,6 @@ async function buildDbFromSnapshot(
         });
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
-      console.timeEnd(`[deckManager] insert reviewLogs(${snapshot.reviewLogs.length})`);
 
       // Deck settings
       if (snapshot.settings) {
@@ -696,7 +674,6 @@ async function buildDbFromSnapshot(
       }
 
       commitTransaction(db);
-      console.timeEnd(`[deckManager] buildDbFromSnapshot(${snapshot.cards.length} cards)`);
       return db;
     } catch (e) {
       console.warn('[deckManager] Failed to populate DB from snapshot:', e);

@@ -598,7 +598,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     refreshDecks();
   }, [refreshDecks]);
 
-  const { phase: importPhase, errorMessage: importError, importInfo, importFile, reset: resetImport } =
+  const { phase: importPhase, errorMessage: importError, importInfo, conflictInfo, importFile, resolveConflict, reset: resetImport } =
     useDeckImport(db, onImportComplete, deckManager);
 
   // ── Export hook ──────────────────────────────────────────────────────
@@ -740,7 +740,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
 
     if (useNewArch) {
       await deckManager.removeDeck(deckId);
-      deleteMediaForDeck(deckId);
+      await deleteMediaForDeck(deckId);
       await deckManager.refreshDecks();
       setDeletingDeck(null);
       return;
@@ -748,7 +748,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     if (!db) return;
     const result = deleteDeck(db, deckId);
     if (result.success) {
-      deleteMediaForDeck(deckId);
+      await deleteMediaForDeck(deckId);
       persistAndBackup();
       refreshDecks();
     }
@@ -987,6 +987,42 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
         <div className="px-4 py-3 flex flex-col gap-2">
           <p className="text-sm text-red-500">{exportError}</p>
           <button onClick={resetExport} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
+        </div>
+      )}
+
+      {/* Duplicate import dialog */}
+      {importPhase === 'duplicate-found' && conflictInfo && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
+          <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 pt-5 pb-4 text-center">
+              <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]">
+                Deck already exists
+              </p>
+              <p className="text-sm text-[#C4C4C4] mt-2">
+                A deck named <span className="font-medium text-[#1c1c1e] dark:text-[#E5E5E5]">"{conflictInfo.deckName}"</span> already exists. What would you like to do?
+              </p>
+            </div>
+            <div className="flex flex-col border-t border-[#E5E5E5] dark:border-[#333]">
+              <button
+                onClick={() => { hapticTap(); resolveConflict('replace'); }}
+                className="py-3.5 text-sm font-medium text-red-500 active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
+              >
+                Replace existing deck
+              </button>
+              <button
+                onClick={() => { hapticTap(); resolveConflict('new'); }}
+                className="py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
+              >
+                Import as new deck
+              </button>
+              <button
+                onClick={() => { hapticTap(); resetImport(); }}
+                className="py-3.5 text-sm text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#262626]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

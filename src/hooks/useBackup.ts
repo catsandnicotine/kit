@@ -76,9 +76,7 @@ export function scheduleICloudBackup(): void {
       // Yield one tick before the blocking export so pending UI frames can flush.
       await new Promise(resolve => setTimeout(resolve, 0));
       if (!_backupDb) return;
-      console.time('[backup] db.export');
       const data = _backupDb.export();
-      console.timeEnd('[backup] db.export');
       const success = await backupDatabase(data, cardCount);
 
       if (success) {

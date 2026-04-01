@@ -194,7 +194,6 @@ async function cleanupMigrationBackup(): Promise<void> {
         path: 'kit.db.migrated',
         directory: Directory.Documents,
       });
-      console.log('[useDeckManager] Deleted kit.db.migrated (>30 days old)');
       try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch {}
     }
     // File still exists but isn't old enough yet — check again next launch.
@@ -335,7 +334,6 @@ export function useDeckManager(): UseDeckManagerReturn {
               const migratedCount = await migrateMonolithicDb(
                 SQL, snapshot, storage, deviceId,
               );
-              console.log(`[useDeckManager] Migrated ${migratedCount} decks`);
 
               // Save registry after migration
               await persistRegistry();
@@ -379,9 +377,7 @@ export function useDeckManager(): UseDeckManagerReturn {
           if (needsEviction) {
             try { localStorage.removeItem(LS_EVICT_MEDIA_KEY); } catch {}
             const activeIds = new Set(entries.map(e => e.deckId));
-            evictOrphanedMedia(activeIds).then(n => {
-              if (n > 0) console.log(`[useDeckManager] Evicted media for ${n} orphaned deck(s)`);
-            }).catch(() => {});
+            evictOrphanedMedia(activeIds).catch(() => {});
           }
         }
       } catch (e) {
