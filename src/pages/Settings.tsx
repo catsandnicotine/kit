@@ -728,7 +728,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
               <span className="text-sm text-[#C4C4C4]">jikelvin9@gmail.com</span>
             </a>
             <a
-              href="/privacy.html"
+              href="https://catsandnicotine.github.io/kit/public/privacy.html"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center justify-between px-4 py-3 active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
