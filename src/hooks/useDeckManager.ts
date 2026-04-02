@@ -331,7 +331,7 @@ export function useDeckManager(): UseDeckManagerReturn {
             const snapshot = await loadDatabaseSnapshot();
             if (snapshot && snapshot !== 'too_large') {
               const deviceId = getDeviceId();
-              const migratedCount = await migrateMonolithicDb(
+              await migrateMonolithicDb(
                 SQL, snapshot, storage, deviceId,
               );
 
