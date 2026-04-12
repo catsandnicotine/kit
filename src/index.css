@@ -27,6 +27,14 @@
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   }
 
+  /* Hide browser-style scrollbars — keeps the app feeling native */
+  * {
+    scrollbar-width: none; /* Firefox */
+  }
+  *::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, WKWebView */
+  }
+
   /* Allow selection inside card content and editable fields */
   .card-content, .rich-field, input, textarea {
     -webkit-user-select: text;
@@ -50,8 +58,8 @@
     background-color: var(--kit-bg);
   }
   html[data-theme="black"] {
-    --kit-bg: #0A0A0A;
-    --kit-surface: #141414;
+    --kit-bg: #000000;
+    --kit-surface: #0F0F0F;
     background-color: var(--kit-bg);
   }
 }

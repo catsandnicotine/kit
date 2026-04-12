@@ -404,64 +404,64 @@ function ReviewLimitPicker({
   onSelect: (limit: number | null) => void;
   onDismiss: () => void;
 }) {
+  const [custom, setCustom] = useState('');
   const quickOptions = [10, 20, 30, 50, 100].filter(n => n < totalDueReviews);
+
+  const handleCustom = () => {
+    const n = parseInt(custom, 10);
+    if (n > 0 && n <= totalDueReviews) { hapticTap(); onSelect(n); }
+  };
+
+  const selectedStyle = 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A]';
+  const unselectedStyle = 'bg-[#F0F0F0] dark:bg-[#2A2A2A] text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70';
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/30"
-        onClick={onDismiss}
-      />
-      {/* Sheet */}
+      <div className="absolute inset-0 bg-black/30" onClick={onDismiss} />
       <div
         className="relative bg-[var(--kit-surface)] rounded-t-2xl shadow-xl"
         style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
       >
-        {/* Handle */}
-        <div className="flex justify-center pt-3 pb-4">
-          <div className="w-10 h-1 rounded-full bg-[#D4D4D4] dark:bg-[#404040]" />
-        </div>
-
-        <div className="px-4 pb-2">
+        <div className="px-5 pt-5 pb-3">
           <p className="text-sm font-semibold mb-0.5">Limit review cards</p>
           <p className="text-xs text-[#C4C4C4]">{totalDueReviews} due · new and learning cards always show</p>
         </div>
 
-        {/* Quick options */}
-        <div className="px-4 pt-3 pb-1 flex flex-wrap gap-2">
+        <div className="px-5 pb-3 flex flex-wrap gap-2">
           <button
-            onClick={() => onSelect(null)}
-            className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
-              currentLimit === null
-                ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
-                : 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]'
-            }`}
+            onClick={() => { hapticTap(); onSelect(null); }}
+            className={`px-4 py-2 rounded-full text-sm font-semibold transition-opacity ${currentLimit === null ? selectedStyle : unselectedStyle}`}
           >
-            All ({totalDueReviews})
+            All
           </button>
           {quickOptions.map(n => (
             <button
               key={n}
-              onClick={() => onSelect(n)}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-colors ${
-                currentLimit === n
-                  ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-[#1c1c1e] dark:border-[#E5E5E5]'
-                  : 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]'
-              }`}
+              onClick={() => { hapticTap(); onSelect(n); }}
+              className={`px-4 py-2 rounded-full text-sm font-semibold transition-opacity ${currentLimit === n ? selectedStyle : unselectedStyle}`}
             >
               {n}
             </button>
           ))}
         </div>
 
-        {/* Cancel */}
-        <div className="px-4 pt-3">
+        <div className="px-5 pb-4 flex gap-2">
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={totalDueReviews}
+            placeholder="Custom"
+            value={custom}
+            onChange={e => setCustom(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleCustom(); }}
+            className="flex-1 text-sm bg-[#F0F0F0] dark:bg-[#2A2A2A] rounded-full px-4 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
+          />
           <button
-            onClick={onDismiss}
-            className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+            onClick={handleCustom}
+            className="px-4 py-2 rounded-full text-sm font-semibold bg-[#F0F0F0] dark:bg-[#2A2A2A] text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70 transition-opacity"
           >
-            Cancel
+            Set
           </button>
         </div>
       </div>

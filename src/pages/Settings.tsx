@@ -27,6 +27,8 @@ import { persistDatabase } from '../hooks/useDatabase';
 interface SettingsProps {
   db: Database | null;
   onBack: () => void;
+  /** If set, auto-scroll to a section on mount (e.g. 'icloud-sync'). */
+  scrollTo?: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -282,8 +284,22 @@ function BackupDetails({ meta }: { meta: BackupMeta }) {
  * @param db     - sql.js Database instance (null while loading).
  * @param onBack - Called when the user navigates back.
  */
-export default function Settings({ db, onBack }: SettingsProps) {
+export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
   const { theme, setTheme } = useTheme();
+  const icloudSyncRef = useRef<HTMLElement>(null);
+  const [flashIcloud, setFlashIcloud] = useState(false);
+
+  useEffect(() => {
+    if (scrollTo === 'icloud-sync' && icloudSyncRef.current) {
+      // Small delay so the page renders first
+      const timer = setTimeout(() => {
+        icloudSyncRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setFlashIcloud(true);
+        setTimeout(() => setFlashIcloud(false), 1500);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollTo]);
 
   const {
     phase,
@@ -482,17 +498,17 @@ export default function Settings({ db, onBack }: SettingsProps) {
       >
         {/* ── Appearance ── */}
         <section className="py-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">Appearance</h2>
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
-            <div className="flex gap-2">
+          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">Appearance</h2>
+          <div className="bg-[var(--kit-surface)] rounded-xl">
+            <div className="px-4 py-3 flex gap-2">
               {THEME_OPTIONS.map(({ value, label, icon }) => (
                 <button
                   key={value}
                   onClick={() => handleThemeChange(value)}
-                  className={`flex-1 py-2.5 flex flex-col items-center gap-1.5 text-xs rounded-md border transition-colors ${
+                  className={`flex-1 py-2.5 flex flex-col items-center gap-1.5 text-xs rounded-lg transition-colors ${
                     theme === value
-                      ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] border-transparent font-semibold'
-                      : 'border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4]'
+                      ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] font-semibold'
+                      : 'bg-[#F0F0F0] dark:bg-[#1A1A1A] text-[#C4C4C4]'
                   }`}
                 >
                   {icon}
@@ -500,28 +516,30 @@ export default function Settings({ db, onBack }: SettingsProps) {
                 </button>
               ))}
             </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Show session timer</span>
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm">Show session timer</span>
               <button
                 onClick={handleTimerToggle}
-                className={`w-11 h-6 rounded-full transition-colors relative ${showTimer ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#404040]'}`}
+                className={`w-11 h-6 rounded-full transition-colors relative ${showTimer ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#333]'}`}
               >
                 <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-[#FDFBF7] dark:bg-[var(--kit-bg)] transition-transform ${showTimer ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[var(--kit-bg)] transition-transform ${showTimer ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
                 />
               </button>
             </div>
           </div>
         </section>
 
-        {/* ── Study Preferences ── */}
+        {/* ── Study ── */}
         <section className="pb-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">Study</h2>
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
-            <div>
+          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">Study</h2>
+          <div className="bg-[var(--kit-surface)] rounded-xl">
+            {/* Target retention */}
+            <div className="px-4 py-3">
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1">
-                  <span className="text-sm font-medium">Target retention</span>
+                  <span className="text-sm">Target retention</span>
                   <button
                     onClick={() => { hapticTap(); setShowRetentionInfo(v => !v); }}
                     aria-label="More info"
@@ -538,53 +556,109 @@ export default function Settings({ db, onBack }: SettingsProps) {
               {showRetentionInfo && (
                 <p className="text-[11px] text-[#C4C4C4] mb-1 leading-relaxed">How often you should remember a card when it comes due. Higher = more frequent reviews but better memory. Applied to all decks.</p>
               )}
-              <input
-                type="range"
-                min={70}
-                max={99}
-                step={1}
-                value={Math.round(defaultRetention * 100)}
-                onInput={e => handleSaveRetention(Number((e.target as HTMLInputElement).value) / 100)}
-                onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
-                className="w-full accent-[#1c1c1e] dark:accent-[#E5E5E5]"
-                style={{ touchAction: 'none' }}
-              />
+              <div onTouchMove={e => e.stopPropagation()}>
+                <input
+                  type="range"
+                  min={70}
+                  max={99}
+                  step={1}
+                  value={Math.round(defaultRetention * 100)}
+                  onInput={e => handleSaveRetention(Number((e.target as HTMLInputElement).value) / 100)}
+                  onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
+                  className="w-full accent-[#1c1c1e] dark:accent-[#E5E5E5]"
+                  style={{ touchAction: 'none' }}
+                />
+              </div>
               <div className="flex justify-between text-[11px] text-[#C4C4C4] mt-0.5">
                 <span>70%</span>
                 <span>99%</span>
               </div>
             </div>
-          </div>
-        </section>
 
-        {/* ── Notifications ── */}
-        <section className="pb-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">Notifications</h2>
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
-            {/* Enable toggle */}
-            <div className="flex items-center justify-between">
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            {/* Learning steps */}
+            <div className="px-4 py-3">
+              <span className="text-sm">Practice intervals</span>
+              <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">Minutes to wait before re-showing a card you got wrong.</p>
+              <StepsEditor
+                steps={defaultStepsArr}
+                onChange={(s) => { setDefaultStepsArr(s); saveDefaultSteps(s); }}
+              />
+            </div>
+
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm">First review after learning</span>
+              <select
+                value={defaultGradInt}
+                onChange={(e) => { hapticTap(); setDefaultGradInt(Number(e.target.value)); }}
+                className="bg-[#F0F0F0] dark:bg-[#1A1A1A] rounded-lg px-3 py-1.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
+              >
+                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            <div className="flex items-center justify-between px-4 py-3">
+              <span className="text-sm">Easy interval</span>
+              <select
+                value={defaultEasyInt}
+                onChange={(e) => { hapticTap(); setDefaultEasyInt(Number(e.target.value)); }}
+                className="bg-[#F0F0F0] dark:bg-[#1A1A1A] rounded-lg px-3 py-1.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
+              >
+                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            <div className="px-4 py-3 flex gap-2">
+              <button
+                onClick={applyToAllDecks}
+                className="flex-1 py-2 text-xs font-semibold border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
+              >
+                Apply to all decks
+              </button>
+              <button
+                onClick={applyToNewOnly}
+                className="flex-1 py-2 text-xs border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
+              >
+                New decks only
+              </button>
+            </div>
+          </div>
+
+          {/* Study reminders — separate card within Study section */}
+          <div className="bg-[var(--kit-surface)] rounded-xl mt-3">
+            <div className="flex items-center justify-between px-4 py-3">
               <div>
-                <span className="text-sm font-medium">Study reminders</span>
+                <span className="text-sm">Study reminders</span>
                 <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">
                   Daily notifications showing how many cards are due.
                 </p>
               </div>
               <button
                 onClick={handleNotifToggle}
-                className={`ml-4 w-11 h-6 rounded-full transition-colors relative shrink-0 ${notifEnabled ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#404040]'}`}
+                className={`ml-4 w-11 h-6 rounded-full transition-colors relative shrink-0 ${notifEnabled ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#333]'}`}
                 aria-label={notifEnabled ? 'Disable study reminders' : 'Enable study reminders'}
               >
                 <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-[#FDFBF7] dark:bg-[var(--kit-bg)] transition-transform ${notifEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
+                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[var(--kit-bg)] transition-transform ${notifEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
                 />
               </button>
             </div>
 
-            {/* Time pickers — only shown when enabled */}
             {notifEnabled && (
               <>
-                <div className="h-px bg-[#E5E5E5] dark:bg-[#262626] -mx-4" />
-                <div className="flex flex-col gap-3">
+                <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+                <div className="px-4 py-3 flex flex-col gap-3">
                   <span className="text-xs font-medium text-[#C4C4C4] uppercase tracking-wider">
                     Reminder times
                   </span>
@@ -602,7 +676,7 @@ export default function Settings({ db, onBack }: SettingsProps) {
                       onClick={handleTimeAdd}
                       className="flex items-center gap-1.5 text-sm text-[#C4C4C4] self-start"
                     >
-                      <span className="w-6 h-6 flex items-center justify-center rounded-full border border-dashed border-[#D4D4D4] dark:border-[#404040] text-base leading-none">+</span>
+                      <span className="w-6 h-6 flex items-center justify-center rounded-full border border-dashed border-[#D4D4D4] dark:border-[#333] text-base leading-none">+</span>
                       Add reminder
                     </button>
                   )}
@@ -612,128 +686,116 @@ export default function Settings({ db, onBack }: SettingsProps) {
           </div>
         </section>
 
-        {/* ── iCloud Backup ── */}
-        <section className="pb-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">iCloud Backup</h2>
+        {/* ── iCloud ── */}
+        <section ref={icloudSyncRef} className="pb-4">
+          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">iCloud</h2>
+          <div className={`bg-[var(--kit-surface)] rounded-xl transition-colors duration-700 ${flashIcloud ? 'ring-1 ring-red-400' : ''}`}>
+            {/* Backup */}
+            <div className="px-4 py-3">
+              {checking ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-[#C4C4C4]">Checking backup status…</span>
+                </div>
+              ) : lastBackup ? (
+                <BackupDetails meta={lastBackup} />
+              ) : (
+                <p className="text-sm text-[#C4C4C4]">
+                  No backup found. Back up your cards to iCloud Drive so you can restore them on a new device.
+                </p>
+              )}
 
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
-            {checking ? (
-              <div className="flex items-center gap-3">
-                <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-[#C4C4C4]">Checking backup status…</span>
-              </div>
-            ) : lastBackup ? (
-              <BackupDetails meta={lastBackup} />
-            ) : (
-              <p className="text-sm text-[#C4C4C4]">
-                No backup found. Back up your cards to iCloud Drive so you can restore them on a new device.
+              {isBackingUp && (
+                <div className="flex items-center gap-3 mt-3">
+                  <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm text-[#C4C4C4]">Backing up…</span>
+                </div>
+              )}
+
+              {phase === 'done' && (
+                <div className="flex items-center justify-between mt-3">
+                  <p className="text-sm text-green-600 dark:text-green-400">Backup complete!</p>
+                  <button onClick={reset} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
+                </div>
+              )}
+
+              {phase === 'error' && errorMessage && (
+                <div className="flex flex-col gap-2 mt-3">
+                  <p className="text-sm text-red-500">{errorMessage}</p>
+                  <button onClick={reset} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
+                </div>
+              )}
+
+              <button
+                onClick={handleBackup}
+                disabled={isBackingUp || !db}
+                className="w-full mt-3 py-2.5 text-sm font-semibold border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
+              >
+                {isBackingUp ? 'Backing up…' : 'Back Up Now'}
+              </button>
+            </div>
+
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            {/* Sync troubleshooting */}
+            <div className="px-4 py-3">
+              <p className="text-sm mb-2">Sync troubleshooting</p>
+              <ul className="flex flex-col gap-1.5 text-xs text-[#C4C4C4] leading-relaxed">
+                <li>· Same <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Apple ID</strong> on all devices</li>
+                <li>· <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud Drive</strong> enabled in iOS Settings</li>
+                <li>· Kit toggled <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">on</strong> under iCloud Drive apps</li>
+                <li>· Enough <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud storage</strong> available</li>
+              </ul>
+              <p className="text-[11px] text-[#C4C4C4] mt-2 leading-relaxed">
+                Sync is automatic. Changes may take a few minutes to appear on other devices.
               </p>
-            )}
-
-            {isBackingUp && (
-              <div className="flex items-center gap-3">
-                <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm text-[#C4C4C4]">Backing up…</span>
-              </div>
-            )}
-
-            {phase === 'done' && (
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-green-600 dark:text-green-400">Backup complete!</p>
-                <button onClick={reset} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
-              </div>
-            )}
-
-            {phase === 'error' && errorMessage && (
-              <div className="flex flex-col gap-2">
-                <p className="text-sm text-red-500">{errorMessage}</p>
-                <button onClick={reset} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
-              </div>
-            )}
-
-            <button
-              onClick={handleBackup}
-              disabled={isBackingUp || !db}
-              className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-            >
-              {isBackingUp ? 'Backing up…' : 'Back Up Now'}
-            </button>
-          </div>
-        </section>
-
-        {/* ── Default Learning Settings ── */}
-        <section className="pb-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-1">Default Learning Settings</h2>
-          <p className="text-xs text-[#C4C4C4] mb-3 leading-relaxed">
-            These apply to newly imported decks. Customize each deck individually in its own settings.
-          </p>
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-4">
-            <div>
-              <span className="text-sm font-medium">Practice intervals</span>
-              <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">Minutes to wait before re-showing a card you got wrong.</p>
-              <StepsEditor
-                steps={defaultStepsArr}
-                onChange={(s) => { setDefaultStepsArr(s); saveDefaultSteps(s); }}
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">First review after learning</span>
-              <select
-                value={defaultGradInt}
-                onChange={(e) => { hapticTap(); setDefaultGradInt(Number(e.target.value)); }}
-                className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
-              >
-                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Easy interval</span>
-              <select
-                value={defaultEasyInt}
-                onChange={(e) => { hapticTap(); setDefaultEasyInt(Number(e.target.value)); }}
-                className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
-              >
-                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={applyToAllDecks}
-                className="flex-1 py-2 text-xs font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              >
-                Apply to all decks
-              </button>
-              <button
-                onClick={applyToNewOnly}
-                className="flex-1 py-2 text-xs border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              >
-                New decks only
-              </button>
             </div>
           </div>
         </section>
 
-        {/* ── About / Support ── */}
+        {/* ── About ── */}
         <section className="pb-4">
-          <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">About</h2>
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg divide-y divide-[#E5E5E5] dark:divide-[#262626]">
+          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">About</h2>
+          <div className="bg-[var(--kit-surface)] rounded-xl">
+            {globalStats && (
+              <>
+                <div className="px-4 py-3">
+                  <div className="grid grid-cols-4 gap-2">
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-lg font-semibold tabular-nums">{globalStats.totalCards.toLocaleString()}</span>
+                      <span className="text-[10px] text-[#C4C4C4] text-center">Cards</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-lg font-semibold tabular-nums">{globalStats.totalReviews.toLocaleString()}</span>
+                      <span className="text-[10px] text-[#C4C4C4] text-center">Reviews</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-lg font-semibold tabular-nums">{globalStats.retentionRate > 0 ? `${globalStats.retentionRate}%` : '—'}</span>
+                      <span className="text-[10px] text-[#C4C4C4] text-center">Retention</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="text-lg font-semibold tabular-nums">{globalStats.currentStreak > 0 ? `${globalStats.currentStreak}d` : '—'}</span>
+                      <span className="text-[10px] text-[#C4C4C4] text-center">Streak</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+              </>
+            )}
             <a
               href="mailto:jikelvin9@gmail.com"
-              className="flex items-center justify-between px-4 py-3 active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
+              className="flex items-center justify-between px-4 py-3 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
               onClick={() => hapticTap()}
             >
               <span className="text-sm">Contact Support</span>
               <span className="text-sm text-[#C4C4C4]">jikelvin9@gmail.com</span>
             </a>
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
             <a
               href="https://catsandnicotine.github.io/kit/public/privacy.html"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between px-4 py-3 active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
+              className="flex items-center justify-between px-4 py-3 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
               onClick={() => hapticTap()}
             >
               <span className="text-sm">Privacy Policy</span>
@@ -743,39 +805,13 @@ export default function Settings({ db, onBack }: SettingsProps) {
                 <line x1="10" y1="14" x2="21" y2="3" />
               </svg>
             </a>
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
             <div className="flex items-center justify-between px-4 py-3">
               <span className="text-sm text-[#C4C4C4]">Version</span>
               <span className="text-sm text-[#C4C4C4]">1.0.0</span>
             </div>
           </div>
         </section>
-
-        {/* ── Global Stats ── */}
-        {globalStats && (
-          <section className="pb-4">
-            <h2 className="text-sm font-semibold text-[#C4C4C4] mb-3">Statistics</h2>
-            <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-              <div className="grid grid-cols-4 gap-2">
-                <div className="flex flex-col items-center gap-0.5">
-                  <span className="text-lg font-semibold tabular-nums">{globalStats.totalCards.toLocaleString()}</span>
-                  <span className="text-[10px] text-[#C4C4C4] text-center">Cards</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <span className="text-lg font-semibold tabular-nums">{globalStats.totalReviews.toLocaleString()}</span>
-                  <span className="text-[10px] text-[#C4C4C4] text-center">Reviews</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <span className="text-lg font-semibold tabular-nums">{globalStats.retentionRate > 0 ? `${globalStats.retentionRate}%` : '—'}</span>
-                  <span className="text-[10px] text-[#C4C4C4] text-center">Retention</span>
-                </div>
-                <div className="flex flex-col items-center gap-0.5">
-                  <span className="text-lg font-semibold tabular-nums">{globalStats.currentStreak > 0 ? `${globalStats.currentStreak}d` : '—'}</span>
-                  <span className="text-[10px] text-[#C4C4C4] text-center">Streak</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
       </div>
     </div>
   );
