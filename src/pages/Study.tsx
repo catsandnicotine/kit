@@ -572,7 +572,7 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
   const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit, sessionReviewLimit, onSyncEdit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
-    totalDueReviews, studiedCards,
+    totalDueReviews, studiedCards, currentCardLearningState,
     flip, rate, repeat, undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
   const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
@@ -789,12 +789,12 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
           {deckName ?? 'Study'}
         </span>
         <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-2 text-sm font-semibold tabular-nums">
-            <span className="text-blue-500">{stats.newCount}</span>
-            <span className="text-red-500">{stats.learningCount}</span>
+          <div className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
+            <span className={`text-blue-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'new' ? 'bg-blue-500/15' : ''}`}>{stats.newCount}</span>
+            <span className={`text-red-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && (currentCardLearningState === 'learning' || currentCardLearningState === 'relearning') ? 'bg-red-500/15' : ''}`}>{stats.learningCount}</span>
             <button
               onClick={() => { if (totalDueReviews > 0) { hapticTap(); setShowReviewPicker(true); } }}
-              className={`text-green-500 ${totalDueReviews > 0 ? 'underline decoration-dotted underline-offset-2' : ''}`}
+              className={`text-green-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'review' ? 'bg-green-500/15' : ''}`}
               aria-label="Limit review cards this session"
             >
               {sessionReviewLimit !== null

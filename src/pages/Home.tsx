@@ -56,6 +56,10 @@ interface HomeProps {
   deckManager?: import('../hooks/useDeckManager').UseDeckManagerReturn;
   /** iCloud sync status indicator. */
   syncStatus?: import('../hooks/useSync').SyncStatus;
+  /** Human-readable sync error message. */
+  syncError?: string | null;
+  /** Timestamp (ms) of last successful sync. */
+  lastSyncedAt?: number | null;
   /** Current app mode (learn vs review). */
   mode: AppMode;
   /** Called when user switches tabs. */
@@ -455,6 +459,18 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
   );
 }
 
+/** Format a timestamp as a human-readable relative time string. */
+function formatTimeAgo(ms: number): string {
+  const seconds = Math.floor((Date.now() - ms) / 1000);
+  if (seconds < 5) return 'just now';
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -467,13 +483,14 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
   const [catBouncing, setCatBouncing] = useState(false);
+  const [showSyncPopover, setShowSyncPopover] = useState(false);
 
   // Search / sort state
   const [searchOpen, setSearchOpen] = useState(false);
@@ -842,11 +859,40 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             </div>
           </button>
           <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">Kit</span>
-          {syncStatus === 'syncing' && (
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" title="Syncing" />
-          )}
-          {syncStatus === 'synced' && (
-            <span className="w-1.5 h-1.5 rounded-full bg-green-400" title="Synced" />
+          {(syncStatus === 'syncing' || syncStatus === 'synced' || syncStatus === 'error') && (
+            <div className="relative">
+              <button
+                onClick={() => { hapticTap(); setShowSyncPopover(v => !v); }}
+                className="flex items-center"
+                aria-label="Sync status"
+              >
+                {syncStatus === 'syncing' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                )}
+                {syncStatus === 'synced' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+                )}
+                {syncStatus === 'error' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                )}
+              </button>
+              {showSyncPopover && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowSyncPopover(false)} />
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap">
+                    {syncStatus === 'syncing' && (
+                      <p className="text-xs text-[#C4C4C4]">Syncing...</p>
+                    )}
+                    {syncStatus === 'synced' && lastSyncedAt && (
+                      <p className="text-xs text-green-500">Synced {formatTimeAgo(lastSyncedAt)}</p>
+                    )}
+                    {syncStatus === 'error' && (
+                      <p className="text-xs text-red-400">{syncError ?? 'Sync failed'}</p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-0.5">

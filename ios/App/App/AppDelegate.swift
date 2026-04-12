@@ -1,4 +1,5 @@
 import UIKit
+import AVFoundation
 import Capacitor
 
 @UIApplicationMain
@@ -7,7 +8,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Allow card audio to mix with background music/podcasts instead of
+        // pausing them when Kit plays an <audio> element.
+        let audioSession = AVAudioSession.sharedInstance()
+        try? audioSession.setCategory(.playback, options: .mixWithOthers)
+        try? audioSession.setActive(true)
+
         return true
     }
 

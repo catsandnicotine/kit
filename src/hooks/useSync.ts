@@ -9,7 +9,7 @@ import type { ICloudFileChange } from '../lib/platform/icloudSync';
 import type { UseDeckManagerReturn } from './useDeckManager';
 
 /** Sync status for UI display. */
-export type SyncStatus = 'idle' | 'syncing' | 'synced';
+export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 /** How long the "synced" badge stays visible before reverting to idle. */
 const SYNCED_DISPLAY_MS = 3000;
@@ -22,6 +22,10 @@ export interface UseSyncReturn {
   status: SyncStatus;
   /** Number of edits applied in the most recent sync. */
   lastSyncCount: number;
+  /** Human-readable error when status is 'error'. */
+  syncError: string | null;
+  /** Timestamp (ms) of the last successful sync. */
+  lastSyncedAt: number | null;
   /** Manually trigger a sync for a specific deck. */
   syncDeck: (deckId: string) => Promise<void>;
 }
@@ -52,6 +56,8 @@ export function useSync(
 ): UseSyncReturn {
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [lastSyncCount, setLastSyncCount] = useState(0);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
 
   const listenerRef = useRef<PluginListenerHandle | null>(null);
   const syncedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -77,6 +83,8 @@ export function useSync(
     try {
       const count = await dm.sync(deckId);
       setLastSyncCount(count);
+      setSyncError(null);
+      setLastSyncedAt(Date.now());
 
       if (count > 0) {
         dm.refreshCounts(deckId);
@@ -86,8 +94,10 @@ export function useSync(
       } else {
         setStatus('idle');
       }
-    } catch {
-      setStatus('idle');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Sync failed';
+      setSyncError(message);
+      setStatus('error');
     }
   }, []);
 
@@ -133,7 +143,8 @@ export function useSync(
         }
         listenerRef.current = handle;
       } catch {
-        // Non-native platform or iCloud unavailable — stay idle
+        setSyncError('iCloud unavailable');
+        setStatus('error');
       }
     };
 
@@ -172,5 +183,5 @@ export function useSync(
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [activeDeckId, deckManager, syncDeck]);
 
-  return { status, lastSyncCount, syncDeck };
+  return { status, lastSyncCount, syncError, lastSyncedAt, syncDeck };
 }

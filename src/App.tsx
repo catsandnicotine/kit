@@ -97,7 +97,7 @@ function AppInner() {
   const currentDeckId = 'deckId' in route ? route.deckId : undefined;
 
   // Real-time iCloud sync — watches for edits from other devices.
-  const { status: syncStatus } = useSync(
+  const { status: syncStatus, syncError, lastSyncedAt } = useSync(
     loading ? null : deckManager,
     currentDeckId,
   );
@@ -303,6 +303,8 @@ function AppInner() {
       deckEntries={deckEntries}
       deckManager={deckManager}
       syncStatus={syncStatus}
+      syncError={syncError}
+      lastSyncedAt={lastSyncedAt}
       mode={mode}
       onModeChange={setMode}
       onStudy={goStudy}

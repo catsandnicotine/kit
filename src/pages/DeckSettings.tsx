@@ -493,8 +493,10 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
                 max={99}
                 step={1}
                 value={Math.round(desiredRetention * 100)}
+                onInput={e => handleSaveRetention(Number((e.target as HTMLInputElement).value) / 100)}
                 onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
                 className="w-full accent-text-light dark:accent-text-dark"
+                style={{ touchAction: 'none' }}
               />
               <div className="flex justify-between w-full text-xs text-text-muted">
                 <span>70%</span>

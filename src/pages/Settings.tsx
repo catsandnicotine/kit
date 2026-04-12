@@ -544,8 +544,10 @@ export default function Settings({ db, onBack }: SettingsProps) {
                 max={99}
                 step={1}
                 value={Math.round(defaultRetention * 100)}
+                onInput={e => handleSaveRetention(Number((e.target as HTMLInputElement).value) / 100)}
                 onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
                 className="w-full accent-[#1c1c1e] dark:accent-[#E5E5E5]"
+                style={{ touchAction: 'none' }}
               />
               <div className="flex justify-between text-[11px] text-[#C4C4C4] mt-0.5">
                 <span>70%</span>
