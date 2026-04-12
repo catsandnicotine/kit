@@ -28,7 +28,7 @@ type Route =
   | { page: 'browse'; deckId: string; deckName: string }
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
-  | { page: 'settings' }
+  | { page: 'settings'; scrollTo?: string | undefined }
   | { page: 'tags' };
 
 export type AppMode = 'learn' | 'review';
@@ -178,7 +178,7 @@ function AppInner() {
     [navigateToDeck],
   );
 
-  const goSettings = useCallback(() => setRoute({ page: 'settings' }), []);
+  const goSettings = useCallback((scrollTo?: string) => setRoute({ page: 'settings', scrollTo }), []);
   const goTags = useCallback(() => setRoute({ page: 'tags' }), []);
 
   const goDeckSettings = useCallback(
@@ -279,7 +279,7 @@ function AppInner() {
   if (route.page === 'settings') {
     return (
       <Suspense fallback={pageFallback}>
-        <Settings db={activeDeckDb} onBack={goHome} />
+        <Settings db={activeDeckDb} onBack={goHome} scrollTo={route.scrollTo} />
       </Suspense>
     );
   }

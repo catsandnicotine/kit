@@ -29,7 +29,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
-        // Called as part of the transition from the background to the active state; here you can undo many of the changes made on entering the background.
+        // Re-activate audio session with mixing so card audio doesn't
+        // interrupt background music after returning from background.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, options: .mixWithOthers)
+        try? session.setActive(true)
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {

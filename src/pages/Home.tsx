@@ -68,7 +68,7 @@ interface HomeProps {
   onReviewStudy: (deckId: string, deckName: string) => void;
   onBrowse: (deckId: string, deckName: string) => void;
   onStats: (deckId: string, deckName: string) => void;
-  onSettings: () => void;
+  onSettings: (scrollTo?: string) => void;
   onTags: () => void;
   onDeckSettings?: (deckId: string, deckName: string) => void;
 }
@@ -381,7 +381,7 @@ function SelectorFab({
   onSettings,
 }: {
   onTags: () => void;
-  onSettings: () => void;
+  onSettings: (scrollTo?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
@@ -863,7 +863,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             <div className="relative">
               <button
                 onClick={() => { hapticTap(); setShowSyncPopover(v => !v); }}
-                className="flex items-center"
+                className="p-2 -m-1.5 flex items-center justify-center"
                 aria-label="Sync status"
               >
                 {syncStatus === 'syncing' && (
@@ -879,7 +879,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
               {showSyncPopover && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowSyncPopover(false)} />
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap">
+                  <div className="absolute top-full left-0 mt-1 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap">
                     {syncStatus === 'syncing' && (
                       <p className="text-xs text-[#C4C4C4]">Syncing...</p>
                     )}
@@ -887,7 +887,12 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                       <p className="text-xs text-green-500">Synced {formatTimeAgo(lastSyncedAt)}</p>
                     )}
                     {syncStatus === 'error' && (
-                      <p className="text-xs text-red-400">{syncError ?? 'Sync failed'}</p>
+                      <button
+                        onClick={() => { setShowSyncPopover(false); hapticTap(); onSettings('icloud-sync'); }}
+                        className="text-xs text-red-400 underline underline-offset-2 py-1 px-1"
+                      >
+                        {syncError ?? 'Sync failed'} →
+                      </button>
                     )}
                   </div>
                 </>
