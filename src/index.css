@@ -50,16 +50,22 @@
   html {
     --kit-bg: #F5F3EE;
     --kit-surface: #FDFBF7;
+    --kit-pill-bg: #1c1c1e;
+    --kit-pill-text: #fff;
     background-color: var(--kit-bg);
   }
   html[data-theme="dark"] {
     --kit-bg: #1a1a1a;
     --kit-surface: #252525;
+    --kit-pill-bg: #E5E5E5;
+    --kit-pill-text: #0A0A0A;
     background-color: var(--kit-bg);
   }
   html[data-theme="black"] {
     --kit-bg: #000000;
     --kit-surface: #0F0F0F;
+    --kit-pill-bg: #1c1c1e;
+    --kit-pill-text: #fff;
     background-color: var(--kit-bg);
   }
 }
@@ -309,6 +315,15 @@
     animation: fab-item-enter 0.18s ease-out both;
   }
 
+  /* FAB action button enter — downward variant */
+  @keyframes fab-item-enter-down {
+    from { opacity: 0; transform: translateY(-10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .fab-item-enter-down {
+    animation: fab-item-enter-down 0.18s ease-out both;
+  }
+
   /* Dropdown menu enter */
   @keyframes dropdown-enter {
     from { opacity: 0; transform: translateY(-4px) scale(0.97); }
@@ -317,6 +332,16 @@
   .dropdown-enter {
     animation: dropdown-enter 0.15s ease-out;
     transform-origin: top right;
+  }
+
+  /* Search bar slide-down */
+  @keyframes search-expand {
+    from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; }
+    to   { opacity: 1; max-height: 60px; }
+  }
+  .search-expand {
+    animation: search-expand 0.2s ease-out;
+    overflow: hidden;
   }
 
   /* Dim backdrop fade in */

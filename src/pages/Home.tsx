@@ -16,7 +16,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useClickOutside } from '../hooks/useClickOutside';
 import type { Database } from 'sql.js';
 import type { Deck } from '../types';
 import { useDeckImport } from '../hooks/useDeckImport';
@@ -135,93 +134,86 @@ function DeckActionMenu({
   exporting: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useClickOutside(menuRef, open, () => setOpen(false));
+  const [expandUp, setExpandUp] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const toggle = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setExpandUp(rect.top > window.innerHeight / 2);
+    }
+    hapticTap();
+    setOpen(v => !v);
+  };
+  const close = () => setOpen(false);
+
+  const items: { label: string; icon: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }[] = [
+    { label: 'Cards', onClick: onBrowse, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="7" y1="10" x2="17" y2="10" /><line x1="7" y1="14" x2="13" y2="14" /></svg> },
+    { label: 'Statistics', onClick: onStats, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg> },
+    { label: 'Set Thumbnail', onClick: onSetThumbnail, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg> },
+    { label: exporting ? 'Exporting…' : 'Share', onClick: onExportFresh, disabled: exporting, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg> },
+    { label: exporting ? 'Exporting…' : 'Export with progress', onClick: onExportWithProgress, disabled: exporting, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg> },
+    { label: 'Delete Deck', onClick: onDelete, danger: true, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg> },
+  ];
+
+  // Reverse item order when expanding upward so the closest items appear first
+  const ordered = expandUp ? [...items].reverse() : items;
+  const animClass = expandUp ? 'fab-item-enter' : 'fab-item-enter-down';
 
   return (
-    <div ref={menuRef} className="relative shrink-0">
+    <div className="shrink-0">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="px-3 py-3 text-sm text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
+        ref={triggerRef}
+        onClick={toggle}
+        className="w-10 h-10 flex items-center justify-center text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
         aria-label="Deck actions"
       >
-        ···
+        {open ? (
+          <svg
+            width="16" height="16" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" strokeWidth="2.5"
+            strokeLinecap="round" strokeLinejoin="round"
+          >
+            <polyline points={expandUp ? '5 15 12 8 19 15' : '5 9 12 16 19 9'} />
+          </svg>
+        ) : (
+          <span className="text-sm font-bold tracking-wider">···</span>
+        )}
       </button>
+
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-10 min-w-[200px] w-max bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden dropdown-enter">
-          <button
-            onClick={() => { setOpen(false); onBrowse(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
+            onClick={close}
+          />
+          <div
+            className="fixed z-50 flex flex-col items-end gap-2"
+            style={{
+              right: 'max(1rem, env(safe-area-inset-right))',
+              ...(expandUp
+                ? { bottom: `${window.innerHeight - (triggerRef.current?.getBoundingClientRect().top ?? 0) + 4}px` }
+                : { top: `${(triggerRef.current?.getBoundingClientRect().bottom ?? 0) + 4}px` }),
+            }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <rect x="3" y="4" width="18" height="16" rx="2" fill="currentColor" fillOpacity="0.12" />
-              <line x1="7" y1="10" x2="17" y2="10" />
-              <line x1="7" y1="14" x2="13" y2="14" />
-            </svg>
-            Cards
-          </button>
-          <button
-            onClick={() => { setOpen(false); onStats(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <line x1="18" y1="20" x2="18" y2="10" />
-              <line x1="12" y1="20" x2="12" y2="4" />
-              <line x1="6" y1="20" x2="6" y2="14" />
-            </svg>
-            Statistics
-          </button>
-          <button
-            onClick={() => { setOpen(false); onSetThumbnail(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <polyline points="21 15 16 10 5 21" />
-            </svg>
-            Set Thumbnail
-          </button>
-          <button
-            onClick={() => { setOpen(false); onExportFresh(); }}
-            disabled={exporting}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-            </svg>
-            {exporting ? 'Exporting…' : 'Share (fresh start)'}
-          </button>
-          <button
-            onClick={() => { setOpen(false); onExportWithProgress(); }}
-            disabled={exporting}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333] disabled:opacity-40"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            {exporting ? 'Exporting…' : 'Export with progress'}
-          </button>
-          <button
-            onClick={() => { setOpen(false); onDelete(); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm text-red-500 active:bg-red-50 dark:active:bg-red-950 transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6" />
-              <path d="M14 11v6" />
-              <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-            </svg>
-            Delete Deck
-          </button>
-        </div>
+            {ordered.map((item, i) => (
+              <button
+                key={item.label}
+                onClick={() => { close(); hapticNavigate(); item.onClick(); }}
+                disabled={item.disabled}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg active:opacity-80 transition-opacity disabled:opacity-40 border border-[#333]/50 dark:border-[#555]/30 ${animClass} ${
+                  item.danger
+                    ? 'bg-red-500/90 text-white border-red-400/30'
+                    : 'bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)]'
+                }`}
+                style={{ animationDelay: `${i * 0.03}s` }}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -342,13 +334,14 @@ function PlusMenu({
   disabled: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useClickOutside(menuRef, open, () => setOpen(false));
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = () => setOpen(false);
 
   return (
-    <div ref={menuRef} className="relative">
+    <div className="relative">
       <button
-        onClick={() => { if (!disabled) setOpen((v) => !v); }}
+        ref={triggerRef}
+        onClick={() => { if (!disabled) { hapticTap(); setOpen(v => !v); } }}
         disabled={disabled}
         className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors disabled:opacity-40"
         aria-label="Add deck"
@@ -356,20 +349,43 @@ function PlusMenu({
         <PlusIcon />
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-20 min-w-[160px] bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-lg shadow-lg overflow-hidden dropdown-enter">
-          <button
-            onClick={() => { setOpen(false); onCreateDeck(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors"
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
+            onClick={close}
+          />
+          <div
+            className="fixed z-50 flex flex-col items-end gap-2"
+            style={{
+              right: 'max(1rem, env(safe-area-inset-right))',
+              top: `${(triggerRef.current?.getBoundingClientRect().bottom ?? 0) + 4}px`,
+            }}
           >
-            Create Deck
-          </button>
-          <button
-            onClick={() => { setOpen(false); onImportDeck(); }}
-            className="w-full text-left px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] transition-colors border-t border-[#E5E5E5] dark:border-[#333]"
-          >
-            Import Deck
-          </button>
-        </div>
+            <button
+              onClick={() => { close(); hapticNavigate(); onCreateDeck(); }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg border border-[#333]/50 dark:border-[#555]/30 active:opacity-80 transition-opacity fab-item-enter-down"
+              style={{ animationDelay: '0s' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Create Deck
+            </button>
+            <button
+              onClick={() => { close(); hapticNavigate(); onImportDeck(); }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg border border-[#333]/50 dark:border-[#555]/30 active:opacity-80 transition-opacity fab-item-enter-down"
+              style={{ animationDelay: '0.03s' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              Import Deck
+            </button>
+          </div>
+        </>
       )}
     </div>
   );
@@ -405,7 +421,7 @@ function SelectorFab({
           <>
             <button
               onClick={() => { close(); hapticNavigate(); onTags(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
               style={{ animationDelay: '0.04s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -416,7 +432,7 @@ function SelectorFab({
             </button>
             <button
               onClick={() => { close(); hapticNavigate(); onSettings(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
               style={{ animationDelay: '0s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -429,7 +445,7 @@ function SelectorFab({
         )}
         <button
           onClick={() => { hapticTap(); setOpen(v => !v); }}
-          className="w-12 h-12 rounded-full bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          className="w-12 h-12 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform"
           aria-label="Actions"
         >
           <svg
@@ -879,17 +895,17 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
               {showSyncPopover && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowSyncPopover(false)} />
-                  <div className="absolute top-full left-0 mt-1 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap">
+                  <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-1.5 shadow-lg whitespace-nowrap">
                     {syncStatus === 'syncing' && (
-                      <p className="text-xs text-[#C4C4C4]">Syncing...</p>
+                      <p className="text-xs text-[#C4C4C4] text-center">Syncing...</p>
                     )}
                     {syncStatus === 'synced' && lastSyncedAt && (
-                      <p className="text-xs text-green-500">Synced {formatTimeAgo(lastSyncedAt)}</p>
+                      <p className="text-xs text-green-500 text-center">Synced {formatTimeAgo(lastSyncedAt)}</p>
                     )}
                     {syncStatus === 'error' && (
                       <button
                         onClick={() => { setShowSyncPopover(false); hapticTap(); onSettings('icloud-sync'); }}
-                        className="text-xs text-red-400 underline underline-offset-2 py-1 px-1"
+                        className="text-xs text-red-400 underline decoration-dotted underline-offset-2 py-1 px-1 text-center w-full"
                       >
                         {syncError ?? 'Sync failed'} →
                       </button>
@@ -925,7 +941,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       {/* Search / sort bar — expands below header */}
       {searchOpen && (
         <div
-          className="flex items-center gap-2 px-4 py-2 border-b border-[#E5E5E5] dark:border-[#262626]"
+          className="flex items-center gap-2 px-4 py-2 search-expand"
           style={{
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -937,7 +953,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search decks…"
-            className="flex-1 px-3 py-2 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+            className="flex-1 px-4 py-2 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
           />
           <button
             onClick={() =>
@@ -945,7 +961,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 v === 'alpha' ? 'alpha-desc' : v === 'alpha-desc' ? 'due' : 'alpha',
               )
             }
-            className="shrink-0 px-2.5 py-2 text-xs font-medium text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg transition-colors"
+            className="shrink-0 px-3 py-2 text-xs font-medium text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] bg-[var(--kit-surface)] rounded-full transition-colors"
             title="Change sort order"
           >
             {sortOrder === 'alpha' ? 'A→Z' : sortOrder === 'alpha-desc' ? 'Z→A' : '# Due'}
