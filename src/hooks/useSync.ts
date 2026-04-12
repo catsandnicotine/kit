@@ -164,24 +164,32 @@ export function useSync(
     };
   }, [deckManager, handleChanges]);
 
-  // ── Sync/save active deck on visibility changes ───────────────────────
+  // ── Sync/save decks on visibility changes ──────────────────────────────
+  // On foreground: sync the active deck first, then catch-up sync all other
+  // known decks. This compensates for NSMetadataQuery events that may have
+  // been missed while the app was suspended. The per-deck throttle prevents
+  // redundant calls if the query already triggered a sync.
   useEffect(() => {
-    if (!activeDeckId || !deckManager) return;
+    if (!deckManager) return;
 
-    const handleVisibility = () => {
+    const handleVisibility = async () => {
       if (document.visibilityState === 'visible') {
         deckManager.flushPending().catch(() => {});
-        syncDeck(activeDeckId);
-      } else {
+        const active = activeDeckIdRef.current;
+        if (active) await syncDeck(active);
+        for (const entry of deckManagerRef.current?.deckEntries ?? []) {
+          if (entry.deckId !== active) syncDeck(entry.deckId);
+        }
+      } else if (activeDeckIdRef.current) {
         // App going to background — snapshot current state locally so a
         // force-kill doesn't lose the session's edits on next open.
-        deckManager.compact(activeDeckId).catch(() => {});
+        deckManager.compact(activeDeckIdRef.current).catch(() => {});
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [activeDeckId, deckManager, syncDeck]);
+  }, [deckManager, syncDeck]);
 
   return { status, lastSyncCount, syncError, lastSyncedAt, syncDeck };
 }
