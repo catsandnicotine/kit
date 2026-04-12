@@ -207,29 +207,17 @@ export function useStudySession(
   const leechThresholdRef = useRef(8);
   /** Session start timestamp (ms). */
   const startedAtRef = useRef<number>(Date.now());
-  /** Interval handle for the elapsed-seconds ticker. */
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
 
-  const stopTimer = useCallback(() => {
-    if (timerRef.current !== null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+  /** Snapshot elapsed seconds into stats (called once at session end). */
+  const snapshotElapsed = useCallback(() => {
+    setStats(prev => ({
+      ...prev,
+      elapsedSeconds: Math.floor((Date.now() - startedAtRef.current) / 1000),
+    }));
   }, []);
-
-  const startTimer = useCallback(() => {
-    stopTimer();
-    timerRef.current = setInterval(() => {
-      setStats(prev => ({
-        ...prev,
-        elapsedSeconds: Math.floor((Date.now() - startedAtRef.current) / 1000),
-      }));
-    }, 1000);
-  }, [stopTimer]);
 
   /** Display the card at `index` in the queue; phase → 'front'. */
   const showCard = useCallback((queue: CardWithState[], index: number) => {
@@ -238,13 +226,21 @@ export function useStudySession(
     setFrontHtml(cws.card.front);
     setBackHtml(cws.card.back);
     setRatingPreviews(null);
-    const remaining = queue.slice(index);
+    let newCount = 0;
+    let learningCount = 0;
+    let reviewCount = 0;
+    for (let i = index; i < queue.length; i++) {
+      const s = queue[i]!.state.state;
+      if (s === 'new') newCount++;
+      else if (s === 'learning' || s === 'relearning') learningCount++;
+      else if (s === 'review') reviewCount++;
+    }
     setStats(prev => ({
       ...prev,
-      remaining: remaining.length,
-      newCount: remaining.filter(c => c.state.state === 'new').length,
-      learningCount: remaining.filter(c => c.state.state === 'learning' || c.state.state === 'relearning').length,
-      reviewCount: remaining.filter(c => c.state.state === 'review').length,
+      remaining: queue.length - index,
+      newCount,
+      learningCount,
+      reviewCount,
     }));
     setPhase('front');
   }, []);
@@ -318,12 +314,10 @@ export function useStudySession(
       return;
     }
 
+    startedAtRef.current = Date.now();
     setStats({ studied: 0, remaining: queue.length, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0, totalRepeats: 0 });
     showCard(queue, 0);
     setCurrentIndex(0);
-    startTimer();
-
-    return () => stopTimer();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [db, deckId, studyAheadLimit, sessionReviewLimit]);
 
@@ -454,14 +448,14 @@ export function useStudySession(
       }));
 
       if (nextIndex >= queue.length) {
-        stopTimer();
+        snapshotElapsed();
         setPhase('complete');
       } else {
         setCurrentIndex(nextIndex);
         showCard(queue, nextIndex);
       }
     },
-    [phase, db, deckId, currentIndex, showCard, stopTimer, onSyncEdit],
+    [phase, db, deckId, currentIndex, showCard, snapshotElapsed, onSyncEdit],
   );
 
   // -------------------------------------------------------------------------
@@ -505,8 +499,7 @@ export function useStudySession(
 
     setCurrentIndex(cardIndex);
     showCard(queue, cardIndex);
-    if (phase === 'complete') startTimer();
-  }, [db, phase, showCard, startTimer]);
+  }, [db, phase, showCard]);
 
   // -------------------------------------------------------------------------
   // repeat
@@ -561,14 +554,6 @@ export function useStudySession(
     },
     [currentIndex, showCard],
   );
-
-  // -------------------------------------------------------------------------
-  // Cleanup
-  // -------------------------------------------------------------------------
-
-  useEffect(() => {
-    return () => stopTimer();
-  }, [stopTimer]);
 
   // -------------------------------------------------------------------------
   // Return

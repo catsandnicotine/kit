@@ -10,9 +10,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Allow card audio to mix with background music/podcasts instead of
         // pausing them when Kit plays an <audio> element.
-        let audioSession = AVAudioSession.sharedInstance()
-        try? audioSession.setCategory(.playback, options: .mixWithOthers)
-        try? audioSession.setActive(true)
+        // Only set the category here — iOS activates the session on-demand
+        // when the WebView plays audio, so no need for setActive(true).
+        try? AVAudioSession.sharedInstance().setCategory(.playback, options: .mixWithOthers)
 
         return true
     }
@@ -23,8 +23,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {
-        // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
-        // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
+        // Release the audio session so the hardware isn't held while Kit is
+        // in the background — saves battery when no card audio is playing.
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
