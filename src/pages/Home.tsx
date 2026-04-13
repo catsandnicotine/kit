@@ -201,10 +201,10 @@ function DeckActionMenu({
                 key={item.label}
                 onClick={() => { close(); hapticNavigate(); item.onClick(); }}
                 disabled={item.disabled}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg active:opacity-80 transition-opacity disabled:opacity-40 border border-[#333]/50 dark:border-[#555]/30 ${animClass} ${
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg active:opacity-80 transition-opacity disabled:opacity-40 ${animClass} ${
                   item.danger
-                    ? 'bg-red-500/90 text-white border-red-400/30'
-                    : 'bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)]'
+                    ? 'bg-red-500/90 text-white border border-red-400/30'
+                    : 'text-[var(--kit-pill-text)] pill-border'
                 }`}
                 style={{ animationDelay: `${i * 0.03}s` }}
               >
@@ -363,7 +363,7 @@ function PlusMenu({
           >
             <button
               onClick={() => { close(); hapticNavigate(); onCreateDeck(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg border border-[#333]/50 dark:border-[#555]/30 active:opacity-80 transition-opacity fab-item-enter-down"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter-down"
               style={{ animationDelay: '0s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -374,7 +374,7 @@ function PlusMenu({
             </button>
             <button
               onClick={() => { close(); hapticNavigate(); onImportDeck(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg border border-[#333]/50 dark:border-[#555]/30 active:opacity-80 transition-opacity fab-item-enter-down"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter-down"
               style={{ animationDelay: '0.03s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -391,76 +391,6 @@ function PlusMenu({
   );
 }
 
-/** Bottom-left selector FAB — expands upward to Tags + Settings. */
-function SelectorFab({
-  onTags,
-  onSettings,
-}: {
-  onTags: () => void;
-  onSettings: (scrollTo?: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
-
-  return (
-    <>
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
-          onClick={close}
-        />
-      )}
-      <div
-        className="fixed z-50 flex flex-col items-start gap-2.5"
-        style={{
-          bottom: 'calc(56px + env(safe-area-inset-bottom) + 1.5rem)',
-          left: 'max(1rem, env(safe-area-inset-left))',
-        }}
-      >
-        {open && (
-          <>
-            <button
-              onClick={() => { close(); hapticNavigate(); onTags(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity border border-[#333]/50 dark:border-[#555]/30 fab-item-enter"
-              style={{ animationDelay: '0.04s' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-                <line x1="7" y1="7" x2="7.01" y2="7" />
-              </svg>
-              Tags
-            </button>
-            <button
-              onClick={() => { close(); hapticNavigate(); onSettings(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity border border-[#333]/50 dark:border-[#555]/30 fab-item-enter"
-              style={{ animationDelay: '0s' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              Settings
-            </button>
-          </>
-        )}
-        <button
-          onClick={() => { hapticTap(); setOpen(v => !v); }}
-          className="w-12 h-12 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform border border-[#333]/50 dark:border-[#555]/30"
-          aria-label="Actions"
-        >
-          <svg
-            width="24" height="24" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" strokeWidth="2.5"
-            strokeLinecap="round" strokeLinejoin="round"
-            style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-          >
-            <polyline points="5 15 12 8 19 15" />
-          </svg>
-        </button>
-      </div>
-    </>
-  );
-}
 
 /** Progress indicator shown during import. */
 function ImportProgress({ phase }: { phase: ImportPhase }) {
@@ -507,6 +437,80 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
   const [catBouncing, setCatBouncing] = useState(false);
   const [showSyncPopover, setShowSyncPopover] = useState(false);
+
+  // Swipe-to-switch-tabs state
+  const swipeRef = useRef({ startX: 0, startY: 0, decided: false, isHorizontal: false });
+  const [swipeX, setSwipeX] = useState(0);
+  const [swipeTransition, setSwipeTransition] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const swipeTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Non-passive touchmove so we can preventDefault during horizontal swipes
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const ref = swipeRef;
+    const onMove = (e: TouchEvent) => {
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - ref.current.startX;
+      const dy = touch.clientY - ref.current.startY;
+
+      if (!ref.current.decided && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        ref.current.decided = true;
+        ref.current.isHorizontal = Math.abs(dx) > Math.abs(dy) * 1.2;
+      }
+      if (!ref.current.decided || !ref.current.isHorizontal) return;
+
+      e.preventDefault();
+      let clamped = dx;
+      if (modeRef.current === 'learn' && dx > 0) clamped = dx * 0.15;
+      if (modeRef.current === 'review' && dx < 0) clamped = dx * 0.15;
+      setSwipeX(clamped);
+    };
+    el.addEventListener('touchmove', onMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onMove);
+  }, []);
+
+  const handleSwipeStart = useCallback((e: React.TouchEvent) => {
+    if (swipeTimeoutRef.current) clearTimeout(swipeTimeoutRef.current);
+    setSwipeTransition(false);
+    const touch = e.touches[0]!;
+    swipeRef.current = { startX: touch.clientX, startY: touch.clientY, decided: false, isHorizontal: false };
+  }, []);
+
+  const handleSwipeEnd = useCallback(() => {
+    if (!swipeRef.current.isHorizontal) { setSwipeX(0); return; }
+    const threshold = 60;
+    const x = swipeX;
+    if (x < -threshold && modeRef.current === 'learn') {
+      setSwipeTransition(true);
+      setSwipeX(-window.innerWidth);
+      hapticTap();
+      swipeTimeoutRef.current = setTimeout(() => {
+        onModeChange('review');
+        setSwipeTransition(false);
+        setSwipeX(0);
+      }, 220);
+    } else if (x > threshold && modeRef.current === 'review') {
+      setSwipeTransition(true);
+      setSwipeX(window.innerWidth);
+      hapticTap();
+      swipeTimeoutRef.current = setTimeout(() => {
+        onModeChange('learn');
+        setSwipeTransition(false);
+        setSwipeX(0);
+      }, 220);
+    } else {
+      setSwipeTransition(true);
+      setSwipeX(0);
+      swipeTimeoutRef.current = setTimeout(() => setSwipeTransition(false), 200);
+    }
+    swipeRef.current.isHorizontal = false;
+    swipeRef.current.decided = false;
+  }, [swipeX, onModeChange]);
 
   // Search / sort state
   const [searchOpen, setSearchOpen] = useState(false);
@@ -969,8 +973,19 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
         </div>
       )}
 
-      {/* Main content area */}
-      <div className="flex flex-col flex-1 min-h-0 overflow-auto" style={{ paddingBottom: TAB_BAR_TOTAL_HEIGHT }}>
+      {/* Main content area — swipeable to switch Learn / Review */}
+      <div
+        ref={contentRef}
+        onTouchStart={handleSwipeStart}
+        onTouchEnd={handleSwipeEnd}
+        className="flex flex-col flex-1 min-h-0 overflow-auto"
+        style={{
+          paddingBottom: TAB_BAR_TOTAL_HEIGHT,
+          transform: swipeX ? `translateX(${swipeX}px)` : undefined,
+          transition: swipeTransition ? 'transform 0.22s ease-out' : undefined,
+          willChange: swipeX ? 'transform' : undefined,
+        }}
+      >
         {dbError ? (
           <div className="px-4 py-4">
             <p className="text-xs text-red-500">{dbError}</p>
@@ -1169,14 +1184,9 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
         />
       )}
 
-      {/* Selector FAB */}
+      {/* Bottom pill bar (mode toggle + settings FAB) */}
       {!dbLoading && !dbError && (
-        <SelectorFab onTags={() => onTags()} onSettings={onSettings} />
-      )}
-
-      {/* Bottom tab bar */}
-      {!dbLoading && !dbError && (
-        <TabBar mode={mode} onChange={onModeChange} />
+        <TabBar mode={mode} onChange={onModeChange} onTags={onTags} onSettings={onSettings} />
       )}
     </div>
   );

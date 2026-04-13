@@ -187,7 +187,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        <span className="text-sm font-semibold truncate flex-1">
+        <span className="text-base font-bold truncate flex-1">
           All Tags
         </span>
         <button
@@ -204,7 +204,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
 
       {/* Search */}
       <div
-        className="py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+        className="py-2 shrink-0"
         style={{
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
@@ -214,7 +214,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search tags…"
-          className="w-full px-3 py-1.5 text-sm bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+          className="w-full px-4 py-2 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
         />
       </div>
 
@@ -306,7 +306,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
       {/* Create tag dialog */}
       {showCreateTag && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
-          <div className="bg-[var(--kit-bg)] rounded-2xl w-full max-w-sm overflow-hidden">
+          <div className="bg-[var(--kit-surface)] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="px-6 pt-5 pb-4">
               <p className="text-base font-semibold text-center mb-4">New Tag</p>
               <input
@@ -316,7 +316,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
                 onChange={e => setNewTagDraft(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleCreateTag(); }}
                 placeholder="Tag name"
-                className="w-full px-3 py-2.5 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+                className="w-full px-4 py-2.5 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
               />
               <div className="mt-3">
                 <p className="text-xs text-[#C4C4C4] mb-2">Color (optional)</p>

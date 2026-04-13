@@ -289,6 +289,62 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
   const icloudSyncRef = useRef<HTMLElement>(null);
   const [flashIcloud, setFlashIcloud] = useState(false);
 
+  // Edge-swipe to go back
+  const edgeSwipeRef = useRef({ startX: 0, startY: 0, decided: false, isEdge: false, isHorizontal: false });
+  const [edgeSwipeX, setEdgeSwipeX] = useState(0);
+  const [edgeSwipeTransition, setEdgeSwipeTransition] = useState(false);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+
+  useEffect(() => {
+    const el = pageRef.current;
+    if (!el) return;
+    const ref = edgeSwipeRef;
+    const onMove = (e: TouchEvent) => {
+      if (!ref.current.isEdge) return;
+      const touch = e.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - ref.current.startX;
+      const dy = touch.clientY - ref.current.startY;
+
+      if (!ref.current.decided && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        ref.current.decided = true;
+        ref.current.isHorizontal = dx > 0 && Math.abs(dx) > Math.abs(dy);
+      }
+      if (!ref.current.decided || !ref.current.isHorizontal) return;
+
+      e.preventDefault();
+      setEdgeSwipeX(Math.max(0, dx));
+    };
+    el.addEventListener('touchmove', onMove, { passive: false });
+    return () => el.removeEventListener('touchmove', onMove);
+  }, []);
+
+  const handleEdgeStart = useCallback((e: React.TouchEvent) => {
+    const touch = e.touches[0]!;
+    const isEdge = touch.clientX < 30;
+    edgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY, decided: false, isEdge, isHorizontal: false };
+    setEdgeSwipeTransition(false);
+    setEdgeSwipeX(0);
+  }, []);
+
+  const handleEdgeEnd = useCallback(() => {
+    if (!edgeSwipeRef.current.isHorizontal) { setEdgeSwipeX(0); return; }
+    if (edgeSwipeX > 100) {
+      setEdgeSwipeTransition(true);
+      setEdgeSwipeX(window.innerWidth);
+      hapticTap();
+      setTimeout(() => onBackRef.current(), 200);
+    } else {
+      setEdgeSwipeTransition(true);
+      setEdgeSwipeX(0);
+      setTimeout(() => setEdgeSwipeTransition(false), 200);
+    }
+    edgeSwipeRef.current.isHorizontal = false;
+    edgeSwipeRef.current.decided = false;
+  }, [edgeSwipeX]);
+
   useEffect(() => {
     if (scrollTo === 'icloud-sync' && icloudSyncRef.current) {
       // Small delay so the page renders first
@@ -464,7 +520,17 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
   ];
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] page-enter">
+    <div
+      ref={pageRef}
+      onTouchStart={handleEdgeStart}
+      onTouchEnd={handleEdgeEnd}
+      className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] page-enter"
+      style={{
+        transform: edgeSwipeX ? `translateX(${edgeSwipeX}px)` : undefined,
+        transition: edgeSwipeTransition ? 'transform 0.2s ease-out' : undefined,
+        willChange: edgeSwipeX ? 'transform' : undefined,
+      }}
+    >
       {/* Header */}
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
