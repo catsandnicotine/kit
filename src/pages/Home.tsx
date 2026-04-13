@@ -421,7 +421,7 @@ function SelectorFab({
           <>
             <button
               onClick={() => { close(); hapticNavigate(); onTags(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity border border-[#333]/50 dark:border-[#555]/30 fab-item-enter"
               style={{ animationDelay: '0.04s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -432,7 +432,7 @@ function SelectorFab({
             </button>
             <button
               onClick={() => { close(); hapticNavigate(); onSettings(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity fab-item-enter"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity border border-[#333]/50 dark:border-[#555]/30 fab-item-enter"
               style={{ animationDelay: '0s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -445,7 +445,7 @@ function SelectorFab({
         )}
         <button
           onClick={() => { hapticTap(); setOpen(v => !v); }}
-          className="w-12 h-12 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+          className="w-12 h-12 rounded-full bg-[var(--kit-pill-bg)] text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform border border-[#333]/50 dark:border-[#555]/30"
           aria-label="Actions"
         >
           <svg
