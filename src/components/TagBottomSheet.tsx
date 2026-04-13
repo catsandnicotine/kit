@@ -200,7 +200,7 @@ export function TagBottomSheet({
                   if (e.key === 'Enter') handleRenameCommit();
                   if (e.key === 'Escape') { setEditingName(false); setRenameDraft(tag.tag); }
                 }}
-                className="flex-1 px-3 py-1.5 text-sm bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+                className="flex-1 px-4 py-1.5 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
               />
             ) : (
               <button
@@ -236,14 +236,14 @@ export function TagBottomSheet({
             {onAddToDeck && (
               <button
                 onClick={() => setShowDeckPicker(true)}
-                className="flex-1 py-2.5 text-sm font-medium bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-xl text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70"
+                className="flex-1 py-2.5 text-sm font-medium bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70"
               >
                 Add to Deck
               </button>
             )}
             <button
               onClick={() => setConfirmDelete(true)}
-              className="flex-1 py-2.5 text-sm font-medium bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-900 rounded-xl text-red-500 active:opacity-70"
+              className="flex-1 py-2.5 text-sm font-medium bg-red-500/10 rounded-full text-red-500 active:opacity-70"
             >
               Delete Tag
             </button>
@@ -299,7 +299,7 @@ export function TagBottomSheet({
             <button onClick={() => setShowDeckPicker(false)} className="text-sm text-[#C4C4C4]">
               Done
             </button>
-            <span className="flex-1 text-sm font-semibold text-center">Add to Deck</span>
+            <span className="flex-1 text-base font-bold text-center">Add to Deck</span>
           </div>
           <div className="flex-1 overflow-y-auto">
             {allDecks.length === 0 && (
@@ -334,7 +334,7 @@ export function TagBottomSheet({
       {/* Delete confirmation */}
       {confirmDelete && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-8">
-          <div className="bg-[var(--kit-bg)] rounded-2xl w-full max-w-sm overflow-hidden">
+          <div className="bg-[var(--kit-surface)] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="px-6 pt-5 pb-4 text-center">
               <p className="text-base font-semibold">Delete "{tag.tag}"?</p>
               <p className="text-sm text-[#C4C4C4] mt-2">
@@ -364,7 +364,7 @@ export function TagBottomSheet({
         const deck = deckAssociations.find(a => a.deckId === removingDeckId);
         return deck ? (
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-8">
-            <div className="bg-[var(--kit-bg)] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="bg-[var(--kit-surface)] rounded-2xl w-full max-w-sm overflow-hidden">
               <div className="px-6 pt-5 pb-4 text-center">
                 <p className="text-base font-semibold">Remove from "{deck.deckName}"?</p>
                 <p className="text-sm text-[#C4C4C4] mt-2">
