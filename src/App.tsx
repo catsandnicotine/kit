@@ -4,6 +4,8 @@ import { useDeckManager } from './hooks/useDeckManager';
 import { useSync } from './hooks/useSync';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
+import { App as CapApp } from '@capacitor/app';
+import { isApkgFileUrl, readFileFromUrl } from './lib/platform/fileOpener';
 import type { Database } from 'sql.js';
 import type { EditOp } from './lib/sync/types';
 
@@ -101,6 +103,20 @@ function AppInner() {
     loading ? null : deckManager,
     currentDeckId,
   );
+
+  // File opened via iOS "Open in" / share sheet / Files tap
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    const listener = CapApp.addListener('appUrlOpen', async ({ url }) => {
+      if (!isApkgFileUrl(url)) return;
+      const file = await readFileFromUrl(url);
+      if (file) setPendingFile(file);
+    });
+    return () => { listener.then(h => h.remove()); };
+  }, []);
+
+  const clearPendingFile = useCallback(() => setPendingFile(null), []);
 
   // Check if this is the first launch
   useEffect(() => {
@@ -314,6 +330,8 @@ function AppInner() {
       onSettings={goSettings}
       onTags={goTags}
       onDeckSettings={goDeckSettings}
+      pendingFile={pendingFile}
+      onPendingFileConsumed={clearPendingFile}
     />
   );
 }
