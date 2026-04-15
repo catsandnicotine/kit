@@ -755,7 +755,7 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
         {/* ── iCloud ── */}
         <section ref={icloudSyncRef} className="pb-4">
           <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">iCloud</h2>
-          <div className={`bg-[var(--kit-surface)] rounded-xl transition-colors duration-700 ${flashIcloud ? 'ring-1 ring-red-400' : ''}`}>
+          <div className={`bg-[var(--kit-surface)] rounded-xl ${flashIcloud ? 'flash-ring' : ''}`}>
             {/* Backup */}
             <div className="px-4 py-3">
               {checking ? (

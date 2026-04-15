@@ -70,6 +70,10 @@ interface HomeProps {
   onSettings: (scrollTo?: string) => void;
   onTags: () => void;
   onDeckSettings?: (deckId: string, deckName: string) => void;
+  /** File opened externally via iOS "Open in" / share sheet. */
+  pendingFile?: File | null;
+  /** Called after the pending file has been handed to the import pipeline. */
+  onPendingFileConsumed?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -429,7 +433,7 @@ function formatTimeAgo(ms: number): string {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags, pendingFile, onPendingFileConsumed }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
@@ -801,6 +805,15 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     if (file) importFile(file);
   }, [importPhase, resetImport, importFile]);
 
+  // ── Auto-import file opened externally (iOS "Open in") ──────────────
+  useEffect(() => {
+    if (!pendingFile) return;
+    if (importPhase !== 'idle' && importPhase !== 'done' && importPhase !== 'error') return;
+    if (importPhase === 'done' || importPhase === 'error') resetImport();
+    importFile(pendingFile);
+    onPendingFileConsumed?.();
+  }, [pendingFile, importPhase, resetImport, importFile, onPendingFileConsumed]);
+
   // ── Thumbnail handling ────────────────────────────────────────────────
   const handleSetThumbnail = useCallback(async (deckId: string) => {
     hapticTap();
@@ -899,12 +912,12 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
               {showSyncPopover && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowSyncPopover(false)} />
-                  <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 z-50 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg px-3 py-1.5 shadow-lg whitespace-nowrap">
+                  <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 z-50 pill-border rounded-full px-3 py-1.5 shadow-lg whitespace-nowrap">
                     {syncStatus === 'syncing' && (
-                      <p className="text-xs text-[#C4C4C4] text-center">Syncing...</p>
+                      <p className="text-xs text-[var(--kit-pill-text)] text-center">Syncing...</p>
                     )}
                     {syncStatus === 'synced' && lastSyncedAt && (
-                      <p className="text-xs text-green-500 text-center">Synced {formatTimeAgo(lastSyncedAt)}</p>
+                      <p className="text-xs text-green-400 text-center">Synced {formatTimeAgo(lastSyncedAt)}</p>
                     )}
                     {syncStatus === 'error' && (
                       <button

@@ -52,7 +52,7 @@
     --kit-surface: #FDFBF7;
     --kit-pill-bg: #1c1c1e;
     --kit-pill-text: #fff;
-    --kit-pill-edge: rgba(255, 255, 255, 0.22);
+    --kit-pill-edge: rgba(255, 255, 255, 0.16);
     background-color: var(--kit-bg);
   }
   html[data-theme="dark"] {
@@ -60,7 +60,7 @@
     --kit-surface: #252525;
     --kit-pill-bg: #3a3a3c;
     --kit-pill-text: #f5f5f5;
-    --kit-pill-edge: rgba(255, 255, 255, 0.12);
+    --kit-pill-edge: rgba(255, 255, 255, 0.09);
     background-color: var(--kit-bg);
   }
   html[data-theme="black"] {
@@ -68,7 +68,7 @@
     --kit-surface: #0F0F0F;
     --kit-pill-bg: #1c1c1e;
     --kit-pill-text: #fff;
-    --kit-pill-edge: rgba(255, 255, 255, 0.22);
+    --kit-pill-edge: rgba(255, 255, 255, 0.16);
     background-color: var(--kit-bg);
   }
 }
@@ -81,7 +81,7 @@
     background-color: var(--kit-pill-bg);
     background-image:
       linear-gradient(var(--kit-pill-bg), var(--kit-pill-bg)),
-      linear-gradient(to left, var(--kit-pill-edge), var(--kit-pill-edge) 50%, transparent);
+      linear-gradient(262deg, var(--kit-pill-edge), var(--kit-pill-edge) 50%, transparent);
     background-origin: padding-box, border-box;
     background-clip: padding-box, border-box;
   }
@@ -319,6 +319,17 @@
   }
   .toast-enter {
     animation: toast-enter 0.2s ease-out;
+  }
+
+  /* Settings iCloud flash ring — smooth fade in/out */
+  @keyframes flash-ring {
+    0%   { box-shadow: 0 0 0 0 transparent; }
+    15%  { box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.5); }
+    85%  { box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.5); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .flash-ring {
+    animation: flash-ring 1.5s ease-in-out;
   }
 
   /* FAB action button enter (slides up) */
