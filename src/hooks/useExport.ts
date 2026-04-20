@@ -14,6 +14,7 @@ import { exportDeckAsApkgFresh, exportDeckAsApkgWithProgress } from '../lib/apkg
 import type { LoadMediaFn } from '../lib/apkg/exporter';
 import { listMediaFilenames, loadMediaFile } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
+import type { UseDeckManagerReturn } from './useDeckManager';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -41,10 +42,14 @@ export interface UseExportReturn {
 /**
  * Hook that drives the .apkg export flow.
  *
- * @param db - sql.js Database instance (null while loading).
+ * Pass either the legacy monolithic db (old arch) or a deckManager (per-deck
+ * arch). With a deckManager, the deck's per-deck db is opened on demand when
+ * the user taps export.
+ *
+ * @param source - Legacy Database, or the per-deck UseDeckManagerReturn.
  * @returns Export state and actions.
  */
-export function useExport(db: Database | null): UseExportReturn {
+export function useExport(source: Database | UseDeckManagerReturn | null): UseExportReturn {
   const [phase, setPhase] = useState<ExportPhase>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -80,19 +85,26 @@ export function useExport(db: Database | null): UseExportReturn {
       deckName: string,
       exporter: (db: Database, id: string, loadMedia?: LoadMediaFn) => Promise<Result<Blob>>,
     ) => {
-      if (!db) {
-        setPhase('error');
-        setErrorMessage('Database is not ready yet.');
-        return;
-      }
-
       setPhase('exporting');
       setErrorMessage('');
+
+      let deckDb: Database | null = null;
+      if (isDeckManager(source)) {
+        deckDb = source.getCachedDeckDb(deckId) ?? await source.openDeckDb(deckId);
+      } else {
+        deckDb = source;
+      }
+
+      if (!deckDb) {
+        setPhase('error');
+        setErrorMessage('Could not open this deck. Please try again in a moment.');
+        return;
+      }
 
       const mediaLoader = isNativePlatform() ? nativeMediaLoader : undefined;
 
       try {
-        const result = await exporter(db, deckId, mediaLoader);
+        const result = await exporter(deckDb, deckId, mediaLoader);
         if (!result.success) {
           setPhase('error');
           setErrorMessage(result.error);
@@ -103,11 +115,7 @@ export function useExport(db: Database | null): UseExportReturn {
         const filename = `${sanitizeFilename(deckName)}.apkg`;
 
         if (isNativePlatform()) {
-          try {
-            await shareNative(blob, filename);
-          } catch {
-            downloadBrowser(blob, filename);
-          }
+          await shareNative(blob, filename);
         } else {
           downloadBrowser(blob, filename);
         }
@@ -118,7 +126,7 @@ export function useExport(db: Database | null): UseExportReturn {
         setErrorMessage(`Export failed: ${String(e)}`);
       }
     },
-    [db],
+    [source, nativeMediaLoader],
   );
 
   const exportDeckFresh = useCallback(
@@ -134,6 +142,13 @@ export function useExport(db: Database | null): UseExportReturn {
   );
 
   return { phase, errorMessage, exportDeckFresh, exportDeckWithProgress, reset };
+}
+
+/** Narrow `source` to a DeckManager return by probing for its unique method. */
+function isDeckManager(
+  source: Database | UseDeckManagerReturn | null,
+): source is UseDeckManagerReturn {
+  return source !== null && typeof (source as UseDeckManagerReturn).openDeckDb === 'function';
 }
 
 // ---------------------------------------------------------------------------

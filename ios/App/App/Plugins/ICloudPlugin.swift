@@ -28,8 +28,15 @@ class ICloudPlugin: CAPPlugin, CAPBridgedPlugin {
 
     /// Check if iCloud is available on this device.
     @objc func checkAvailability(_ call: CAPPluginCall) {
-        let available = FileManager.default.ubiquityIdentityToken != nil
-        call.resolve(["available": available])
+        DispatchQueue.global(qos: .userInitiated).async {
+            // ubiquityIdentityToken is nil if user is not signed into iCloud.
+            // url(forUbiquityContainerIdentifier:) must be called off main thread
+            // and returns nil if the container isn't registered in the Dev portal
+            // or the entitlements aren't code-signed into the build.
+            let available = FileManager.default.ubiquityIdentityToken != nil
+                && FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.kai.kit") != nil
+            call.resolve(["available": available])
+        }
     }
 
     /// Save the database and metadata to iCloud Drive.
@@ -47,7 +54,7 @@ class ICloudPlugin: CAPPlugin, CAPBridgedPlugin {
             guard let self = self else { return }
 
             guard let containerURL = FileManager.default.url(
-                forUbiquityContainerIdentifier: nil
+                forUbiquityContainerIdentifier: "iCloud.com.kai.kit"
             ) else {
                 call.reject("iCloud container not available")
                 return
@@ -94,7 +101,7 @@ class ICloudPlugin: CAPPlugin, CAPBridgedPlugin {
             guard let self = self else { return }
 
             guard let containerURL = FileManager.default.url(
-                forUbiquityContainerIdentifier: nil
+                forUbiquityContainerIdentifier: "iCloud.com.kai.kit"
             ) else {
                 DispatchQueue.main.async { call.resolve([:]) }
                 return
@@ -138,7 +145,7 @@ class ICloudPlugin: CAPPlugin, CAPBridgedPlugin {
             guard let self = self else { return }
 
             guard let containerURL = FileManager.default.url(
-                forUbiquityContainerIdentifier: nil
+                forUbiquityContainerIdentifier: "iCloud.com.kai.kit"
             ) else {
                 DispatchQueue.main.async { call.resolve([:]) }
                 return

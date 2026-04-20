@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ThemeProvider } from './components/ThemeProvider';
 import { useDeckManager } from './hooks/useDeckManager';
 import { useSync } from './hooks/useSync';
+import { useICloudAvailability } from './hooks/useICloudAvailability';
 import { PixelCat } from './components/PixelCat';
 import Home from './pages/Home';
 import { App as CapApp } from '@capacitor/app';
@@ -103,6 +104,9 @@ function AppInner() {
     loading ? null : deckManager,
     currentDeckId,
   );
+
+  // One source of truth for iCloud availability — used by Home chip + Settings.
+  const icloudAvailability = useICloudAvailability();
 
   // File opened via iOS "Open in" / share sheet / Files tap
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -295,7 +299,14 @@ function AppInner() {
   if (route.page === 'settings') {
     return (
       <Suspense fallback={pageFallback}>
-        <Settings db={activeDeckDb} onBack={goHome} scrollTo={route.scrollTo} />
+        <Settings
+          db={activeDeckDb}
+          deckManager={loading ? null : deckManager}
+          lastSyncedAt={lastSyncedAt}
+          icloudAvailability={icloudAvailability}
+          onBack={goHome}
+          scrollTo={route.scrollTo}
+        />
       </Suspense>
     );
   }
@@ -321,6 +332,7 @@ function AppInner() {
       syncStatus={syncStatus}
       syncError={syncError}
       lastSyncedAt={lastSyncedAt}
+      icloudAvailability={icloudAvailability}
       mode={mode}
       onModeChange={setMode}
       onStudy={goStudy}

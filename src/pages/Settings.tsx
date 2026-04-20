@@ -7,7 +7,9 @@ import type { Database } from 'sql.js';
 import type { Theme, ReminderTime, NotificationPrefs } from '../types';
 import { useBackup } from '../hooks/useBackup';
 import { useTheme } from '../hooks/useTheme';
-import type { BackupMeta } from '../lib/platform/icloud';
+import type { UseDeckManagerReturn } from '../hooks/useDeckManager';
+import type { ICloudAvailability } from '../hooks/useICloudAvailability';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import { hapticTap } from '../lib/platform/haptics';
 import {
   getGlobalStats,
@@ -26,6 +28,12 @@ import { persistDatabase } from '../hooks/useDatabase';
 
 interface SettingsProps {
   db: Database | null;
+  /** Per-deck manager — used by the iCloud "Sync Now" flush. */
+  deckManager: UseDeckManagerReturn | null;
+  /** Timestamp (ms) of the last successful sync from useSync. */
+  lastSyncedAt: number | null;
+  /** iCloud availability from the shared hook. */
+  icloudAvailability: ICloudAvailability;
   onBack: () => void;
   /** If set, auto-scroll to a section on mount (e.g. 'icloud-sync'). */
   scrollTo?: string | undefined;
@@ -248,31 +256,40 @@ function formatTimestamp(ts: number): string {
   }) + ` at ${time}`;
 }
 
-/** Render the backup status details. */
-function BackupDetails({ meta }: { meta: BackupMeta }) {
+/** Render current iCloud sync state for the Settings iCloud section. */
+function SyncStatusRow({
+  icloudAvailable,
+  lastSyncedAt,
+  deviceName,
+}: {
+  icloudAvailable: boolean;
+  lastSyncedAt: number | null;
+  deviceName: string;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between text-sm">
-        <span className="text-[#C4C4C4]">Last backup</span>
+        <span className="text-[#C4C4C4]">iCloud</span>
         <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {formatTimestamp(meta.timestamp)}
-        </span>
-      </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-[#C4C4C4]">Cards</span>
-        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {meta.cardCount}
+          {icloudAvailable ? 'Connected' : 'Unavailable'}
         </span>
       </div>
       <div className="flex justify-between text-sm">
         <span className="text-[#C4C4C4]">Device</span>
+        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">{deviceName}</span>
+      </div>
+      <div className="flex justify-between text-sm">
+        <span className="text-[#C4C4C4]">Last synced</span>
         <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {meta.deviceName}
+          {icloudAvailable
+            ? (lastSyncedAt ? formatTimestamp(Math.floor(lastSyncedAt / 1000)) : 'Not synced yet')
+            : '—'}
         </span>
       </div>
     </div>
   );
 }
+
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -284,7 +301,7 @@ function BackupDetails({ meta }: { meta: BackupMeta }) {
  * @param db     - sql.js Database instance (null while loading).
  * @param onBack - Called when the user navigates back.
  */
-export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
+export default function Settings({ db, deckManager, lastSyncedAt, icloudAvailability, onBack, scrollTo }: SettingsProps) {
   const { theme, setTheme } = useTheme();
   const icloudSyncRef = useRef<HTMLElement>(null);
   const [flashIcloud, setFlashIcloud] = useState(false);
@@ -360,11 +377,12 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
   const {
     phase,
     errorMessage,
-    lastBackup,
-    checking,
+    flushedCount,
     backupNow,
     reset,
-  } = useBackup(db);
+  } = useBackup(deckManager, icloudAvailability);
+
+  const { deviceName, version, build } = useDeviceInfo();
 
   // Global stats
   const [globalStats, setGlobalStats] = useState<{
@@ -428,7 +446,7 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
     await backupNow();
   }, [backupNow]);
 
-  const isBackingUp = phase === 'backing-up';
+  const isBackingUp = phase === 'syncing';
 
   const handleThemeChange = useCallback((t: Theme) => {
     hapticTap();
@@ -754,33 +772,49 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
 
         {/* ── iCloud ── */}
         <section ref={icloudSyncRef} className="pb-4">
-          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">iCloud</h2>
+          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">iCloud Sync</h2>
           <div className={`bg-[var(--kit-surface)] rounded-xl ${flashIcloud ? 'flash-ring' : ''}`}>
-            {/* Backup */}
+            {/* Plain-language explainer */}
             <div className="px-4 py-3">
-              {checking ? (
+              <p className="text-sm leading-relaxed">
+                Your decks are saved on {deviceName.toLowerCase()}. When iCloud is available, changes sync to your other devices automatically.
+              </p>
+              <p className="text-xs text-[#C4C4C4] leading-relaxed mt-1.5">
+                If iCloud isn't available, nothing is lost — your changes stay here and sync once iCloud is back.
+              </p>
+            </div>
+
+            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
+
+            {/* Status */}
+            <div className="px-4 py-3">
+              {icloudAvailability === 'checking' ? (
                 <div className="flex items-center gap-3">
                   <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-[#C4C4C4]">Checking backup status…</span>
+                  <span className="text-sm text-[#C4C4C4]">Checking iCloud…</span>
                 </div>
-              ) : lastBackup ? (
-                <BackupDetails meta={lastBackup} />
               ) : (
-                <p className="text-sm text-[#C4C4C4]">
-                  No backup found. Back up your cards to iCloud Drive so you can restore them on a new device.
-                </p>
+                <SyncStatusRow
+                  icloudAvailable={icloudAvailability === 'available'}
+                  lastSyncedAt={lastSyncedAt}
+                  deviceName={deviceName}
+                />
               )}
 
               {isBackingUp && (
                 <div className="flex items-center gap-3 mt-3">
                   <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-[#C4C4C4]">Backing up…</span>
+                  <span className="text-sm text-[#C4C4C4]">Syncing…</span>
                 </div>
               )}
 
               {phase === 'done' && (
                 <div className="flex items-center justify-between mt-3">
-                  <p className="text-sm text-green-600 dark:text-green-400">Backup complete!</p>
+                  <p className="text-sm text-green-600 dark:text-green-400">
+                    {flushedCount > 0
+                      ? `Synced ${flushedCount} pending ${flushedCount === 1 ? 'change' : 'changes'}.`
+                      : 'Everything is already up to date.'}
+                  </p>
                   <button onClick={reset} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
                 </div>
               )}
@@ -794,26 +828,34 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
 
               <button
                 onClick={handleBackup}
-                disabled={isBackingUp || !db}
+                disabled={isBackingUp || !deckManager}
                 className="w-full mt-3 py-2.5 text-sm font-semibold border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
               >
-                {isBackingUp ? 'Backing up…' : 'Back Up Now'}
+                {isBackingUp ? 'Syncing…' : 'Sync Now'}
               </button>
             </div>
 
             <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
 
-            {/* Sync troubleshooting */}
+            {/* Troubleshooting */}
             <div className="px-4 py-3">
-              <p className="text-sm mb-2">Sync troubleshooting</p>
+              <p className="text-sm mb-2">Having trouble?</p>
               <ul className="flex flex-col gap-1.5 text-xs text-[#C4C4C4] leading-relaxed">
-                <li>· Same <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Apple ID</strong> on all devices</li>
-                <li>· <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud Drive</strong> enabled in iOS Settings</li>
-                <li>· Kit toggled <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">on</strong> under iCloud Drive apps</li>
+                <li>· Same <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Apple ID</strong> on all your devices</li>
+                <li>· <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud Drive</strong> turned on in iOS Settings</li>
+                <li>· Kit toggled <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">on</strong> under "Apps using iCloud"</li>
                 <li>· Enough <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud storage</strong> available</li>
               </ul>
+              <div className="mt-3 rounded-lg bg-[#F0F0F0] dark:bg-[#1A1A1A] px-3 py-2.5">
+                <p className="text-[11px] font-medium text-[#1c1c1e] dark:text-[#E5E5E5] mb-1">
+                  To check these:
+                </p>
+                <p className="text-[11px] text-[#C4C4C4] leading-relaxed">
+                  Open the iOS <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Settings</strong> app → tap your <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">name</strong> at the top → <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud</strong> → <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">See All</strong> under Apps Using iCloud → turn on <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Kit</strong>.
+                </p>
+              </div>
               <p className="text-[11px] text-[#C4C4C4] mt-2 leading-relaxed">
-                Sync is automatic. Changes may take a few minutes to appear on other devices.
+                Sync happens automatically. Changes may take a few minutes to appear on other devices.
               </p>
             </div>
           </div>
@@ -874,7 +916,7 @@ export default function Settings({ db, onBack, scrollTo }: SettingsProps) {
             <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
             <div className="flex items-center justify-between px-4 py-3">
               <span className="text-sm text-[#C4C4C4]">Version</span>
-              <span className="text-sm text-[#C4C4C4]">1.0.0</span>
+              <span className="text-sm text-[#C4C4C4]">{version} ({build})</span>
             </div>
           </div>
         </section>

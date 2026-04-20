@@ -39,6 +39,7 @@ import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
 import { PixelCat } from '../components/PixelCat';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
 import { TabBar, TAB_BAR_TOTAL_HEIGHT } from '../components/TabBar';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import type { AppMode } from '../App';
 
 // ---------------------------------------------------------------------------
@@ -59,6 +60,8 @@ interface HomeProps {
   syncError?: string | null;
   /** Timestamp (ms) of last successful sync. */
   lastSyncedAt?: number | null;
+  /** Whether iCloud is reachable on this device. */
+  icloudAvailability: import('../hooks/useICloudAvailability').ICloudAvailability;
   /** Current app mode (learn vs review). */
   mode: AppMode;
   /** Called when user switches tabs. */
@@ -421,6 +424,59 @@ function formatTimeAgo(ms: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/** Persistent sync status chip in the Home header. Always-visible, tap to open Settings. */
+function SyncChip({
+  icloudAvailability,
+  syncStatus,
+  syncError,
+  lastSyncedAt,
+  deviceName,
+  onOpenSync,
+}: {
+  icloudAvailability: import('../hooks/useICloudAvailability').ICloudAvailability;
+  syncStatus: import('../hooks/useSync').SyncStatus | undefined;
+  syncError: string | null;
+  lastSyncedAt: number | null;
+  deviceName: string;
+  onOpenSync: () => void;
+}) {
+  // Derive a single visual state from availability + sync status.
+  let dotClass = 'bg-[#C4C4C4]';
+  let label = `Saved on ${deviceName.toLowerCase()}`;
+
+  if (icloudAvailability === 'checking') {
+    dotClass = 'bg-[#C4C4C4]';
+    label = 'Checking iCloud…';
+  } else if (icloudAvailability === 'unavailable') {
+    dotClass = 'bg-[#C4C4C4]';
+    label = `Saved on ${deviceName.toLowerCase()}`;
+  } else if (syncStatus === 'syncing') {
+    dotClass = 'bg-blue-400 animate-pulse';
+    label = 'Syncing…';
+  } else if (syncStatus === 'error') {
+    dotClass = 'bg-amber-400';
+    label = syncError === 'iCloud unavailable' ? `Saved on ${deviceName.toLowerCase()}` : 'Sync issue';
+  } else if (lastSyncedAt) {
+    dotClass = 'bg-green-400';
+    label = `Synced ${formatTimeAgo(lastSyncedAt)}`;
+  } else {
+    // Available but nothing synced yet this session.
+    dotClass = 'bg-green-400';
+    label = 'iCloud ready';
+  }
+
+  return (
+    <button
+      onClick={onOpenSync}
+      className="flex items-center gap-1.5 px-2 py-1 rounded-full active:opacity-70 transition-opacity"
+      aria-label={`Sync status: ${label}. Tap for details.`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
+      <span className="text-[11px] text-[#C4C4C4] whitespace-nowrap">{label}</span>
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -433,14 +489,15 @@ function formatTimeAgo(ms: number): string {
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags, pendingFile, onPendingFileConsumed }: HomeProps) {
+export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, icloudAvailability, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags, pendingFile, onPendingFileConsumed }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
   const [catBouncing, setCatBouncing] = useState(false);
-  const [showSyncPopover, setShowSyncPopover] = useState(false);
+
+  const { deviceName } = useDeviceInfo();
 
   // Swipe-to-switch-tabs state
   const swipeRef = useRef({ startX: 0, startY: 0, decided: false, isHorizontal: false });
@@ -643,8 +700,10 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     useDeckImport(db, onImportComplete, deckManager);
 
   // ── Export hook ──────────────────────────────────────────────────────
+  // In the per-deck arch, pass the deckManager so the hook can open each
+  // deck's own db on demand — there's no longer a monolithic db to share.
   const { phase: exportPhase, errorMessage: exportError, exportDeckFresh, exportDeckWithProgress, reset: resetExport } =
-    useExport(db);
+    useExport(useNewArch ? deckManager : db);
 
   const isExporting = exportPhase === 'exporting';
 
@@ -892,46 +951,14 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             </div>
           </button>
           <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">Kit</span>
-          {(syncStatus === 'syncing' || syncStatus === 'synced' || syncStatus === 'error') && (
-            <div className="relative">
-              <button
-                onClick={() => { hapticTap(); setShowSyncPopover(v => !v); }}
-                className="p-2 -m-1.5 flex items-center justify-center"
-                aria-label="Sync status"
-              >
-                {syncStatus === 'syncing' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                )}
-                {syncStatus === 'synced' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
-                )}
-                {syncStatus === 'error' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
-                )}
-              </button>
-              {showSyncPopover && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowSyncPopover(false)} />
-                  <div className="absolute top-1/2 left-full -translate-y-1/2 ml-2 z-50 pill-border rounded-full px-3 py-1.5 shadow-lg whitespace-nowrap">
-                    {syncStatus === 'syncing' && (
-                      <p className="text-xs text-[var(--kit-pill-text)] text-center">Syncing...</p>
-                    )}
-                    {syncStatus === 'synced' && lastSyncedAt && (
-                      <p className="text-xs text-green-400 text-center">Synced {formatTimeAgo(lastSyncedAt)}</p>
-                    )}
-                    {syncStatus === 'error' && (
-                      <button
-                        onClick={() => { setShowSyncPopover(false); hapticTap(); onSettings('icloud-sync'); }}
-                        className="text-xs text-red-400 underline decoration-dotted underline-offset-2 py-1 px-1 text-center w-full"
-                      >
-                        {syncError ?? 'Sync failed'} →
-                      </button>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          <SyncChip
+            icloudAvailability={icloudAvailability}
+            syncStatus={syncStatus}
+            syncError={syncError ?? null}
+            lastSyncedAt={lastSyncedAt ?? null}
+            deviceName={deviceName}
+            onOpenSync={() => { hapticTap(); onSettings('icloud-sync'); }}
+          />
         </div>
         <div className="flex items-center gap-0.5">
           <button
