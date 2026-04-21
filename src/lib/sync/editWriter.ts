@@ -1,12 +1,17 @@
 /**
- * editWriter — serializes and writes edit files to persistent storage.
+ * editWriter — serializes and persists edit files.
  *
- * On native (Capacitor iOS), edit files are written to the iCloud ubiquity
- * container so they sync across devices. On browser, they are written to
- * localStorage as a development fallback.
+ * Each user action (review, card edit, tag change) becomes one small JSON
+ * edit file (~100-500 bytes). The write is local-first: the edit lands on
+ * this device's disk, awaited, before the caller is told "done." iCloud
+ * receives a mirror asynchronously; the user never waits on the network.
  *
- * Each edit file is a small JSON document (~100-500 bytes) named
- * `{hlc}_{deviceId}.json` inside `Kit/{deckId}/edits/`.
+ * When the iCloud mirror succeeds we remove the local queue entry, so the
+ * steady state is "edits live in iCloud." When iCloud is slow, offline, or
+ * full, the local copy remains and readers merge it alongside iCloud edits.
+ *
+ * This ordering closes the force-kill window: between "tap Good" and
+ * "edit durable" there is now only the ~5ms of a tiny local file write.
  */
 
 import type { EditFile, EditOp } from './types';
@@ -16,11 +21,16 @@ import type { SyncStorage } from './syncStorage';
 /**
  * Write an edit file for a deck.
  *
- * @param storage  - Abstract storage backend (iCloud or localStorage).
+ * Local disk is the source of truth for this device's unmirrored edits.
+ * The function resolves as soon as the local write commits; the iCloud
+ * mirror runs in the background and does not block the caller.
+ *
+ * @param storage  - Abstract storage backend (iCloud + local queue).
  * @param clock    - HLC clock instance for this device.
  * @param deckId   - UUID of the deck this edit applies to.
  * @param ops      - One or more edit operations.
- * @returns The HLC string used as the edit identifier, or null on failure.
+ * @returns The HLC string used as the edit identifier, or null if no ops.
+ * @throws If the durable local write fails (caller should surface this).
  */
 export async function writeEdit(
   storage: SyncStorage,
@@ -44,19 +54,21 @@ export async function writeEdit(
   const path = `${deckId}/edits/${filename}`;
   const data = JSON.stringify(editFile);
 
-  try {
-    await storage.writeFile(path, data);
-    return hlc;
-  } catch (e) {
-    console.warn('[editWriter] Failed to write edit file:', path, e);
-    // Queue for later if iCloud is unavailable
-    try {
-      await storage.queuePendingEdit(deckId, filename, data);
-    } catch {
-      // Best effort — the local SQLite write already succeeded
-    }
-    return hlc;
-  }
+  // Durable local write — awaited. This is the promise we make to the user:
+  // when the UI reports "saved," the edit is on disk and will survive a
+  // force-kill, power loss, or OS memory-pressure termination.
+  await storage.queuePendingEdit(deckId, filename, data);
+
+  // Mirror to iCloud in the background. On success, remove the local queue
+  // entry so the edit lives in one place (iCloud) rather than duplicated.
+  // On failure, leave the local copy — flushPendingEdits will retry on the
+  // next visibility change, and readers already merge local alongside iCloud.
+  storage.writeFile(path, data).then(
+    () => storage.removePendingEdit(deckId, filename).catch(() => {}),
+    () => {},
+  );
+
+  return hlc;
 }
 
 /**

@@ -72,13 +72,21 @@ export async function compactDeck(
     const snapshotPath = `${deckId}/snapshot.json`;
     await storage.writeFile(snapshotPath, JSON.stringify(snapshot));
 
-    // 5. Delete compacted edit files
+    // 5. Delete compacted edit files — from iCloud AND from the local
+    //    pending queue. The local queue holds writes whose iCloud mirror
+    //    hadn't yet completed at write-time; once the edit is folded into
+    //    a snapshot, neither copy is needed.
     for (const edit of compactable) {
       const filename = `${edit.hlc}.json`;
       try {
         await storage.deleteFile(`${deckId}/edits/${filename}`);
       } catch {
         // Best effort — file may already be deleted by another device
+      }
+      try {
+        await storage.removePendingEdit(deckId, filename);
+      } catch {
+        // Best effort — entry may already be gone
       }
     }
 

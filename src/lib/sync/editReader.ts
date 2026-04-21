@@ -12,6 +12,42 @@ import type { SyncStorage } from './syncStorage';
 import { compareHLC } from './hlc';
 
 /**
+ * Read and parse edit files that are queued locally for this device,
+ * filtered to a single deck. These represent edits whose iCloud mirror
+ * has not yet succeeded (or whose local copy hasn't been cleaned up
+ * after a successful mirror).
+ *
+ * @param storage - Abstract storage backend (for listPendingEdits).
+ * @param deckId  - UUID of the deck to filter for.
+ * @returns Parsed edit files for this deck that live in the local queue.
+ */
+async function readLocalPendingEdits(
+  storage: SyncStorage,
+  deckId: string,
+): Promise<EditFile[]> {
+  let pending;
+  try {
+    pending = await storage.listPendingEdits();
+  } catch {
+    return [];
+  }
+
+  const edits: EditFile[] = [];
+  for (const entry of pending) {
+    if (entry.deckId !== deckId) continue;
+    try {
+      const parsed = JSON.parse(entry.data) as EditFile;
+      if (parsed.v === 1 && parsed.ops && Array.isArray(parsed.ops)) {
+        edits.push(parsed);
+      }
+    } catch {
+      // Skip malformed pending entry
+    }
+  }
+  return edits;
+}
+
+/**
  * Read all edit files for a deck, sorted by HLC (oldest first).
  *
  * @param storage - Abstract storage backend.
@@ -58,7 +94,11 @@ export async function readAllEdits(
 }
 
 /**
- * Read edit files newer than a given HLC watermark.
+ * Read edit files newer than a given HLC watermark, merging local pending
+ * edits (this device's unmirrored writes) with iCloud edits (mirrored +
+ * edits from other devices). An edit present in both sources is deduped
+ * by HLC — each HLC is unique per device, so duplicates are the same
+ * edit observed twice during the mirror transition.
  *
  * @param storage   - Abstract storage backend.
  * @param deckId    - UUID of the deck.
@@ -71,10 +111,18 @@ export async function readEditsAfter(
   deckId: string,
   afterHLC: string,
 ): Promise<EditFile[]> {
-  const all = await readAllEdits(storage, deckId);
+  const [icloud, local] = await Promise.all([
+    readAllEdits(storage, deckId),
+    readLocalPendingEdits(storage, deckId),
+  ]);
+
+  const byHlc = new Map<string, EditFile>();
+  for (const edit of icloud) byHlc.set(edit.hlc, edit);
+  for (const edit of local) byHlc.set(edit.hlc, edit);
+
+  const all = Array.from(byHlc.values()).sort((a, b) => compareHLC(a.hlc, b.hlc));
 
   if (!afterHLC) return all;
-
   return all.filter(edit => compareHLC(edit.hlc, afterHLC) > 0);
 }
 
