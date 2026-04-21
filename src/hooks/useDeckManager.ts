@@ -41,6 +41,7 @@ import { createICloudSyncStorage } from '../lib/platform/icloudSync';
 import { createBrowserSyncStorage } from '../lib/platform/browserSync';
 import { loadDatabaseSnapshot } from '../lib/platform/persistence';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { atomicReadText, atomicWriteText } from '../lib/platform/atomicWrite';
 import type { DeckRegistryEntry, EditOp, GlobalTag } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
 import { getDeviceId, getAllDeckEntries } from '../lib/sync/deckRegistry';
@@ -73,25 +74,22 @@ async function deleteLocalDeckSnapshot(deckId: string): Promise<void> {
 /**
  * Read a deck snapshot from the local on-device store.
  * This is the primary reliable store; iCloud is for cross-device sync only.
+ * Recovers from a prior interrupted write via the .bak fallback.
  */
 async function readLocalSnapshot(deckId: string): Promise<string | null> {
   if (!isNativePlatform()) return null;
-  try {
-    const result = await Filesystem.readFile({
-      path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
-      directory: Directory.Documents,
-      encoding: Encoding.UTF8,
-    });
-    return typeof result.data === 'string' ? result.data : null;
-  } catch {
-    return null;
-  }
+  return atomicReadText({
+    path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
+    directory: Directory.Documents,
+  });
 }
 
 /**
- * Write a deck snapshot to the local on-device store.
+ * Write a deck snapshot to the local on-device store atomically.
  * Called on every import and compaction to ensure the deck is always
- * openable on this device regardless of iCloud availability.
+ * openable on this device regardless of iCloud availability. Under
+ * interruption (power loss, force-kill) the previous committed snapshot
+ * is preserved; readers never see a half-written file.
  */
 async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
   if (!isNativePlatform()) return;
@@ -105,11 +103,10 @@ async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
     // Directory already exists — expected on subsequent writes
   }
   try {
-    await Filesystem.writeFile({
+    await atomicWriteText({
       path: `${LOCAL_DECKS_DIR}/${deckId}/snapshot.json`,
       data,
       directory: Directory.Documents,
-      encoding: Encoding.UTF8,
     });
   } catch (e) {
     console.warn('[snapshot] Failed to write local snapshot:', e);
