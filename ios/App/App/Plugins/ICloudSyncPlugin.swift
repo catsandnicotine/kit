@@ -39,7 +39,7 @@ class ICloudSyncPlugin: CAPPlugin, CAPBridgedPlugin {
     /// Get the iCloud container Documents URL, creating it if needed.
     private func containerDocsURL() -> URL? {
         guard let container = FileManager.default.url(
-            forUbiquityContainerIdentifier: nil
+            forUbiquityContainerIdentifier: "iCloud.com.kai.kit"
         ) else { return nil }
         let docs = container.appendingPathComponent("Documents")
             .appendingPathComponent(syncRoot)
@@ -66,8 +66,11 @@ class ICloudSyncPlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - Availability
 
     @objc func checkAvailability(_ call: CAPPluginCall) {
-        let available = FileManager.default.ubiquityIdentityToken != nil
-        call.resolve(["available": available])
+        DispatchQueue.global(qos: .userInitiated).async {
+            let available = FileManager.default.ubiquityIdentityToken != nil
+                && FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.kai.kit") != nil
+            call.resolve(["available": available])
+        }
     }
 
     // MARK: - File Operations
