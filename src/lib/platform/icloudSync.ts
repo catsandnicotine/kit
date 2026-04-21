@@ -13,6 +13,7 @@ import type { PluginListenerHandle } from '@capacitor/core';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import type { SyncStorage, PendingEdit } from '../sync/syncStorage';
 import { isNativePlatform } from './platformDetect';
+import { atomicWriteText } from './atomicWrite';
 
 // ---------------------------------------------------------------------------
 // Plugin interface
@@ -55,9 +56,33 @@ async function readPendingEdits(): Promise<PendingEdit[]> {
       directory: Directory.Documents,
     });
 
-    const names = result.files
-      .map(f => (typeof f === 'string' ? f : f.name))
-      .filter(n => n.endsWith('.json'));
+    const allNames = result.files.map(f => (typeof f === 'string' ? f : f.name));
+
+    // Recovery: atomicWriteText produces `foo.json.bak` during step 2 and
+    // deletes it after step 3. A force-kill between those steps leaves the
+    // .bak holding the last-committed data but no `foo.json`. Promote any
+    // such orphan back to the canonical name before reading.
+    const realSet = new Set(allNames.filter(n => n.endsWith('.json')));
+    for (const name of allNames) {
+      if (!name.endsWith('.json.bak')) continue;
+      const canonical = name.slice(0, -'.bak'.length);
+      if (realSet.has(canonical)) continue;
+      try {
+        await Filesystem.rename({
+          from: `${PENDING_DIR}/${name}`,
+          to: `${PENDING_DIR}/${canonical}`,
+          directory: Directory.Documents,
+          toDirectory: Directory.Documents,
+        });
+        realSet.add(canonical);
+      } catch {
+        // Best effort — if recovery fails here, the edit stays unreadable
+        // this session; atomicReadText-style recovery at per-file level
+        // would pick it up, but bulk scan is simpler and cheap.
+      }
+    }
+
+    const names = Array.from(realSet);
 
     const contents = await Promise.all(
       names.map(name =>
@@ -154,11 +179,13 @@ export function createICloudSyncStorage(): SyncStorage {
       const pendingFilename = `${deckId}_${filename}`;
       const content = JSON.stringify({ deckId, filename, data });
 
-      await Filesystem.writeFile({
+      // Atomic write: edits are the source of truth for this device's
+      // unmirrored writes, so a partial file from an interrupt would
+      // silently drop a review on next replay.
+      await atomicWriteText({
         path: `${PENDING_DIR}/${pendingFilename}`,
         data: content,
         directory: Directory.Documents,
-        encoding: Encoding.UTF8,
       });
     },
 
