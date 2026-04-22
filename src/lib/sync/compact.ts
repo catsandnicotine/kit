@@ -12,7 +12,7 @@
 import type { Database } from 'sql.js';
 import type { DeckSnapshot, EditFile, SyncDeckSettings } from './types';
 import type { SyncStorage } from './syncStorage';
-import { readAllEdits } from './editReader';
+import { readEditsAfter } from './editReader';
 import {
   getAllDecks,
   getCardsByDeck,
@@ -55,8 +55,11 @@ export async function compactDeck(
   deletedCardIds: Set<string>,
 ): Promise<boolean> {
   try {
-    // 1. Read all edit files
-    const allEdits = await readAllEdits(storage, deckId);
+    // 1. Read all edit files — merged local pending + iCloud. Without the
+    //    merge, local-only edits (writes whose iCloud mirror hasn't
+    //    succeeded yet) would never be compacted; they'd sit in the
+    //    pending queue indefinitely while the user is offline.
+    const allEdits = await readEditsAfter(storage, deckId, '');
     if (allEdits.length === 0) return true; // Nothing to compact
 
     // 2. Filter to edits old enough to safely compact

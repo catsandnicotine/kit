@@ -233,6 +233,7 @@ function DeckRow({
   thumbnail,
   matchedTag,
   mode,
+  failed,
   onTap,
   onBrowse,
   onStats,
@@ -247,6 +248,9 @@ function DeckRow({
   thumbnail: string | undefined;
   matchedTag?: string;
   mode: AppMode;
+  /** When true, the deck's last open attempt couldn't produce a DB. Row is
+   * dimmed and the tap opens the recovery sheet instead of the study screen. */
+  failed: boolean;
   onTap: () => void;
   onBrowse: () => void;
   onStats: () => void;
@@ -264,7 +268,7 @@ function DeckRow({
   const progress = totalCount > 0 ? (totalCount - dueCount) / totalCount : 0;
 
   return (
-    <div className="border-b border-[#E5E5E5] dark:border-[#262626]">
+    <div className={`border-b border-[#E5E5E5] dark:border-[#262626] ${failed ? 'opacity-60' : ''}`}>
       <div className="flex items-center">
         <button
           onClick={onTap}
@@ -829,6 +833,32 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   // ── Delete handler ──────────────────────────────────────────────────
   const [deletingDeck, setDeletingDeck] = useState<{ id: string; name: string } | null>(null);
 
+  /**
+   * Deck whose last open attempt failed, chosen by the user to recover.
+   * Opens the recovery sheet ("Try Again" / "Remove from this device").
+   */
+  const [recoveringDeck, setRecoveringDeck] = useState<{ id: string; name: string } | null>(null);
+
+  const handleRetryDeck = useCallback(async () => {
+    if (!recoveringDeck || !deckManager) return;
+    hapticTap();
+    // openDeckDb clears the failed flag internally on success.
+    const retryDb = await deckManager.openDeckDb(recoveringDeck.id);
+    if (retryDb) {
+      setRecoveringDeck(null);
+      mode === 'review' ? onReviewStudy(recoveringDeck.id, recoveringDeck.name) : onStudy(recoveringDeck.id, recoveringDeck.name);
+    }
+    // If it still failed, leave the sheet open so the user can try again
+    // or choose to remove the local copy.
+  }, [recoveringDeck, deckManager, mode, onReviewStudy, onStudy]);
+
+  const handleRemoveLocal = useCallback(async () => {
+    if (!recoveringDeck || !deckManager) return;
+    hapticTap();
+    await deckManager.removeDeckLocal(recoveringDeck.id);
+    setRecoveringDeck(null);
+  }, [recoveringDeck, deckManager]);
+
   const handleDeleteRequest = useCallback((deckId: string, deckName: string) => {
     hapticAgain();
     setDeletingDeck({ id: deckId, name: deckName });
@@ -1048,24 +1078,36 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 <p className="text-sm text-[#C4C4C4]">No decks match "{searchQuery}"</p>
               </div>
             )}
-            {filteredDecks.map(({ deck, matchedTag }) => (
-              <DeckRow
-                key={deck.id}
-                deck={deck}
-                counts={counts[deck.id]}
-                thumbnail={thumbnails[deck.id]}
-                mode={mode}
-                {...(matchedTag !== undefined && { matchedTag })}
-                onTap={() => { hapticNavigate(); mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name); }}
-                onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
-                onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
-                onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
-                onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
-                onSetThumbnail={() => handleSetThumbnail(deck.id)}
-                onDelete={() => handleDeleteRequest(deck.id, deck.name)}
-                exporting={isExporting}
-              />
-            ))}
+            {filteredDecks.map(({ deck, matchedTag }) => {
+              const isFailed = deckManager?.failedDeckIds.has(deck.id) ?? false;
+              return (
+                <DeckRow
+                  key={deck.id}
+                  deck={deck}
+                  counts={counts[deck.id]}
+                  thumbnail={thumbnails[deck.id]}
+                  mode={mode}
+                  failed={isFailed}
+                  {...(matchedTag !== undefined && { matchedTag })}
+                  onTap={() => {
+                    if (isFailed) {
+                      hapticTap();
+                      setRecoveringDeck({ id: deck.id, name: deck.name });
+                    } else {
+                      hapticNavigate();
+                      mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name);
+                    }
+                  }}
+                  onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
+                  onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
+                  onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
+                  onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
+                  onSetThumbnail={() => handleSetThumbnail(deck.id)}
+                  onDelete={() => handleDeleteRequest(deck.id, deck.name)}
+                  exporting={isExporting}
+                />
+              );
+            })}
           </>
         )}
       </div>
@@ -1214,6 +1256,45 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
         </div>
       )}
 
+
+      {/* Deck-couldn't-load recovery sheet — reserved for the genuinely rare
+          case where both local and iCloud copies can't produce a usable DB.
+          Copy avoids "error"/"failed"/"corrupted" — those read as alarming
+          and are usually inaccurate (this is almost always recoverable). */}
+      {recoveringDeck && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
+          <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 pt-5 pb-4 text-center">
+              <p className="text-base font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]">
+                This deck didn't load
+              </p>
+              <p className="text-sm text-[#C4C4C4] mt-2">
+                Your cards and progress are safely stored on iCloud. This copy on your device is having trouble.
+              </p>
+            </div>
+            <div className="flex flex-col border-t border-[#E5E5E5] dark:border-[#333]">
+              <button
+                onClick={handleRetryDeck}
+                className="py-3.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={handleRemoveLocal}
+                className="py-3.5 text-sm text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
+              >
+                Remove from this device
+              </button>
+              <button
+                onClick={() => setRecoveringDeck(null)}
+                className="py-3.5 text-sm text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#262626]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Thumbnail cropper overlay */}
       {cropFile && (

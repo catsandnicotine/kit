@@ -95,6 +95,44 @@ const deletedCards = new Map<string, Set<string>>();
 /** HLC of the last replayed edit per deck. */
 const watermarks = new Map<string, string>();
 
+/**
+ * Decks whose most recent openDeck attempt could not produce a usable
+ * database from either the local or iCloud snapshot. The UI dims these
+ * rows and routes the tap to the recovery sheet instead of the study
+ * screen. Cleared when openDeck subsequently succeeds (e.g. after the
+ * user taps "Try Again" and iCloud has caught up).
+ */
+const failedOpens = new Set<string>();
+
+/** Listeners notified when failedOpens changes (used by the UI layer). */
+const failureListeners = new Set<() => void>();
+
+function markDeckFailed(deckId: string): void {
+  if (failedOpens.has(deckId)) return;
+  failedOpens.add(deckId);
+  failureListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+}
+
+function markDeckHealthy(deckId: string): void {
+  if (!failedOpens.has(deckId)) return;
+  failedOpens.delete(deckId);
+  failureListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+}
+
+/**
+ * Subscribe to deck-health changes. The listener fires whenever a deck
+ * transitions between healthy and failed. Returns an unsubscribe function.
+ */
+export function subscribeToFailureChanges(listener: () => void): () => void {
+  failureListeners.add(listener);
+  return () => { failureListeners.delete(listener); };
+}
+
+/** Whether this deck's last open attempt failed (and no retry has succeeded). */
+export function isDeckFailed(deckId: string): boolean {
+  return failedOpens.has(deckId);
+}
+
 let _SQL: SqlJsStatic | null = null;
 let _storage: SyncStorage | null = null;
 let _clock: HLCClock | null = null;
@@ -161,32 +199,49 @@ export async function openDeck(deckId: string): Promise<Database | null> {
   if (!_SQL || !_storage) return null;
 
   try {
-
-    // Try local storage first (reliable on-device), then fall back to iCloud.
+    // Try local first. If local is missing, parses-but-is-malformed, or
+    // fails to hydrate (e.g. an old interrupted write left a truncated
+    // file that still parses as JSON), fall through to iCloud and silently
+    // overwrite the bad local copy with the known-good one.
     let snapshot: DeckSnapshot | null = null;
-    if (_readLocalSnapshot) {
-      const localData = await _readLocalSnapshot(deckId);
-      if (localData) {
-        try {
-          const parsed = JSON.parse(localData) as DeckSnapshot;
-          if (parsed.v === 1) snapshot = parsed;
-        } catch {
-          // Corrupted local snapshot — fall through to iCloud
+    let db: Database | null = null;
+
+    const localSnapshot = await tryReadLocalSnapshot(deckId);
+    if (localSnapshot) {
+      const candidate = await buildDbFromSnapshot(_SQL, localSnapshot);
+      if (candidate) {
+        snapshot = localSnapshot;
+        db = candidate;
+      }
+      // If candidate is null, buildDbFromSnapshot already logged the reason
+      // and rolled back. We fall through to iCloud without surfacing the
+      // failure to the user — this is the "silent self-heal" case.
+    }
+
+    if (!db) {
+      const icloudSnapshot = await readSnapshot(_storage, deckId);
+      if (icloudSnapshot) {
+        const candidate = await buildDbFromSnapshot(_SQL, icloudSnapshot);
+        if (candidate) {
+          snapshot = icloudSnapshot;
+          db = candidate;
+          // Heal the local copy by replacing it with the known-good iCloud
+          // one. atomicWriteText guarantees the previous bad file is gone
+          // before the new one appears, so next open goes through the fast
+          // local path.
+          if (_writeLocalSnapshot) {
+            _writeLocalSnapshot(deckId, JSON.stringify(icloudSnapshot)).catch(() => {});
+          }
         }
       }
     }
-    if (!snapshot) {
-      snapshot = await readSnapshot(_storage, deckId);
-      // Cache the iCloud snapshot locally so future opens are reliable
-      if (snapshot && _writeLocalSnapshot) {
-        _writeLocalSnapshot(deckId, JSON.stringify(snapshot)).catch(() => {});
-      }
-    }
-    if (!snapshot) return null;
 
-    // Create and populate DB from snapshot
-    const db = await buildDbFromSnapshot(_SQL, snapshot);
-    if (!db) return null;
+    if (!db || !snapshot) {
+      markDeckFailed(deckId);
+      return null;
+    }
+
+    markDeckHealthy(deckId);
 
     // Replay any edits newer than the snapshot
     const deleted = new Set(snapshot.deletedCardIds ?? []);
@@ -241,7 +296,32 @@ export async function openDeck(deckId: string): Promise<Database | null> {
     return db;
   } catch (e) {
     console.warn('[deckManager] Failed to open deck:', deckId, e);
+    markDeckFailed(deckId);
     return null;
+  }
+}
+
+/**
+ * Remove this deck's local files only, keeping the iCloud copy intact.
+ *
+ * Intended for the "Remove from this device" action when a deck refuses to
+ * load. The registry entry stays so the deck still appears in the list —
+ * a subsequent tap re-downloads from iCloud. Other devices are unaffected.
+ *
+ * @param deckId - UUID of the deck.
+ */
+export async function removeDeckLocalOnly(deckId: string): Promise<void> {
+  closeDeck(deckId);
+  if (_deleteLocalSnapshot) {
+    await _deleteLocalSnapshot(deckId).catch(() => {});
+  }
+  // Clear health cache so the next openDeck attempt is fresh.
+  markDeckHealthy(deckId);
+  // Mark the registry entry as not-downloaded so the UI reflects that
+  // this device no longer has a local copy; tapping will re-fetch.
+  const existing = getDeckEntry(deckId);
+  if (existing) {
+    upsertDeckEntry({ ...existing, hasLocalDb: false, isDownloaded: false });
   }
 }
 
@@ -587,8 +667,16 @@ async function buildDbFromSnapshot(
   SQL: SqlJsStatic,
   snapshot: DeckSnapshot,
 ): Promise<Database | null> {
-  try {
+  // Structural validation before we touch the DB. A snapshot that parses as
+  // JSON but is missing required arrays would throw deep in the hydration
+  // loops; catching it up front yields a clearer error and guarantees the
+  // DB we return either has every expected row or is rolled back.
+  if (!validateSnapshotShape(snapshot)) {
+    console.warn('[deckManager] Snapshot failed structural validation:', snapshot.deckId);
+    return null;
+  }
 
+  try {
     const db = new SQL.Database();
     db.run(ENABLE_FOREIGN_KEYS);
 
@@ -605,37 +693,46 @@ async function buildDbFromSnapshot(
     if (!txn.success) return null;
 
     try {
-      insertDeck(db, snapshot.deck);
+      // Insert helpers return { success, error } instead of throwing. Without
+      // this check a row failure would silently skip and we'd commit a partial
+      // deck — exactly the "half-imported" state we're fixing. Escalate any
+      // insert failure to an exception so the outer catch rolls back.
+      const must = <T>(result: { success: true; data: T } | { success: false; error: string }, what: string): T => {
+        if (!result.success) throw new Error(`${what}: ${result.error}`);
+        return result.data;
+      };
+
+      must(insertDeck(db, snapshot.deck), 'insertDeck');
 
       for (const nt of snapshot.noteTypes) {
-        insertNoteType(db, nt);
+        must(insertNoteType(db, nt), 'insertNoteType');
       }
 
       for (let i = 0; i < snapshot.notes.length; i++) {
-        insertNote(db, snapshot.notes[i]!);
+        must(insertNote(db, snapshot.notes[i]!), 'insertNote');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.cards.length; i++) {
-        insertCard(db, snapshot.cards[i]!);
+        must(insertCard(db, snapshot.cards[i]!), 'insertCard');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.cardStates.length; i++) {
-        setCardState(db, snapshot.cardStates[i]!);
+        must(setCardState(db, snapshot.cardStates[i]!), 'setCardState');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.reviewLogs.length; i++) {
         const log = snapshot.reviewLogs[i]!;
-        insertReviewLog(db, {
+        must(insertReviewLog(db, {
           id: log.id,
           cardId: log.cardId,
           rating: log.rating,
           reviewedAt: log.reviewedAt,
           elapsed: log.elapsed,
           scheduledDays: log.scheduledDays,
-        });
+        }), 'insertReviewLog');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
@@ -678,10 +775,49 @@ async function buildDbFromSnapshot(
     } catch (e) {
       console.warn('[deckManager] Failed to populate DB from snapshot:', e);
       try { db.run('ROLLBACK'); } catch { /* ignore */ }
+      try { db.close(); } catch { /* ignore */ }
       return null;
     }
   } catch (e) {
     console.warn('[deckManager] Failed to create DB:', e);
     return null;
   }
+}
+
+/**
+ * Read + parse this deck's local snapshot if it exists. Returns null if no
+ * local snapshot is present or if the file doesn't parse as JSON. Structural
+ * validation is left to buildDbFromSnapshot so the caller can distinguish
+ * "no local copy" from "local copy is bad" and trigger a silent self-heal.
+ */
+async function tryReadLocalSnapshot(deckId: string): Promise<DeckSnapshot | null> {
+  if (!_readLocalSnapshot) return null;
+  const raw = await _readLocalSnapshot(deckId);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as DeckSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Minimum structural check on a deck snapshot before we try to hydrate it.
+ * We don't validate every field — that's what the JSON schema in types.ts
+ * documents — but we catch the cases that would otherwise cause cryptic
+ * failures deep in the insert loops: missing required arrays or a missing
+ * deck object.
+ */
+function validateSnapshotShape(snapshot: DeckSnapshot | undefined | null): boolean {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  if (snapshot.v !== 1) return false;
+  if (!snapshot.deck || typeof snapshot.deck !== 'object') return false;
+  if (!Array.isArray(snapshot.noteTypes)) return false;
+  if (!Array.isArray(snapshot.notes)) return false;
+  if (!Array.isArray(snapshot.cards)) return false;
+  if (!Array.isArray(snapshot.cardStates)) return false;
+  if (!Array.isArray(snapshot.reviewLogs)) return false;
+  if (!Array.isArray(snapshot.tags)) return false;
+  if (!Array.isArray(snapshot.deckTags)) return false;
+  return true;
 }
