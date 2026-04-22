@@ -587,8 +587,16 @@ async function buildDbFromSnapshot(
   SQL: SqlJsStatic,
   snapshot: DeckSnapshot,
 ): Promise<Database | null> {
-  try {
+  // Structural validation before we touch the DB. A snapshot that parses as
+  // JSON but is missing required arrays would throw deep in the hydration
+  // loops; catching it up front yields a clearer error and guarantees the
+  // DB we return either has every expected row or is rolled back.
+  if (!validateSnapshotShape(snapshot)) {
+    console.warn('[deckManager] Snapshot failed structural validation:', snapshot.deckId);
+    return null;
+  }
 
+  try {
     const db = new SQL.Database();
     db.run(ENABLE_FOREIGN_KEYS);
 
@@ -605,37 +613,46 @@ async function buildDbFromSnapshot(
     if (!txn.success) return null;
 
     try {
-      insertDeck(db, snapshot.deck);
+      // Insert helpers return { success, error } instead of throwing. Without
+      // this check a row failure would silently skip and we'd commit a partial
+      // deck — exactly the "half-imported" state we're fixing. Escalate any
+      // insert failure to an exception so the outer catch rolls back.
+      const must = <T>(result: { success: true; data: T } | { success: false; error: string }, what: string): T => {
+        if (!result.success) throw new Error(`${what}: ${result.error}`);
+        return result.data;
+      };
+
+      must(insertDeck(db, snapshot.deck), 'insertDeck');
 
       for (const nt of snapshot.noteTypes) {
-        insertNoteType(db, nt);
+        must(insertNoteType(db, nt), 'insertNoteType');
       }
 
       for (let i = 0; i < snapshot.notes.length; i++) {
-        insertNote(db, snapshot.notes[i]!);
+        must(insertNote(db, snapshot.notes[i]!), 'insertNote');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.cards.length; i++) {
-        insertCard(db, snapshot.cards[i]!);
+        must(insertCard(db, snapshot.cards[i]!), 'insertCard');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.cardStates.length; i++) {
-        setCardState(db, snapshot.cardStates[i]!);
+        must(setCardState(db, snapshot.cardStates[i]!), 'setCardState');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
       for (let i = 0; i < snapshot.reviewLogs.length; i++) {
         const log = snapshot.reviewLogs[i]!;
-        insertReviewLog(db, {
+        must(insertReviewLog(db, {
           id: log.id,
           cardId: log.cardId,
           rating: log.rating,
           reviewedAt: log.reviewedAt,
           elapsed: log.elapsed,
           scheduledDays: log.scheduledDays,
-        });
+        }), 'insertReviewLog');
         if ((i + 1) % HYDRATION_BATCH_SIZE === 0) await yieldToEventLoop();
       }
 
@@ -678,10 +695,32 @@ async function buildDbFromSnapshot(
     } catch (e) {
       console.warn('[deckManager] Failed to populate DB from snapshot:', e);
       try { db.run('ROLLBACK'); } catch { /* ignore */ }
+      try { db.close(); } catch { /* ignore */ }
       return null;
     }
   } catch (e) {
     console.warn('[deckManager] Failed to create DB:', e);
     return null;
   }
+}
+
+/**
+ * Minimum structural check on a deck snapshot before we try to hydrate it.
+ * We don't validate every field — that's what the JSON schema in types.ts
+ * documents — but we catch the cases that would otherwise cause cryptic
+ * failures deep in the insert loops: missing required arrays or a missing
+ * deck object.
+ */
+function validateSnapshotShape(snapshot: DeckSnapshot | undefined | null): boolean {
+  if (!snapshot || typeof snapshot !== 'object') return false;
+  if (snapshot.v !== 1) return false;
+  if (!snapshot.deck || typeof snapshot.deck !== 'object') return false;
+  if (!Array.isArray(snapshot.noteTypes)) return false;
+  if (!Array.isArray(snapshot.notes)) return false;
+  if (!Array.isArray(snapshot.cards)) return false;
+  if (!Array.isArray(snapshot.cardStates)) return false;
+  if (!Array.isArray(snapshot.reviewLogs)) return false;
+  if (!Array.isArray(snapshot.tags)) return false;
+  if (!Array.isArray(snapshot.deckTags)) return false;
+  return true;
 }
