@@ -161,32 +161,44 @@ export async function openDeck(deckId: string): Promise<Database | null> {
   if (!_SQL || !_storage) return null;
 
   try {
-
-    // Try local storage first (reliable on-device), then fall back to iCloud.
+    // Try local first. If local is missing, parses-but-is-malformed, or
+    // fails to hydrate (e.g. an old interrupted write left a truncated
+    // file that still parses as JSON), fall through to iCloud and silently
+    // overwrite the bad local copy with the known-good one.
     let snapshot: DeckSnapshot | null = null;
-    if (_readLocalSnapshot) {
-      const localData = await _readLocalSnapshot(deckId);
-      if (localData) {
-        try {
-          const parsed = JSON.parse(localData) as DeckSnapshot;
-          if (parsed.v === 1) snapshot = parsed;
-        } catch {
-          // Corrupted local snapshot — fall through to iCloud
+    let db: Database | null = null;
+
+    const localSnapshot = await tryReadLocalSnapshot(deckId);
+    if (localSnapshot) {
+      const candidate = await buildDbFromSnapshot(_SQL, localSnapshot);
+      if (candidate) {
+        snapshot = localSnapshot;
+        db = candidate;
+      }
+      // If candidate is null, buildDbFromSnapshot already logged the reason
+      // and rolled back. We fall through to iCloud without surfacing the
+      // failure to the user — this is the "silent self-heal" case.
+    }
+
+    if (!db) {
+      const icloudSnapshot = await readSnapshot(_storage, deckId);
+      if (icloudSnapshot) {
+        const candidate = await buildDbFromSnapshot(_SQL, icloudSnapshot);
+        if (candidate) {
+          snapshot = icloudSnapshot;
+          db = candidate;
+          // Heal the local copy by replacing it with the known-good iCloud
+          // one. atomicWriteText guarantees the previous bad file is gone
+          // before the new one appears, so next open goes through the fast
+          // local path.
+          if (_writeLocalSnapshot) {
+            _writeLocalSnapshot(deckId, JSON.stringify(icloudSnapshot)).catch(() => {});
+          }
         }
       }
     }
-    if (!snapshot) {
-      snapshot = await readSnapshot(_storage, deckId);
-      // Cache the iCloud snapshot locally so future opens are reliable
-      if (snapshot && _writeLocalSnapshot) {
-        _writeLocalSnapshot(deckId, JSON.stringify(snapshot)).catch(() => {});
-      }
-    }
-    if (!snapshot) return null;
 
-    // Create and populate DB from snapshot
-    const db = await buildDbFromSnapshot(_SQL, snapshot);
-    if (!db) return null;
+    if (!db || !snapshot) return null;
 
     // Replay any edits newer than the snapshot
     const deleted = new Set(snapshot.deletedCardIds ?? []);
@@ -700,6 +712,23 @@ async function buildDbFromSnapshot(
     }
   } catch (e) {
     console.warn('[deckManager] Failed to create DB:', e);
+    return null;
+  }
+}
+
+/**
+ * Read + parse this deck's local snapshot if it exists. Returns null if no
+ * local snapshot is present or if the file doesn't parse as JSON. Structural
+ * validation is left to buildDbFromSnapshot so the caller can distinguish
+ * "no local copy" from "local copy is bad" and trigger a silent self-heal.
+ */
+async function tryReadLocalSnapshot(deckId: string): Promise<DeckSnapshot | null> {
+  if (!_readLocalSnapshot) return null;
+  const raw = await _readLocalSnapshot(deckId);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as DeckSnapshot;
+  } catch {
     return null;
   }
 }
