@@ -95,6 +95,44 @@ const deletedCards = new Map<string, Set<string>>();
 /** HLC of the last replayed edit per deck. */
 const watermarks = new Map<string, string>();
 
+/**
+ * Decks whose most recent openDeck attempt could not produce a usable
+ * database from either the local or iCloud snapshot. The UI dims these
+ * rows and routes the tap to the recovery sheet instead of the study
+ * screen. Cleared when openDeck subsequently succeeds (e.g. after the
+ * user taps "Try Again" and iCloud has caught up).
+ */
+const failedOpens = new Set<string>();
+
+/** Listeners notified when failedOpens changes (used by the UI layer). */
+const failureListeners = new Set<() => void>();
+
+function markDeckFailed(deckId: string): void {
+  if (failedOpens.has(deckId)) return;
+  failedOpens.add(deckId);
+  failureListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+}
+
+function markDeckHealthy(deckId: string): void {
+  if (!failedOpens.has(deckId)) return;
+  failedOpens.delete(deckId);
+  failureListeners.forEach(fn => { try { fn(); } catch { /* ignore */ } });
+}
+
+/**
+ * Subscribe to deck-health changes. The listener fires whenever a deck
+ * transitions between healthy and failed. Returns an unsubscribe function.
+ */
+export function subscribeToFailureChanges(listener: () => void): () => void {
+  failureListeners.add(listener);
+  return () => { failureListeners.delete(listener); };
+}
+
+/** Whether this deck's last open attempt failed (and no retry has succeeded). */
+export function isDeckFailed(deckId: string): boolean {
+  return failedOpens.has(deckId);
+}
+
 let _SQL: SqlJsStatic | null = null;
 let _storage: SyncStorage | null = null;
 let _clock: HLCClock | null = null;
@@ -198,7 +236,12 @@ export async function openDeck(deckId: string): Promise<Database | null> {
       }
     }
 
-    if (!db || !snapshot) return null;
+    if (!db || !snapshot) {
+      markDeckFailed(deckId);
+      return null;
+    }
+
+    markDeckHealthy(deckId);
 
     // Replay any edits newer than the snapshot
     const deleted = new Set(snapshot.deletedCardIds ?? []);
@@ -253,7 +296,32 @@ export async function openDeck(deckId: string): Promise<Database | null> {
     return db;
   } catch (e) {
     console.warn('[deckManager] Failed to open deck:', deckId, e);
+    markDeckFailed(deckId);
     return null;
+  }
+}
+
+/**
+ * Remove this deck's local files only, keeping the iCloud copy intact.
+ *
+ * Intended for the "Remove from this device" action when a deck refuses to
+ * load. The registry entry stays so the deck still appears in the list —
+ * a subsequent tap re-downloads from iCloud. Other devices are unaffected.
+ *
+ * @param deckId - UUID of the deck.
+ */
+export async function removeDeckLocalOnly(deckId: string): Promise<void> {
+  closeDeck(deckId);
+  if (_deleteLocalSnapshot) {
+    await _deleteLocalSnapshot(deckId).catch(() => {});
+  }
+  // Clear health cache so the next openDeck attempt is fresh.
+  markDeckHealthy(deckId);
+  // Mark the registry entry as not-downloaded so the UI reflects that
+  // this device no longer has a local copy; tapping will re-fetch.
+  const existing = getDeckEntry(deckId);
+  if (existing) {
+    upsertDeckEntry({ ...existing, hasLocalDb: false, isDownloaded: false });
   }
 }
 

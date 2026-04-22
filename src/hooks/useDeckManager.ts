@@ -36,6 +36,9 @@ import {
   renameGlobalTag as renameGlobalTagFn,
   mergeTagsIntoGlobal as mergeTagsIntoGlobalFn,
   removeDeck as removeDeckFn,
+  removeDeckLocalOnly,
+  isDeckFailed,
+  subscribeToFailureChanges,
 } from '../lib/db/deckManager';
 import { createICloudSyncStorage } from '../lib/platform/icloudSync';
 import { createBrowserSyncStorage } from '../lib/platform/browserSync';
@@ -254,6 +257,14 @@ export interface UseDeckManagerReturn {
    * snapshot, and best-effort deletes iCloud files. Caller must also delete media.
    */
   removeDeck: (deckId: string) => Promise<void>;
+  /**
+   * Remove this deck's local copy only (iCloud is preserved). Used for the
+   * "Remove from this device" recovery action — never destroys more than
+   * the user asked for.
+   */
+  removeDeckLocal: (deckId: string) => Promise<void>;
+  /** Set of deck IDs whose last open attempt failed. Re-rendered on change. */
+  failedDeckIds: ReadonlySet<string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +280,28 @@ export function useDeckManager(): UseDeckManagerReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deckEntries, setDeckEntries] = useState<DeckRegistryEntry[]>([]);
+  const [failedDeckIds, setFailedDeckIds] = useState<ReadonlySet<string>>(new Set());
   const initializedRef = useRef(false);
+
+  // Subscribe to deck-health changes from the deckManager so the UI can
+  // dim rows whose last open attempt failed and show the recovery sheet.
+  useEffect(() => {
+    return subscribeToFailureChanges(() => {
+      // Build a fresh Set so React re-renders consumers.
+      setFailedDeckIds(prev => {
+        const next = new Set<string>();
+        for (const entry of deckEntries) {
+          if (isDeckFailed(entry.deckId)) next.add(entry.deckId);
+        }
+        // Also preserve any failures we were already tracking (entries that
+        // might not be in deckEntries yet on first mount).
+        for (const id of prev) {
+          if (isDeckFailed(id)) next.add(id);
+        }
+        return next;
+      });
+    });
+  }, [deckEntries]);
 
   // ── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -502,5 +534,7 @@ export function useDeckManager(): UseDeckManagerReturn {
     renameTag: renameTagFn,
     mergeImportedTags,
     removeDeck: removeDeckFnCb,
+    removeDeckLocal: removeDeckLocalOnly,
+    failedDeckIds,
   };
 }
