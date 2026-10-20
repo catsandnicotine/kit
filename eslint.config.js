@@ -19,5 +19,12 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // Kit does not use the React Compiler. These compiler-oriented rules
+      // reject deliberate mutable queues and stable callback refs used by the
+      // study and native-listener hooks.
+      'react-hooks/refs': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+    },
   },
 ])

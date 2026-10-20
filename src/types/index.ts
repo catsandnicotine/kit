@@ -84,6 +84,7 @@ export interface ReviewLog {
   cardId: string;
   rating: Rating;
   reviewedAt: number;
+  /** Days since the preceding scheduled review; not answer duration. */
   elapsed: number;
   scheduledDays: number;
 }

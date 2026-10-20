@@ -1,3 +1,5 @@
+import type { StudyProgress } from '../types/studyProgress';
+import { getStudyProgress } from '../lib/studyProgress';
 /**
  * useStudySession — state machine for a single study session.
  *
@@ -9,7 +11,7 @@
  *  - Emit haptic feedback via platform/haptics.ts.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import {
   deleteCardState,
@@ -24,9 +26,8 @@ import {
   updateCardAfterReview,
 } from '../lib/db/queries';
 import {
-  hapticAgain,
+  hapticCelebration,
   hapticFlip,
-  hapticSuccess,
   hapticUndo,
 } from '../lib/platform/haptics';
 import {
@@ -93,6 +94,7 @@ export interface UseStudySessionReturn {
   /** Learning state of the current card: new, learning, review, or relearning. */
   currentCardLearningState: LearningState | null;
   stats: SessionStats;
+  progress: StudyProgress;
   errorMessage: string;
   /** Whether there is a rating in history that can be undone. */
   canUndo: boolean;
@@ -249,7 +251,7 @@ export function useStudySession(
   // Load due cards on mount / when db becomes available
   // -------------------------------------------------------------------------
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!db) return;
 
     setPhase('loading');
@@ -407,19 +409,16 @@ export function useStudySession(
         }]);
       }
 
-      // --- Haptics ---
-      if (rating === 'again') hapticAgain();
-      else hapticSuccess();
-
       // --- Leech detection ---
       if (rating === 'again' && isLeech(resolved.lapses, leechThresholdRef.current)) {
         const suspendResult = setCardSuspended(db, card.id, true);
         if (suspendResult.success) setLeechCardId(card.id);
       }
 
-      // --- Re-queue learning/relearning so the card returns in this session ---
+      // --- Re-queue only when a learning step is already due. Future steps
+      // stay scheduled for their real time instead of repeating immediately. ---
       let againInsertedAtIndex: number | null = null;
-      if (shouldRequeueAfterRating(resolved) && writeState.success) {
+      if (shouldRequeueAfterRating(resolved, nowSec) && writeState.success) {
         queue.push({ card, state: writeState.data });
         againInsertedAtIndex = queue.length - 1;
       }
@@ -449,13 +448,14 @@ export function useStudySession(
 
       if (nextIndex >= queue.length) {
         snapshotElapsed();
+        void hapticCelebration();
         setPhase('complete');
       } else {
         setCurrentIndex(nextIndex);
         showCard(queue, nextIndex);
       }
     },
-    [phase, db, deckId, currentIndex, showCard, snapshotElapsed, onSyncEdit],
+    [phase, db, currentIndex, showCard, snapshotElapsed, onSyncEdit],
   );
 
   // -------------------------------------------------------------------------
@@ -499,7 +499,7 @@ export function useStudySession(
 
     setCurrentIndex(cardIndex);
     showCard(queue, cardIndex);
-  }, [db, phase, showCard]);
+  }, [db, showCard]);
 
   // -------------------------------------------------------------------------
   // repeat
@@ -566,6 +566,7 @@ export function useStudySession(
     currentCard: queueRef.current[currentIndex]?.card ?? null,
     currentCardLearningState: queueRef.current[currentIndex]?.state.state ?? null,
     stats,
+    progress: getStudyProgress(queueRef.current.map(item => item.card.id), currentIndex, phase === 'complete'),
     errorMessage,
     canUndo: undoRef.current !== null,
     ratingPreviews,

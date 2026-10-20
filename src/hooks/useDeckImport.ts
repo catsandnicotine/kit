@@ -1,3 +1,4 @@
+import { getIncomingDeckNames, resolveLeafNames } from '../lib/apkg/importDeckNames';
 /**
  * useDeckImport — state machine for importing an Anki .apkg file.
  *
@@ -16,7 +17,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from 'sql.js';
-import type { Card, CardState, Deck, Media, Note, NoteType, Result, ReviewLog } from '../types';
+import type { Card, CardState, Deck, Note, NoteType, Result, ReviewLog } from '../types';
 import { parseApkgLazy, extractMediaBatch } from '../lib/apkg';
 import { renderTemplate } from '../lib/apkg/templateRenderer';
 import type {
@@ -30,7 +31,6 @@ import {
   rollbackTransaction,
   insertCard,
   insertDeck,
-  insertMedia,
   insertNote,
   insertNoteType,
   insertReviewLog,
@@ -39,8 +39,8 @@ import {
   addTagToDeck,
   getExistingTagNames,
 } from '../lib/db/queries';
+import { getMediaReferences } from '../lib/media';
 import { hapticCelebration } from '../lib/platform/haptics';
-import { isNativePlatform } from '../lib/platform/platformDetect';
 import { saveMediaFile, deleteMediaForDeck } from '../lib/platform/mediaFiles';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
@@ -77,6 +77,7 @@ export type ImportPhase =
 export interface ConflictInfo {
   /** Kit UUID of the existing deck that has the same name. */
   existingId: string;
+  canReplace: boolean;
   /** Display name of the conflicting deck. */
   deckName: string;
 }
@@ -100,6 +101,25 @@ export interface UseDeckImportReturn {
   resolveConflict: (action: 'new' | 'replace') => void;
   /** Reset back to idle so the user can import again. */
   reset: () => void;
+}
+
+/**
+ * Persist a set of imported snapshots in order and fail on the first deck that
+ * does not obtain a durable database. `onCreated` lets the caller track staged
+ * decks for rollback without treating a partial result as success.
+ */
+export async function createImportedSnapshots(
+  snapshots: DeckSnapshot[],
+  createFromSnapshot: (snapshot: DeckSnapshot) => Promise<Database | null>,
+  onCreated: (deckId: string) => void,
+): Promise<void> {
+  for (const snapshot of snapshots) {
+    const createdDb = await createFromSnapshot(snapshot);
+    if (!createdDb) {
+      throw new Error(`Could not save imported deck "${snapshot.deck.name}" to this device.`);
+    }
+    onCreated(snapshot.deckId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +197,9 @@ export function useDeckImport(
       // For new arch: create a temporary in-memory DB for import
       let tempDb: Database | null = null;
       let workDb: Database;
+      let deckToReplace: { deckId: string; name: string } | null = null;
+      const createdDeckIds: string[] = [];
+      let importCommitted = false;
 
       try {
         // ── Phase 1: Parsing ──────────────────────────────────────────────
@@ -194,20 +217,17 @@ export function useDeckImport(
         const parsed = parseResult.data;
 
         // ── Duplicate deck check (new arch only) ──────────────────────────
-        // Find the root deck name (first entry; Anki orders parent before children).
+        // Match the names of non-empty decks that will actually be created.
         if (useNewArch && deckManager && parsed.decks.length > 0) {
-          const incomingName = (parsed.decks[0]?.name ?? '').trim().toLowerCase();
-          const conflict = incomingName
-            ? deckManager.deckEntries.find(
-                e => e.name.trim().toLowerCase() === incomingName,
-              )
-            : undefined;
+          const incomingNames = getIncomingDeckNames(parsed.decks, parsed.cards).map(name => name.trim().toLowerCase());
+          const conflicts = deckManager.deckEntries.filter(entry => incomingNames.includes(entry.name.trim().toLowerCase()));
+          const conflict = conflicts[0];
 
           if (conflict) {
             // Pause the import and wait for the user to decide.
             const action = await new Promise<ConflictAction>((resolve) => {
               conflictResolveRef.current = resolve;
-              setConflictInfo({ existingId: conflict.deckId, deckName: conflict.name });
+              setConflictInfo({ existingId: conflict.deckId, deckName: conflict.name, canReplace: incomingNames.length === 1 && conflicts.length === 1 });
               setPhase('duplicate-found');
             });
 
@@ -218,9 +238,10 @@ export function useDeckImport(
             }
 
             if (action === 'replace') {
-              await deckManager.removeDeck(conflict.deckId);
-              await deleteMediaForDeck(conflict.deckId);
-              await deckManager.refreshDecks();
+              // Stage and durably persist the replacement first. Deleting the
+              // existing deck here would turn a later import/storage failure
+              // into irreversible data loss.
+              deckToReplace = { deckId: conflict.deckId, name: conflict.name };
             }
             // 'new' falls through and imports alongside the existing deck.
           }
@@ -285,29 +306,51 @@ export function useDeckImport(
 
         // ── New arch: build snapshots and create per-deck DBs ─────────────
         if (useNewArch && tempDb) {
-          const decksResult = getAllDecksQ(tempDb);
+          const importDb = tempDb;
+          const decksResult = getAllDecksQ(importDb);
           const allDecks = decksResult.success ? decksResult.data : [];
+          if (allDecks.length === 0) {
+            throw new Error('The import did not produce any decks.');
+          }
 
           const importedTags: Array<{ tag: string; color: string }> = [];
+          const snapshots = allDecks.map(deck => {
+            const snapshot = buildSnapshotFromTempDb(importDb, deck.id);
+            if (!snapshot) {
+              throw new Error(`Could not build a complete snapshot for "${deck.name}".`);
+            }
+            return snapshot;
+          });
 
-          for (const deck of allDecks) {
-            const snapshot = buildSnapshotFromTempDb(tempDb, deck.id);
-            if (snapshot) {
-              await deckManager.createFromSnapshot(snapshot);
-              // Collect tags for global catalog
-              for (const t of snapshot.tags) {
-                importedTags.push(t);
-              }
+          await createImportedSnapshots(
+            snapshots,
+            deckManager.createFromSnapshot,
+            deckId => createdDeckIds.push(deckId),
+          );
+
+          for (const snapshot of snapshots) {
+            // Collect tags for the global catalog only after every deck has a
+            // durable snapshot.
+            for (const t of snapshot.tags) {
+              importedTags.push(t);
             }
           }
 
-          // Merge imported tags into global catalog
+          // Persist the complete new deck set before a requested replacement
+          // removes anything. mergeImportedTags also persists the registry.
           if (importedTags.length > 0) {
             await deckManager.mergeImportedTags(importedTags);
+          } else {
+            await deckManager.saveRegistry();
+          }
+          importCommitted = true;
+
+          if (deckToReplace) {
+            await deckManager.removeDeck(deckToReplace.deckId);
+            await deleteMediaForDeck(deckToReplace.deckId);
+            await deckManager.saveRegistry();
           }
 
-          // Persist registry
-          await deckManager.saveRegistry();
           await deckManager.refreshDecks();
 
           // Clean up temp DB
@@ -336,6 +379,12 @@ export function useDeckImport(
         hapticCelebration();
         onComplete?.(primaryDeckId);
       } catch (e) {
+        // Before the complete registry is committed, remove any successfully
+        // staged decks so a failed multi-deck import cannot leak partial state.
+        if (!importCommitted && deckManager && createdDeckIds.length > 0) {
+          await Promise.allSettled(createdDeckIds.map(deckId => deckManager.removeDeck(deckId)));
+          await deckManager.refreshDecks();
+        }
         setPhase('error');
         setErrorMessage(`Import failed unexpectedly: ${String(e)}`);
         if (tempDb) try { tempDb.close(); } catch { /* ignore */ }
@@ -656,55 +705,36 @@ async function storeMediaBatched(
     return { success: true, data: { storedCount: 0, totalBytes: 0 } };
   }
 
-  const native = isNativePlatform();
-  const now = Math.floor(Date.now() / 1000);
   let storedCount = 0;
   let totalBytes = 0;
-
-  // On non-native (browser dev), store blobs in the DB as before.
-  // On native, write to the filesystem to avoid bloating the SQLite snapshot.
-  let txn: Result<void> | undefined;
-  if (!native) {
-    txn = beginTransaction(db);
-    if (!txn.success) return txn;
+  const decks = getAllDecksQ(db);
+  if (!decks.success) return decks;
+  const references = new Map<string, Set<string>>();
+  for (const deck of decks.data) {
+    const cards = getCardsByDeckQ(db, deck.id);
+    if (!cards.success) return cards;
+    references.set(deck.id, getMediaReferences(cards.data.map(card => card.front + card.back).join('\n')));
   }
 
   try {
     for (let i = 0; i < mediaManifest.length; i += MEDIA_BATCH_SIZE) {
       const batch = await extractMediaBatch(zip, mediaManifest, i, MEDIA_BATCH_SIZE, mediaIsCompressed);
+      if (batch.length !== Math.min(MEDIA_BATCH_SIZE, mediaManifest.length - i)) {
+        throw new Error('Some pictures or audio in this Anki file could not be read. Export the deck from Anki again with media included.');
+      }
 
       for (const pm of batch) {
-        if (native) {
-          await saveMediaFile(deckId, pm.filename, pm.data);
-        } else {
-          const media: Media = {
-            id: uuidv4(),
-            deckId,
-            filename: pm.filename,
-            data: pm.data,
-            mimeType: pm.mimeType,
-            createdAt: now,
-          };
-          const r = insertMedia(db, media);
-          if (!r.success) {
-            rollbackTransaction(db);
-            return r;
-          }
-        }
+        const owners = [...references].filter(([, files]) => files.has(pm.filename)).map(([id]) => id);
+        // Unreferenced resources (such as fonts used dynamically) remain with the primary deck.
+        for (const owner of owners.length ? owners : [deckId]) await saveMediaFile(owner, pm.filename, pm.data);
         storedCount++;
         totalBytes += pm.data.byteLength;
       }
       // Batch references go out of scope here → GC can reclaim blob memory
     }
 
-    if (!native) {
-      const commit = commitTransaction(db);
-      if (!commit.success) return commit;
-    }
-
     return { success: true, data: { storedCount, totalBytes } };
   } catch (e) {
-    if (!native) rollbackTransaction(db);
     return { success: false, error: `Failed to store media: ${String(e)}` };
   }
 }
@@ -787,7 +817,7 @@ function buildSnapshotFromTempDb(
         againSteps: [1, 10],
         graduatingInterval: 1,
         easyInterval: 4,
-        maxInterval: 36500,
+        maxInterval: 365,
         leechThreshold: 8,
         desiredRetention: 0.9,
       };
@@ -818,44 +848,4 @@ function buildSnapshotFromTempDb(
     deckTags: tags.map(t => t.tag),
     deletedCardIds: [],
   };
-}
-
-/**
- * Strip Anki's hierarchical `::` prefixes from deck names, keeping the leaf.
- * If stripping creates duplicates, keep enough parent context to disambiguate.
- *
- * "A::B::C" → "C"
- * If both "A::B::Cards" and "X::Y::Cards" exist → "B > Cards" and "Y > Cards"
- *
- * @param names - Full hierarchical deck names.
- * @returns Array of display names in the same order.
- */
-function resolveLeafNames(names: string[]): string[] {
-  // Start with just the leaf segment
-  const leaves = names.map((n) => {
-    const parts = n.split('::');
-    return parts[parts.length - 1]?.trim() ?? n;
-  });
-
-  // Check for duplicates and add parent context where needed
-  const seen = new Map<string, number[]>();
-  for (let i = 0; i < leaves.length; i++) {
-    const leaf = leaves[i]!;
-    const indices = seen.get(leaf) ?? [];
-    indices.push(i);
-    seen.set(leaf, indices);
-  }
-
-  for (const [, indices] of seen) {
-    if (indices.length <= 1) continue;
-    // Collision — use "Parent > Leaf" format
-    for (const idx of indices) {
-      const parts = names[idx]!.split('::');
-      if (parts.length >= 2) {
-        leaves[idx] = `${parts[parts.length - 2]!.trim()} > ${parts[parts.length - 1]!.trim()}`;
-      }
-    }
-  }
-
-  return leaves;
 }

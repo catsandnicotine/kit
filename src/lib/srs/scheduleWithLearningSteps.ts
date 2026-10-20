@@ -202,15 +202,22 @@ export function resolveSchedule(
 }
 
 /**
- * Whether the card should be re-queued at the end of the current session so
- * the user can see it again before leaving (minute steps are often still due
- * later in the same sitting).
+ * Whether the card is already due and should be re-queued in this session.
+ * Future learning steps are intentionally left for their actual due time so
+ * a short deck does not repeat the same card back-to-back.
  *
  * @param resolved - Output of {@link resolveSchedule}.
- * @returns True when still in learning/relearning after this rating.
+ * @param now - Current Unix timestamp in seconds.
+ * @returns True only for a learning/relearning step that is due now.
  */
-export function shouldRequeueAfterRating(resolved: ResolvedCardSchedule): boolean {
-  return resolved.state === 'learning' || resolved.state === 'relearning';
+export function shouldRequeueAfterRating(
+  resolved: ResolvedCardSchedule,
+  now: number,
+): boolean {
+  return (
+    (resolved.state === 'learning' || resolved.state === 'relearning') &&
+    resolved.due <= now
+  );
 }
 
 /**

@@ -122,3 +122,16 @@ export function pillTextColor(hex: string): '#1c1c1e' | '#ffffff' {
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.55 ? '#1c1c1e' : '#ffffff';
 }
+
+/** A small everyday palette; all historical shades remain supported in stored tags. */
+export const TAG_QUICK_PALETTE = TAG_PALETTE.filter(shade => ['Coral', 'Rust', 'Gold', 'Emerald', 'Teal', 'Azure', 'Cobalt', 'Violet'].includes(shade.name));
+
+/** Offer a compact palette without hiding an existing imported/custom choice.
+ * @param current - Existing tag colour, if any.
+ * @returns Eight everyday colours plus the current colour when outside those presets.
+ */
+export function getTagPickerColours(current: string): TagColorShade[] {
+  if (!current || TAG_QUICK_PALETTE.some(shade => shade.hex.toLowerCase() === current.toLowerCase())) return TAG_QUICK_PALETTE;
+  const stored = TAG_PALETTE.find(shade => shade.hex.toLowerCase() === current.toLowerCase());
+  return [...TAG_QUICK_PALETTE, stored ?? { name:'Current colour', hex:current, family:'Custom', familyIndex:8, shadeIndex:0 }];
+}

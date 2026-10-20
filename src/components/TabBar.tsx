@@ -1,9 +1,9 @@
 /**
- * TabBar — floating bottom bar with centered Learn / Review pills
+ * TabBar — bottom bar with generous Study / Practice controls
  * and a chevron FAB in the bottom-left corner.
  *
  * The chevron expands upward into Tags / Settings pills.
- * Learn / Review are pill toggles with a ring outline on press.
+ * Study / Practice use solid fills and text contrast to show selection.
  */
 
 import { useState } from 'react';
@@ -11,7 +11,7 @@ import type { AppMode } from '../App';
 import { hapticTap, hapticNavigate } from '../lib/platform/haptics';
 
 /** Total height reserved for the bar (used for bottom padding on scroll areas). */
-export const TAB_BAR_TOTAL_HEIGHT = 'calc(68px + env(safe-area-inset-bottom))';
+export const TAB_BAR_TOTAL_HEIGHT = 'calc(82px + env(safe-area-inset-bottom))';
 
 interface TabBarProps {
   mode: AppMode;
@@ -45,13 +45,13 @@ export function TabBar({ mode, onChange, onTags, onSettings }: TabBarProps) {
         <div
           className="fixed z-50 flex flex-col items-start gap-2.5"
           style={{
-            bottom: 'calc(68px + env(safe-area-inset-bottom) + 0.25rem)',
+            bottom: 'calc(82px + env(safe-area-inset-bottom) + 0.25rem)',
             left: 'max(1.25rem, env(safe-area-inset-left))',
           }}
         >
           <button
             onClick={() => { closeFab(); hapticNavigate(); onTags(); }}
-            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter"
+            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter"
             style={{ animationDelay: '0.04s' }}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -62,7 +62,7 @@ export function TabBar({ mode, onChange, onTags, onSettings }: TabBarProps) {
           </button>
           <button
             onClick={() => { closeFab(); hapticNavigate(); onSettings(); }}
-            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter"
+            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter"
             style={{ animationDelay: '0s' }}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -77,7 +77,7 @@ export function TabBar({ mode, onChange, onTags, onSettings }: TabBarProps) {
       {/* Chevron — bottom-left corner */}
       <button
         onClick={() => { hapticTap(); setFabOpen(v => !v); }}
-        className="fixed z-50 w-12 h-12 rounded-full text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform pill-border"
+        className="fixed z-50 w-12 h-12 rounded-full text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform kit-pill"
         style={{
           bottom: 'calc(env(safe-area-inset-bottom) + 0.875rem)',
           left: 'max(1.25rem, env(safe-area-inset-left))',
@@ -94,34 +94,36 @@ export function TabBar({ mode, onChange, onTags, onSettings }: TabBarProps) {
         </svg>
       </button>
 
-      {/* Centered Learn / Review pills */}
+      {/* Study / Practice controls */}
       <div
-        className="fixed bottom-0 left-0 right-0 z-30 flex justify-center pointer-events-none"
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 0.875rem)' }}
+        className="kit-mode-switch fixed z-30"
+        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 0.875rem)' }}
       >
-        <div className="flex items-center gap-3 pointer-events-auto">
+        <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => handleMode('learn')}
-            className={`px-6 py-3 rounded-full text-[15px] font-semibold shadow-lg transition-all ${
+            className={`kit-mode-button rounded-full font-semibold transition-colors ${
               mode === 'learn'
-                ? 'text-[var(--kit-pill-text)] pill-border'
-                : 'bg-[var(--kit-bg)] text-[#999] dark:text-[#666] border border-transparent active:ring-2 active:ring-[var(--kit-pill-edge)]'
+                ? 'text-[var(--kit-pill-text)] kit-pill'
+                : 'bg-[var(--kit-bg)] text-[#777] dark:text-[#aaa]'
             }`}
-            aria-label="Learn"
+            aria-label="Study" title="Scheduled cards"
+            aria-pressed={mode === 'learn'}
           >
-            Learn
+            Study
           </button>
 
           <button
             onClick={() => handleMode('review')}
-            className={`px-6 py-3 rounded-full text-[15px] font-semibold shadow-lg transition-all ${
+            className={`kit-mode-button rounded-full font-semibold transition-colors ${
               mode === 'review'
-                ? 'text-[var(--kit-pill-text)] pill-border'
-                : 'bg-[var(--kit-bg)] text-[#999] dark:text-[#666] border border-transparent active:ring-2 active:ring-[var(--kit-pill-edge)]'
+                ? 'text-[var(--kit-pill-text)] kit-pill'
+                : 'bg-[var(--kit-bg)] text-[#777] dark:text-[#aaa]'
             }`}
-            aria-label="Review"
+            aria-label="Practice" title="Practice without changing review dates"
+            aria-pressed={mode === 'review'}
           >
-            Review
+            Practice
           </button>
         </div>
       </div>

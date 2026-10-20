@@ -13,14 +13,16 @@
  * On native (Capacitor iOS), Capacitor.convertFileSrc() is used to get a
  * capacitor:// URL that WKWebView can serve directly — no JS memory needed.
  *
- * In browser dev mode, these functions are intentional no-ops; media loading
- * falls back to the DB-blob path in useDeckMedia.
+ * Browser previews use the origin-private filesystem so media survives both
+ * temporary import databases and page reloads.
  */
 
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Capacitor } from '@capacitor/core';
 import { uint8ToBase64, base64ToUint8 } from './persistence';
 import { isNativePlatform } from './platformDetect';
+
+import { saveBrowserMedia, readBrowserMedia, listBrowserMedia, deleteBrowserMedia } from './browserMediaFiles';
 
 const MEDIA_ROOT = 'media';
 
@@ -41,7 +43,8 @@ export async function saveMediaFile(
   filename: string,
   data: Uint8Array,
 ): Promise<void> {
-  if (!isNativePlatform()) return;
+  if (!isNativePlatform()) return saveBrowserMedia(deckId, filename, data);
+  if (filename.includes('/') || filename.includes('\\') || filename === '.' || filename === '..') throw new Error('Invalid media filename');
   try {
     // Ensure the deck media directory exists before writing.
     await Filesystem.mkdir({
@@ -72,7 +75,10 @@ export async function loadMediaFile(
   deckId: string,
   filename: string,
 ): Promise<Uint8Array | null> {
-  if (!isNativePlatform()) return null;
+  if (!isNativePlatform()) {
+    const file = await readBrowserMedia(deckId, filename);
+    return file ? new Uint8Array(await file.arrayBuffer()) : null;
+  }
   try {
     const result = await Filesystem.readFile({
       path: `${MEDIA_ROOT}/${deckId}/${filename}`,
@@ -96,7 +102,7 @@ export async function loadMediaFile(
  * @returns Array of filenames (e.g. ["cat.jpg", "audio.mp3"]).
  */
 export async function listMediaFilenames(deckId: string): Promise<string[]> {
-  if (!isNativePlatform()) return [];
+  if (!isNativePlatform()) return listBrowserMedia(deckId);
   try {
     const result = await Filesystem.readdir({
       path: `${MEDIA_ROOT}/${deckId}`,
@@ -137,7 +143,7 @@ export async function getMediaDirUri(deckId: string): Promise<string> {
  * @returns Web-accessible URL.
  */
 export function mediaUriToWebUrl(nativeUri: string, filename: string): string {
-  const full = `${nativeUri}/${filename}`;
+  const full = `${nativeUri}/${encodeURIComponent(filename)}`;
   return Capacitor.convertFileSrc(full);
 }
 
@@ -150,7 +156,13 @@ export function mediaUriToWebUrl(nativeUri: string, filename: string): string {
  * @returns capacitor:// URL, or empty string if unavailable.
  */
 export async function getMediaFileWebUrl(deckId: string, filename: string): Promise<string> {
-  if (!isNativePlatform()) return '';
+  if (!isNativePlatform()) {
+    const file = await readBrowserMedia(deckId, filename);
+    if (!file) return '';
+    const extension = filename.split('.').pop()?.toLowerCase() ?? '';
+    const types: Record<string, string> = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml', mp3:'audio/mpeg', mp4:'video/mp4', m4a:'audio/mp4', ogg:'audio/ogg', wav:'audio/wav', woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf', otf:'font/otf', css:'text/css' };
+    return URL.createObjectURL(file.slice(0, file.size, types[extension] ?? 'application/octet-stream'));
+  }
   try {
     const result = await Filesystem.getUri({
       path: `${MEDIA_ROOT}/${deckId}/${filename}`,
@@ -169,7 +181,7 @@ export async function getMediaFileWebUrl(deckId: string, filename: string): Prom
  * @param deckId - Kit deck UUID.
  */
 export async function deleteMediaForDeck(deckId: string): Promise<void> {
-  if (!isNativePlatform()) return;
+  if (!isNativePlatform()) return deleteBrowserMedia(deckId);
   try {
     await Filesystem.rmdir({
       path: `${MEDIA_ROOT}/${deckId}`,

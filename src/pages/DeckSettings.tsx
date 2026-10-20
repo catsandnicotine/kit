@@ -1,3 +1,4 @@
+import { DeckName } from '../components/DeckName';
 /**
  * DeckSettings page — per-deck configuration with plain-English descriptions.
  *
@@ -42,19 +43,29 @@ function WheelPicker({
   options,
   onChange,
   suffix,
+  label,
 }: {
   value: number;
   options: number[];
   onChange: (v: number) => void;
   suffix?: string;
+  label?: string;
 }) {
+  // Imported/older decks may contain a valid value outside today's presets.
+  // Keep that value visible instead of letting <select> misleadingly display
+  // its first option while a different number remains stored.
+  const visibleOptions = options.includes(value)
+    ? options
+    : [...options, value].sort((a, b) => a - b);
+
   return (
     <select
+      aria-label={label}
       value={value}
       onChange={(e) => { hapticTap(); onChange(Number(e.target.value)); }}
-      className="bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
+      className="bg-[#F0F0F0] dark:bg-[#262626] rounded-lg px-3 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
     >
-      {options.map((n) => (
+      {visibleOptions.map((n) => (
         <option key={n} value={n}>{n}{suffix ?? ''}</option>
       ))}
     </select>
@@ -68,12 +79,14 @@ function NumberInput({
   max,
   onChange,
   suffix,
+  label,
 }: {
   value: number;
   min?: number;
   max?: number;
   onChange: (v: number) => void;
   suffix?: string;
+  label?: string;
 }) {
   const [draft, setDraft] = useState(String(value));
   // Keep draft in sync when value changes externally
@@ -91,9 +104,10 @@ function NumberInput({
   };
 
   return (
-    <div className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 min-w-[4.5rem]">
+    <div className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] rounded-lg px-3 py-2 min-w-[4.5rem]">
       <input
         type="number"
+        aria-label={label}
         inputMode="numeric"
         value={draft}
         min={min}
@@ -137,7 +151,7 @@ function StepsEditor({
       {steps.map((s, i) => (
         <div
           key={i}
-          className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2.5 py-1.5"
+          className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] rounded-lg px-2.5 py-1.5"
         >
           <span className="text-sm font-semibold tabular-nums">{s}m</span>
           {steps.length > 1 && (
@@ -161,14 +175,14 @@ function StepsEditor({
             if (e.key === 'Enter') commit();
             if (e.key === 'Escape') { setDraftValue(''); setIsAdding(false); }
           }}
-          className="w-16 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-1.5 text-sm font-semibold outline-none"
+          className="w-16 text-center bg-[#F0F0F0] dark:bg-[#262626] rounded-lg px-2 py-1.5 text-sm font-semibold outline-none"
           placeholder="min"
           min={1}
         />
       ) : (
         <button
           onClick={() => { hapticTap(); setIsAdding(true); }}
-          className="flex items-center justify-center w-8 h-8 rounded-lg border border-dashed border-[#D4D4D4] dark:border-[#404040] text-[#C4C4C4] text-xl leading-none"
+          className="flex items-center justify-center w-8 h-8 rounded-lg text-[#C4C4C4] text-xl leading-none"
         >
           +
         </button>
@@ -190,16 +204,17 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const help = tooltip ?? description;
   return (
     <div>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1">
           <span className="text-sm font-medium">{label}</span>
-          {tooltip && (
+          {help && (
             <button
               onClick={() => { hapticTap(); setShowTooltip(v => !v); }}
-              aria-label="More info"
-              className="text-[#C4C4C4]"
+              aria-label={`${label}: help`} title={`${label}: help`}
+              className="kit-icon-button text-[#999]"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="10" />
@@ -210,12 +225,7 @@ function SettingRow({
         </div>
         {children}
       </div>
-      {tooltip && showTooltip && (
-        <p className="text-[11px] text-[#C4C4C4] mt-1 leading-relaxed">{tooltip}</p>
-      )}
-      {description && (
-        <p className="text-[11px] text-[#C4C4C4] mt-1 leading-relaxed">{description}</p>
-      )}
+      {help && showTooltip && <p className="text-xs text-[#999] mt-2 leading-relaxed">{help}</p>}
     </div>
   );
 }
@@ -223,28 +233,16 @@ function SettingRow({
 /** Section card with header and description. */
 function Section({
   title,
-  description,
   children,
 }: {
   title: string;
   description?: string;
   children: React.ReactNode;
 }) {
-  return (
-    <section className="px-4 pb-4">
-      <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-[#C4C4C4] mb-1">
-          {title}
-        </h3>
-        {description && (
-          <p className="text-xs text-[#C4C4C4] mb-3 leading-relaxed">{description}</p>
-        )}
-        <div className="flex flex-col gap-4">
-          {children}
-        </div>
-      </div>
-    </section>
-  );
+  return <details className="deck-settings-section" open={title === 'Daily Limits' ? true : undefined}>
+    <summary>{title}<span aria-hidden="true">⌄</span></summary>
+    <div className="flex flex-col gap-4 pt-4">{children}</div>
+  </details>;
 }
 
 // Pre-generate option arrays
@@ -378,7 +376,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
           }}
         >
           <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
-          <span className="text-base font-bold truncate">{deckName}</span>
+          <DeckName name={deckName} className="text-base font-bold" />
         </header>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-[#C4C4C4]">Loading…</p>
@@ -399,7 +397,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
         }}
       >
         <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
-        <span className="text-sm font-semibold truncate">Settings — {deckName}</span>
+        <div className="min-w-0"><DeckName name={deckName} className="text-sm font-semibold" /><span className="text-xs text-[#999]">Study settings</span></div>
       </header>
 
       <div
@@ -414,20 +412,20 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
         <div className="pt-4" />
         <Section
           title="Daily Limits"
-          description="Controls how many cards you see each day. Lower limits prevent burnout; higher limits speed up progress."
         >
           <SettingRow
             label="New cards per day"
             description="How many unseen cards to introduce each day. Start with 20 and adjust based on how you feel."
           >
-            <WheelPicker value={limit} options={DAILY_LIMIT_OPTIONS} onChange={handleSaveLimit} />
+            <WheelPicker label="New cards per day" value={limit} options={DAILY_LIMIT_OPTIONS} onChange={handleSaveLimit} />
           </SettingRow>
 
           <SettingRow
-            label="Max reviews per day"
+            label="Reviews per session"
             tooltip="Cap on review cards per session. If you fall behind, this prevents an overwhelming pile of reviews. Learning cards always show regardless."
           >
             <NumberInput
+              label="Reviews per session"
               value={maxReviews}
               min={1}
               max={9999}
@@ -440,11 +438,10 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
         {/* Learning Steps */}
         <Section
           title="Learning Steps"
-          description="New cards cycle through these short practice rounds before entering long-term review."
         >
           <div>
             <span className="text-sm font-medium">Practice intervals</span>
-            <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">Minutes to wait before re-showing a card you got wrong.</p>
+            <p className="text-xs text-[#999]">Minutes between attempts</p>
             <StepsEditor
               steps={steps}
               onChange={(s) => { setSteps(s); saveLearningSettings(s, gradInt, easyInt); }}
@@ -477,7 +474,6 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
         {/* Scheduling */}
         <Section
           title="Scheduling"
-          description="Controls how the FSRS algorithm spaces your long-term reviews."
         >
           <SettingRow
             label="Target retention"
@@ -490,6 +486,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
               <div onTouchMove={e => e.stopPropagation()}>
                 <input
                   type="range"
+                  aria-label="Target retention"
                   min={70}
                   max={99}
                   step={1}
@@ -512,6 +509,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             tooltip="The longest a card can go before you see it again. Shorter = more reviews but better retention. 365 days works for most people."
           >
             <WheelPicker
+              label="Maximum wait in days"
               value={maxInterval}
               options={MAX_INTERVAL_OPTIONS}
               onChange={handleSaveMaxInterval}
@@ -523,6 +521,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             tooltip="If you get a card wrong this many times, Kit will suspend it as a 'leech'. These cards usually need to be rewritten. Set to 0 to disable."
           >
             <WheelPicker
+              label="Wrong attempts before suspension"
               value={leechThreshold}
               options={LEECH_OPTIONS}
               onChange={handleSaveLeechThreshold}

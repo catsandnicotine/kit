@@ -1,0 +1,200 @@
+[
+  {
+    "area": "First launch",
+    "path": "Try Kit",
+    "decision": "Opens a working sample deck. Kept: useful before importing or creating.",
+    "verification": "Source + earlier browser check"
+  },
+  {
+    "area": "First launch",
+    "path": "Create deck → first card",
+    "decision": "One name field, then the editor. Removed repeated instructions.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "First launch",
+    "path": "Import Anki deck",
+    "decision": "Kept a short explicit label; an import icon alone does not explain compatibility.",
+    "verification": "Source + earlier browser check"
+  },
+  {
+    "area": "First launch",
+    "path": "Skip → empty library",
+    "decision": "Kept an escape route. Empty library still offers creation and import.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Library",
+    "path": "Study / Practice",
+    "decision": "Renamed the two modes to distinguish scheduled study from free practice.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Library",
+    "path": "Tap deck / edit pencil",
+    "decision": "Deck opens study or practice; pencil opens card management. Empty decks open their editor.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Library",
+    "path": "Search / clear / no results",
+    "decision": "Kept search, result feedback, and a way back to the full list.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Library",
+    "path": "Hold name / context menu",
+    "decision": "Single-line names; full names remain readable and selectable.",
+    "verification": "Browser checked earlier"
+  },
+  {
+    "area": "Deck actions",
+    "path": "Edit deck → Rename / Cover / Restore media",
+    "decision": "Kept secondary maintenance together, outside the normal study path.",
+    "verification": "Source + earlier browser check"
+  },
+  {
+    "area": "Deck actions",
+    "path": "Statistics",
+    "decision": "Kept as optional information, outside study controls.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Deck actions",
+    "path": "Study settings",
+    "decision": "Daily limits lead. Learning and scheduling are collapsed; help opens on request.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Deck actions",
+    "path": "Share → cards / with progress",
+    "decision": "Both options are meaningful: sharing a deck and keeping a personal backup.",
+    "verification": "Source reviewed; native share sheet not exercised"
+  },
+  {
+    "area": "Deck actions",
+    "path": "Delete → confirmation / cancel",
+    "decision": "Kept explicit words and the permanent-loss consequence. No deletion executed.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Import",
+    "path": "Duplicate → keep both / replace / cancel",
+    "decision": "Checks actual non-empty imported deck names. Replacing explicitly mentions study history; multi-deck replacement is not offered.",
+    "verification": "Source + regression tests"
+  },
+  {
+    "area": "Import",
+    "path": "Unreadable media / storage failure",
+    "decision": "Kept actionable errors instead of a false import success.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Editor",
+    "path": "Front / Back → image and formatting",
+    "decision": "Small image icons beside each field; full touch targets. Attachment filenames are collapsed.",
+    "verification": "Browser checked; camera permission not exercised"
+  },
+  {
+    "area": "Editor",
+    "path": "Save → card list → Study",
+    "decision": "Removed the first-card modal. A small optional Study action stays in the list.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Editor",
+    "path": "Close dirty editor → keep / discard",
+    "decision": "Unsaved edits require an explicit choice. The confirmation receives keyboard focus.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Card browser",
+    "path": "Search / filters / selection",
+    "decision": "Kept for finding or managing large decks. Bulk delete stays behind selection and confirmation.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Study",
+    "path": "Reveal → Again / Hard / Good / Easy",
+    "decision": "Kept short rating labels and interval hints: icons alone do not teach honest recall ratings.",
+    "verification": "Source + browser checks"
+  },
+  {
+    "area": "Study",
+    "path": "Edit / Undo",
+    "decision": "Kept in context. Removed the overlapping unscored-repeat shortcut and hidden review-count picker.",
+    "verification": "Source + earlier browser checks"
+  },
+  {
+    "area": "Study",
+    "path": "Finish → Done / Keep practising",
+    "decision": "No early-review quantity picker. Continuing opens free practice without changing schedules. Next-session timing includes learning and relearning cards.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Practice",
+    "path": "Reveal → Again / Put aside",
+    "decision": "Kept two physical-card decisions. No scheduling writes.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Practice",
+    "path": "Finish → Done / practise again",
+    "decision": "Shared finish design. Done returns to the library without another completion screen.",
+    "verification": "Browser checked"
+  },
+  {
+    "area": "Settings",
+    "path": "Appearance / timer",
+    "decision": "Kept simple personal preferences.",
+    "verification": "Source + earlier browser checks"
+  },
+  {
+    "area": "Settings",
+    "path": "Study defaults / apply to existing decks",
+    "decision": "Advanced and collapsed. Kept the scope explanation and explicit apply label.",
+    "verification": "Source reviewed; bulk apply not executed"
+  },
+  {
+    "area": "Settings",
+    "path": "Sync status / check sync",
+    "decision": "Kept troubleshooting on demand. No unsupported claim that all media has synced.",
+    "verification": "Source + existing unit tests; real-device offline cycles not exercised"
+  },
+  {
+    "area": "Settings",
+    "path": "Support / Privacy / Back",
+    "decision": "Support remains an explicit email link. Privacy is bundled, opens offline, and has a clear return.",
+    "verification": "Browser checked for Privacy; no email sent"
+  },
+  {
+    "area": "Tags",
+    "path": "Search / create / edit / assign / remove",
+    "decision": "Kept secondary organisation under More. Colour choices are reduced from 40 to eight, preserving existing custom colours. Destructive consequences retain labels.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "Recovery",
+    "path": "Deck cannot load → retry / cancel",
+    "decision": "Removed unverified iCloud assurances and the local-removal shortcut from the failure state.",
+    "verification": "Source reviewed; no user files damaged to trigger it"
+  },
+  {
+    "area": "Recovery",
+    "path": "Practice read error",
+    "decision": "A failed read offers Retry, rather than pretending the session is complete.",
+    "verification": "Source reviewed"
+  },
+  {
+    "area": "iOS",
+    "path": "Files Open in / photo picker / share sheet",
+    "decision": "Entry points remain. Browser testing does not verify OS permissions, file handoff, or tactile feel.",
+    "verification": "Device follow-up required"
+  },
+  {
+    "area": "Concurrent work",
+    "path": "Painting-deck integration",
+    "decision": "Separate painting-catalogue additions were kept intact. Their modules and validation were completed during this review. The combined suite now passes; the catalogue content itself was not part of this flow walkthrough.",
+    "verification": "Combined build and 203 tests pass; catalogue content excluded from this audit"
+  }
+]

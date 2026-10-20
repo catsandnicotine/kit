@@ -1,3 +1,4 @@
+import { TagColourPicker } from './TagColourPicker';
 /**
  * TagBottomSheet — iOS-style draggable bottom sheet for tag actions.
  *
@@ -14,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Deck } from '../types';
 import type { DeckAssociation } from '../hooks/useTagSheet';
 import type { TagCount } from '../lib/db/queries';
-import { TAG_PALETTE, pillTextColor } from '../lib/tagColors';
+import { pillTextColor } from '../lib/tagColors';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,34 +29,6 @@ const DISMISS_THRESHOLD = 80; // px dragged down to trigger dismiss
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
-
-/** Flat 8×5 color grid. */
-function ColorGrid({
-  current,
-  onSelect,
-}: {
-  current: string;
-  onSelect: (hex: string) => void;
-}) {
-  return (
-    <div className="grid grid-cols-8 gap-2 px-4 py-3">
-      {TAG_PALETTE.map(shade => (
-        <button
-          key={shade.hex}
-          onClick={() => onSelect(shade.hex)}
-          className="w-7 h-7 rounded-full active:scale-90 transition-transform"
-          style={{
-            background: shade.hex,
-            boxShadow: current === shade.hex
-              ? `0 0 0 2px var(--kit-bg), 0 0 0 4px ${shade.hex}`
-              : 'none',
-          }}
-          aria-label={shade.name}
-        />
-      ))}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Props
@@ -215,18 +188,15 @@ export function TagBottomSheet({
           {/* Color picker */}
           <div className="border-t border-[#E5E5E5] dark:border-[#262626]">
             <p className="px-4 pt-3 pb-1 text-xs font-medium text-[#C4C4C4] uppercase tracking-wide">
-              Color
+              Colour
             </p>
-            <ColorGrid
-              current={tag.color}
-              onSelect={hex => onColorChange(tag.tag, hex === tag.color ? '' : hex)}
-            />
+            <TagColourPicker value={tag.color} onChange={hex => onColorChange(tag.tag, hex)} />
             {tag.color && (
               <button
                 onClick={() => onColorChange(tag.tag, '')}
                 className="mx-4 mb-3 text-xs text-[#C4C4C4]"
               >
-                Clear color
+                Clear colour
               </button>
             )}
           </div>
@@ -238,14 +208,14 @@ export function TagBottomSheet({
                 onClick={() => setShowDeckPicker(true)}
                 className="flex-1 py-2.5 text-sm font-medium bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70"
               >
-                Add to Deck
+                Add to deck
               </button>
             )}
             <button
               onClick={() => setConfirmDelete(true)}
               className="flex-1 py-2.5 text-sm font-medium bg-red-500/10 rounded-full text-red-500 active:opacity-70"
             >
-              Delete Tag
+              Delete tag
             </button>
           </div>
 
@@ -283,7 +253,7 @@ export function TagBottomSheet({
           {onAddToDeck && deckAssociations.length === 0 && (
             <div className="border-t border-[#E5E5E5] dark:border-[#262626] px-4 py-4">
               <p className="text-xs text-[#C4C4C4] text-center">
-                Not added to any deck yet
+                No decks
               </p>
             </div>
           )}
@@ -299,7 +269,7 @@ export function TagBottomSheet({
             <button onClick={() => setShowDeckPicker(false)} className="text-sm text-[#C4C4C4]">
               Done
             </button>
-            <span className="flex-1 text-base font-bold text-center">Add to Deck</span>
+            <span className="flex-1 text-base font-bold text-center">Add to deck</span>
           </div>
           <div className="flex-1 overflow-y-auto">
             {allDecks.length === 0 && (

@@ -15,6 +15,7 @@ import type { EditOp } from '../lib/sync/types';
 import { deleteCard, insertCard, updateCard, addTagToDeck } from '../lib/db/queries';
 import { persistDatabase } from './useDatabase';
 import { scheduleICloudBackup } from './useBackup';
+import { hasMeaningfulCardContent } from '../lib/cardContent';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -101,6 +102,9 @@ export function useCardEditor(
       const now = Math.floor(Date.now() / 1000);
 
       if (isNew) {
+        if (!hasMeaningfulCardContent(front) || !hasMeaningfulCardContent(back)) {
+          return { success: false, error: 'Add both a question and an answer before saving.' };
+        }
         const newCard: Card = {
           ...card,
           front,

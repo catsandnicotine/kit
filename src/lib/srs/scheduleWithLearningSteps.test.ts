@@ -1,4 +1,3 @@
-/// <reference types="vitest" />
 import { describe, expect, it } from 'vitest';
 import type { CardState } from '../../types';
 import {
@@ -55,7 +54,7 @@ describe('resolveSchedule — new card', () => {
     expect(s.state).toBe('learning');
     expect(s.due).toBe(now + 10 * 60); // steps[1] = 10m
     expect(s.learningStepIndex).toBe(1);
-    expect(shouldRequeueAfterRating(s)).toBe(true);
+    expect(shouldRequeueAfterRating(s, now)).toBe(false);
   });
 
   it('Hard on new card uses average of steps[0] and steps[1]', () => {
@@ -64,7 +63,7 @@ describe('resolveSchedule — new card', () => {
     // average of 1m and 10m = 6m (rounded)
     expect(s.due).toBe(now + 6 * 60);
     expect(s.learningStepIndex).toBe(0);
-    expect(shouldRequeueAfterRating(s)).toBe(true);
+    expect(shouldRequeueAfterRating(s, now)).toBe(false);
   });
 
   it('Hard on new card differs from Again', () => {
@@ -79,7 +78,7 @@ describe('resolveSchedule — new card', () => {
     expect(s.state).toBe('review');
     expect(s.due).toBe(now + 4 * 86400);
     expect(s.learningStepIndex).toBe(0);
-    expect(shouldRequeueAfterRating(s)).toBe(false);
+    expect(shouldRequeueAfterRating(s, now)).toBe(false);
   });
 });
 
@@ -118,7 +117,7 @@ describe('resolveSchedule — learning', () => {
     expect(s.state).toBe('review');
     expect(s.due).toBe(now + 3 * 86400); // graduatingInterval = 3d
     expect(s.learningStepIndex).toBe(0);
-    expect(shouldRequeueAfterRating(s)).toBe(false);
+    expect(shouldRequeueAfterRating(s, now)).toBe(false);
   });
 
   it('Hard stays at current step index with averaged delay', () => {
@@ -187,6 +186,6 @@ describe('resolveSchedule — review lapse', () => {
     const s = resolveSchedule(st, 'again', now, 1, deck);
     expect(s.state).toBe('relearning');
     expect(s.due).toBe(now + 60);
-    expect(shouldRequeueAfterRating(s)).toBe(true);
+    expect(shouldRequeueAfterRating(s, now)).toBe(false);
   });
 });

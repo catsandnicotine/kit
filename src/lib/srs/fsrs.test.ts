@@ -1,4 +1,3 @@
-/// <reference types="vitest" />
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   calculateRetrievability,
@@ -291,9 +290,6 @@ describe('interval fuzz', () => {
     expect(out.scheduledDays).toBeGreaterThanOrEqual(1);
   });
 });
-
-// Suppress unused variable TS warning in the fuzz test above
-declare const _: unknown;
 
 // ---------------------------------------------------------------------------
 // Stability after recall — spot-check formula

@@ -1,54 +1,95 @@
-/**
- * Haptic feedback abstraction layer.
- * All haptic calls must go through this module.
- */
-
+/** Contextual, bounded feedback. Native failures must never interrupt studying. */
+import { Capacitor } from '@capacitor/core';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
+import type { Rating } from '../../types';
 
-// Warm the native bridge on module load so the first user-facing tap
-// doesn't pay the Capacitor bridge initialisation cost (~100-300ms).
-Haptics.impact({ style: ImpactStyle.Light }).catch(() => {});
+let generation = 0;
+let lastStarted = -Infinity;
 
-/** Card flip haptic - medium impact */
-export async function hapticFlip(): Promise<void> {
-  await Haptics.impact({ style: ImpactStyle.Medium });
+function available(): boolean {
+  return Capacitor.isNativePlatform() && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
 }
 
-/** Again rating - error notification */
-export async function hapticAgain(): Promise<void> {
-  await Haptics.notification({ type: NotificationType.Error });
+async function impact(style: ImpactStyle): Promise<void> {
+  try { await Haptics.impact({ style }); }
+  catch { /* Unsupported hardware/disabled feedback is a quiet no-op. */ }
 }
 
-/** Hard/Good/Easy ratings - success notification */
+// New interactions cancel any remaining pulses; rapid duplicate calls coalesce.
+async function play(styles: readonly ImpactStyle[], gap = 65): Promise<void> {
+  const token = ++generation;
+  if (!available() || Date.now() - lastStarted < 45) return;
+  lastStarted = Date.now();
+  for (const [i, style] of styles.entries()) {
+    if (i > 0) await new Promise(resolve => setTimeout(resolve, gap));
+    if (token !== generation || !available()) return;
+    await impact(style);
+  }
+}
+
+/** Reveal: one light, immediate click. @returns Feedback completion. */
+export function hapticFlip(): Promise<void> {
+  return play([ImpactStyle.Light]);
+}
+
+/** Return/retry without an error alarm. @returns Feedback completion. */
+export function hapticAgain(): Promise<void> {
+  return play([ImpactStyle.Light, ImpactStyle.Light], 55);
+}
+
+/** Match the selected pixel symbol, at the start of its drawing.
+ * @param rating - Honest recall rating; never amplified by a streak.
+ * @returns Feedback completion.
+ */
+export function hapticRating(rating: Rating): Promise<void> {
+  if (rating === 'again') return hapticAgain();
+  if (rating === 'hard') return play([ImpactStyle.Medium]);
+  if (rating === 'easy') return play([ImpactStyle.Light, ImpactStyle.Light], 85);
+  return play([ImpactStyle.Light]);
+}
+
+/** Match the physical-card review action.
+ * @param choice - Return the card or finish with it.
+ * @returns Feedback completion.
+ */
+export function hapticReviewChoice(choice: 'again' | 'aside'): Promise<void> {
+  return choice === 'again' ? hapticAgain() : play([ImpactStyle.Light]);
+}
+
+/** A successfully completed task, reserved for real milestones. @returns Feedback completion. */
 export async function hapticSuccess(): Promise<void> {
-  await Haptics.notification({ type: NotificationType.Success });
+  ++generation;
+  if (!available() || Date.now() - lastStarted < 45) return;
+  lastStarted = Date.now();
+  try { await Haptics.notification({ type: NotificationType.Success }); }
+  catch { /* Haptics are optional; task completion still succeeds. */ }
 }
 
-/** Import complete - celebration (3 rapid impacts) */
+/** Completed session/import: one native success cadence. @returns Feedback completion. */
 export async function hapticCelebration(): Promise<void> {
-  await Haptics.impact({ style: ImpactStyle.Heavy });
-  await new Promise(r => setTimeout(r, 80));
-  await Haptics.impact({ style: ImpactStyle.Medium });
-  await new Promise(r => setTimeout(r, 80));
-  await Haptics.impact({ style: ImpactStyle.Light });
+  const token = ++generation;
+  const pause = Math.max(0, 160 - (Date.now() - lastStarted));
+  if (pause > 0) await new Promise(resolve => setTimeout(resolve, pause));
+  if (token !== generation || !available()) return;
+  await hapticSuccess();
 }
 
-/** Long-press edit - selection feedback */
-export async function hapticLongPress(): Promise<void> {
-  await Haptics.selectionStart();
+/** Long-press activation: a light confirmation. @returns Feedback completion. */
+export function hapticLongPress(): Promise<void> {
+  return play([ImpactStyle.Light]);
 }
 
-/** Undo - soft tap */
-export async function hapticUndo(): Promise<void> {
-  await Haptics.impact({ style: ImpactStyle.Light });
+/** Undo: quiet acknowledgement. @returns Feedback completion. */
+export function hapticUndo(): Promise<void> {
+  return play([ImpactStyle.Light]);
 }
 
-/** Generic button tap - light impact */
-export async function hapticTap(): Promise<void> {
-  await Haptics.impact({ style: ImpactStyle.Light });
+/** Routine control: a single light tick. @returns Feedback completion. */
+export function hapticTap(): Promise<void> {
+  return play([ImpactStyle.Light]);
 }
 
-/** Navigation transition - medium impact */
-export async function hapticNavigate(): Promise<void> {
-  await Haptics.impact({ style: ImpactStyle.Medium });
+/** Navigation stays quieter than substantive actions. @returns Feedback completion. */
+export function hapticNavigate(): Promise<void> {
+  return play([ImpactStyle.Light]);
 }

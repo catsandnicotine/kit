@@ -1,3 +1,4 @@
+import { UiIcon } from './UiIcon';
 /**
  * CardEditor — slide-up overlay for editing a card during study.
  *
@@ -16,6 +17,7 @@ import { useCardEditor } from '../hooks/useCardEditor';
 import { pillTextColor } from '../lib/tagColors';
 import { saveMediaFile, getMediaFileWebUrl } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
+import { hasMeaningfulCardContent } from '../lib/cardContent';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -116,15 +118,21 @@ interface RichFieldProps {
   initialHtml: string;
   contentRef: React.RefObject<HTMLDivElement | null>;
   onInput: () => void;
+  autoFocus?: boolean;
+  onAddImage: () => void;
 }
 
-function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) {
+function RichField({ label, initialHtml, contentRef, onInput, onAddImage, autoFocus = false }: RichFieldProps) {
   useEffect(() => {
     if (contentRef.current && contentRef.current.innerHTML !== initialHtml) {
       contentRef.current.innerHTML = initialHtml;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialHtml]);
+
+  useEffect(() => {
+    if (autoFocus) contentRef.current?.focus();
+  }, [autoFocus, contentRef]);
 
   const execCommand = useCallback((cmd: string) => {
     contentRef.current?.focus();
@@ -133,15 +141,15 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
 
   return (
     <div>
-      <label className="block text-xs font-medium text-text-muted mb-1">
-        {label}
-      </label>
-      <div className="flex gap-1 mb-1">
+      <div className="flex items-center gap-1 mb-1">
+        <span className="text-xs font-medium text-text-muted mr-auto">{label}</span>
+        <button type="button" onClick={onAddImage} className="kit-icon-button text-text-muted" aria-label={`Add image to ${label.toLowerCase()}`} title={`Add image to ${label.toLowerCase()}`}><UiIcon name="image" /></button>
         <button
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => execCommand('bold')}
-          className="px-2 py-0.5 text-xs font-bold border border-border-light dark:border-border-dark rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
+          aria-label={`Bold ${label.toLowerCase()}`}
+          className="min-w-11 min-h-11 px-2 text-xs font-bold rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
         >
           B
         </button>
@@ -149,7 +157,8 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => execCommand('italic')}
-          className="px-2 py-0.5 text-xs italic border border-border-light dark:border-border-dark rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
+          aria-label={`Italicize ${label.toLowerCase()}`}
+          className="min-w-11 min-h-11 px-2 text-xs italic rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
         >
           I
         </button>
@@ -157,7 +166,8 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
           type="button"
           onMouseDown={e => e.preventDefault()}
           onClick={() => execCommand('underline')}
-          className="px-2 py-0.5 text-xs underline border border-border-light dark:border-border-dark rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
+          aria-label={`Underline ${label.toLowerCase()}`}
+          className="min-w-11 min-h-11 px-2 text-xs underline rounded text-text-light dark:text-text-dark hover:bg-surface-light dark:hover:bg-surface-dark"
         >
           U
         </button>
@@ -165,8 +175,12 @@ function RichField({ label, initialHtml, contentRef, onInput }: RichFieldProps) 
       <div
         ref={contentRef}
         contentEditable
+        role="textbox"
+        aria-label={label}
+        aria-multiline="true"
+        suppressContentEditableWarning
         onInput={onInput}
-        className="rich-field w-full min-h-[6rem] px-3 py-2 text-sm bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg text-text-light dark:text-text-dark overflow-y-auto focus:outline-none focus:ring-1 focus:ring-accent-light dark:focus:ring-accent-dark card-content"
+        className="rich-field w-full min-h-[6rem] px-3 py-2 text-sm bg-surface-light dark:bg-surface-dark rounded-lg text-text-light dark:text-text-dark overflow-y-auto focus:outline-none focus:ring-1 focus:ring-accent-light dark:focus:ring-accent-dark card-content"
       />
     </div>
   );
@@ -191,7 +205,7 @@ function MediaInventory({
   if (images.length === 0 && sounds.length === 0) return null;
 
   return (
-    <div className="space-y-2">
+    <details className="editor-attachments"><summary aria-label={`${side} attachments`}>Attachments <span>{images.length + sounds.length}</span></summary><div className="space-y-2 pt-3">
       {/* Images */}
       {images.length > 0 && (
         <div>
@@ -211,7 +225,7 @@ function MediaInventory({
                   <img
                     src={src}
                     alt={img.filename}
-                    className="w-16 h-16 object-cover rounded-lg border border-border-light dark:border-border-dark"
+                    className="w-16 h-16 object-cover rounded-lg "
                   />
                   <p className="text-[10px] text-text-muted truncate w-16 mt-0.5" title={img.filename}>
                     {img.filename}
@@ -240,7 +254,7 @@ function MediaInventory({
               return (
                 <div
                   key={`${snd.filename}-${i}`}
-                  className="p-2 bg-surface-light dark:bg-surface-dark border border-border-light dark:border-border-dark rounded-lg"
+                  className="p-2 bg-surface-light dark:bg-surface-dark rounded-lg"
                 >
                   <p className="text-xs text-text-light dark:text-text-dark truncate">
                     {snd.filename}
@@ -254,7 +268,7 @@ function MediaInventory({
           </div>
         </div>
       )}
-    </div>
+    </div></details>
   );
 }
 
@@ -262,10 +276,20 @@ function MediaInventory({
 // Component
 // ---------------------------------------------------------------------------
 
-export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss, isNew, deckTags = [], onMediaAdded, onSyncEdit }: CardEditorProps) {
+export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss: closeEditor, isNew, deckTags = [], onMediaAdded, onSyncEdit }: CardEditorProps) {
   const editor = useCardEditor(db, card, isNew, onSyncEdit);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const discardDialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => { if (showDiscardConfirm) discardDialogRef.current?.showModal(); }, [showDiscardConfirm]);
+  const onDismiss = useCallback(() => {
+    if (editor.dirty) setShowDiscardConfirm(true);
+    else closeEditor();
+  }, [editor.dirty, closeEditor]);
   const [error, setError] = useState('');
+  const [newCardValid, setNewCardValid] = useState(
+    () => hasMeaningfulCardContent(card.front) && hasMeaningfulCardContent(card.back),
+  );
 
   const frontRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
@@ -273,6 +297,19 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
   const imageTargetRef = useRef<'front' | 'back'>('back');
   /** Maps capacitor:// URL → filename for user-inserted images (native only). */
   const userInsertedRef = useRef<Map<string, string>>(new Map());
+
+  const refreshNewCardValidity = useCallback(() => {
+    if (!isNew) return;
+    setNewCardValid(
+      hasMeaningfulCardContent(frontRef.current?.innerHTML ?? '') &&
+      hasMeaningfulCardContent(backRef.current?.innerHTML ?? ''),
+    );
+  }, [isNew]);
+
+  const handleContentInput = useCallback(() => {
+    editor.markContentDirty();
+    refreshNewCardValidity();
+  }, [editor, refreshNewCardValidity]);
 
   // ── Media references ────────────────────────────────────────────────────
 
@@ -308,12 +345,12 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
   // Prepare display HTML: rewrite media refs for display, strip [sound:] tags
   // (sounds are shown in the inventory instead).
   const displayFrontHtml = useMemo(() => {
-    let html = stripSounds(card.front);
+    const html = stripSounds(card.front);
     return rewriteHtml ? rewriteHtml(html) : html;
   }, [card.front, rewriteHtml]);
 
   const displayBackHtml = useMemo(() => {
-    let html = stripSounds(card.back);
+    const html = stripSounds(card.back);
     return rewriteHtml ? rewriteHtml(html) : html;
   }, [card.back, rewriteHtml]);
 
@@ -371,6 +408,7 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
         img.style.maxWidth = '100%';
         target.appendChild(img);
         editor.markContentDirty();
+        refreshNewCardValidity();
       } else {
         // Browser dev mode: embed as data URI (no Capacitor filesystem).
         const reader = new FileReader();
@@ -384,12 +422,13 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
             img.style.maxWidth = '100%';
             target.appendChild(img);
             editor.markContentDirty();
+            refreshNewCardValidity();
           }
         };
         reader.readAsDataURL(file);
       }
     },
-    [editor, card.deckId, onMediaAdded],
+    [editor, card.deckId, onMediaAdded, refreshNewCardValidity],
   );
 
   const handleAddImage = useCallback(
@@ -468,6 +507,9 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
         }}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isNew ? 'New card' : 'Edit card'}
       >
         {/* Drag handle */}
         <div className="flex justify-center pt-3 pb-2 cursor-grab shrink-0">
@@ -478,23 +520,25 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
         <div className="flex items-center justify-between px-4 pb-3 border-b border-border-light dark:border-border-dark shrink-0">
           <button
             onClick={onDismiss}
-            className="text-sm text-text-muted"
+            aria-label="Close editor" title="Close editor"
+            className="kit-icon-button text-text-muted"
           >
-            Cancel
+            <UiIcon name="close" />
           </button>
           <span className="text-sm font-semibold text-text-light dark:text-text-dark">
             {isNew ? 'New Card' : 'Edit Card'}
           </span>
           <button
             onClick={handleSave}
-            disabled={!isNew && !editor.dirty}
-            className={`text-sm font-semibold ${
-              isNew || editor.dirty
+            aria-label="Save card" title="Save card"
+            disabled={isNew ? !newCardValid : !editor.dirty}
+            className={`kit-icon-button font-semibold ${
+              (isNew && newCardValid) || (!isNew && editor.dirty)
                 ? 'text-accent-light dark:text-accent-dark'
                 : 'text-text-muted opacity-50'
             }`}
           >
-            Save
+            <UiIcon name="check" />
           </button>
         </div>
 
@@ -502,7 +546,7 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
           {/* Error */}
           {error && (
-            <p className="text-xs text-red-500">{error}</p>
+            <p className="text-xs text-red-500" role="alert">{error}</p>
           )}
 
           {/* Front */}
@@ -510,15 +554,11 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
             label="Front"
             initialHtml={displayFrontHtml}
             contentRef={frontRef}
-            onInput={editor.markContentDirty}
+            onInput={handleContentInput}
+            autoFocus={Boolean(isNew)}
+            onAddImage={() => handleAddImage('front')}
           />
-          <button
-            type="button"
-            onClick={() => handleAddImage('front')}
-            className="w-full py-1.5 text-xs text-text-muted border border-dashed border-border-light dark:border-border-dark rounded-lg"
-          >
-            Add Image to Front...
-          </button>
+
 
           {/* Front Media Inventory */}
           <MediaInventory refs={frontRefs} side="Front" rewriteHtml={rewriteHtml} />
@@ -526,17 +566,12 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
           {/* Back */}
           <RichField
             label="Back"
+            onAddImage={() => handleAddImage('back')}
             initialHtml={displayBackHtml}
             contentRef={backRef}
-            onInput={editor.markContentDirty}
+            onInput={handleContentInput}
           />
-          <button
-            type="button"
-            onClick={() => handleAddImage('back')}
-            className="w-full py-1.5 text-xs text-text-muted border border-dashed border-border-light dark:border-border-dark rounded-lg"
-          >
-            Add Image to Back...
-          </button>
+
 
           {/* Back Media Inventory */}
           <MediaInventory refs={backRefs} side="Back" rewriteHtml={rewriteHtml} />
@@ -578,16 +613,17 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
           {/* Delete Card */}
           {isNew ? null : !showDeleteConfirm ? (
             <button
+              aria-label="Delete card" title="Delete card"
               onClick={() => setShowDeleteConfirm(true)}
-              className="w-full py-2.5 text-sm text-red-500 border border-red-500/30 rounded-lg"
+              className="kit-icon-button text-red-500 ml-auto"
             >
-              Delete Card
+              <UiIcon name="trash" />
             </button>
           ) : (
             <div className="flex gap-2">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
-                className="flex-1 py-2.5 text-sm text-text-muted border border-border-light dark:border-border-dark rounded-lg"
+                className="flex-1 py-2.5 text-sm text-text-muted rounded-lg"
               >
                 Cancel
               </button>
@@ -595,12 +631,15 @@ export function CardEditor({ db, card, rewriteHtml, onSave, onDelete, onDismiss,
                 onClick={handleDelete}
                 className="flex-1 py-2.5 text-sm text-white bg-red-500 rounded-lg font-semibold"
               >
-                Confirm Delete
+                Delete
               </button>
             </div>
           )}
         </div>
       </div>
+      {showDiscardConfirm && <dialog ref={discardDialogRef} className="editor-discard-backdrop" role="alertdialog" aria-label="Discard changes?" onCancel={() => setShowDiscardConfirm(false)}>
+        <div><h2>Discard changes?</h2><div className="flex gap-3 mt-5"><button type="button" autoFocus onClick={() => setShowDiscardConfirm(false)}>Keep editing</button><button type="button" className="text-red-500" onClick={closeEditor}>Discard</button></div></div>
+      </dialog>}
     </>
   );
 }

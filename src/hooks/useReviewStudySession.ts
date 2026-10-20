@@ -2,24 +2,24 @@
  * useReviewStudySession — drives a physical-flashcard style review session.
  *
  * No DB writes. No FSRS scheduling. Cards are shuffled randomly on load.
- * Three actions: send to back of deck, send to middle, or put aside.
+ * Two actions: return to the pile or put aside for this session.
  *
  * @param db     - sql.js Database instance (null while loading).
  * @param deckId - Deck UUID to load cards from.
  * @returns Session state and action callbacks.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { getCardsByDeck } from '../lib/db/queries';
-import { hapticFlip, hapticTap, hapticUndo, hapticCelebration } from '../lib/platform/haptics';
+import { hapticFlip, hapticNavigate, hapticCelebration } from '../lib/platform/haptics';
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export type ReviewStudyPhase = 'loading' | 'front' | 'back' | 'complete';
+export type ReviewStudyPhase = 'loading' | 'front' | 'back' | 'complete' | 'error';
 
 export interface ReviewStudyStats {
   /** Total cards loaded from the deck. */
@@ -32,14 +32,14 @@ export interface ReviewStudyStats {
 
 export interface UseReviewStudySessionReturn {
   phase: ReviewStudyPhase;
+  errorMessage: string;
+  retry: () => void;
   currentCard: Card | null;
   stats: ReviewStudyStats;
   /** Flip the current card to show the back. */
   flip: () => void;
   /** Move current card to the end of the queue. */
   sendToBack: () => void;
-  /** Insert current card at a random position in the middle of the queue. */
-  sendToMiddle: () => void;
   /** Remove current card from the queue entirely. */
   putAside: () => void;
   /** Reshuffle put-aside cards for another round. */
@@ -73,6 +73,8 @@ export function useReviewStudySession(
   const putAsideRef = useRef<Card[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [phase, setPhase] = useState<ReviewStudyPhase>('loading');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [loadVersion, setLoadVersion] = useState(0);
   const [stats, setStats] = useState<ReviewStudyStats>({
     total: 0,
     remaining: 0,
@@ -80,11 +82,13 @@ export function useReviewStudySession(
   });
 
   // ── Load & shuffle cards ────────────────────────────────────────────────
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!db) return;
 
     const result = getCardsByDeck(db, deckId);
-    if (!result.success || result.data.length === 0) {
+    if (!result.success) { setErrorMessage('Could not open this deck for practice.'); setPhase('error'); return; }
+    setErrorMessage('');
+    if (result.data.length === 0) {
       setPhase('complete');
       return;
     }
@@ -95,7 +99,7 @@ export function useReviewStudySession(
     setCurrentIndex(0);
     setStats({ total: shuffled.length, remaining: shuffled.length, putAside: 0 });
     setPhase('front');
-  }, [db, deckId]);
+  }, [db, deckId, loadVersion]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -106,6 +110,7 @@ export function useReviewStudySession(
     setStats(prev => ({ ...prev, remaining }));
 
     if (next >= queue.length) {
+      void hapticCelebration();
       setPhase('complete');
     } else {
       setCurrentIndex(next);
@@ -123,7 +128,6 @@ export function useReviewStudySession(
 
   const sendToBack = useCallback(() => {
     if (phase !== 'back') return;
-    hapticUndo();
     const queue = queueRef.current;
     const card = queue[currentIndex];
     if (!card) return;
@@ -132,29 +136,8 @@ export function useReviewStudySession(
     advance();
   }, [phase, currentIndex, advance]);
 
-  const sendToMiddle = useCallback(() => {
-    if (phase !== 'back') return;
-    hapticTap();
-    const queue = queueRef.current;
-    const card = queue[currentIndex];
-    if (!card) return;
-    // Insert at a random position in the middle 50% of the remaining queue
-    const remaining = queue.length - (currentIndex + 1);
-    if (remaining <= 1) {
-      // Too few cards — just push to end
-      queue.push({ ...card });
-    } else {
-      const lo = currentIndex + 1 + Math.floor(remaining * 0.25);
-      const hi = currentIndex + 1 + Math.floor(remaining * 0.75);
-      const insertAt = lo + Math.floor(Math.random() * (hi - lo + 1));
-      queue.splice(insertAt, 0, { ...card });
-    }
-    advance();
-  }, [phase, currentIndex, advance]);
-
   const putAside = useCallback(() => {
     if (phase !== 'back') return;
-    hapticTap();
     const queue = queueRef.current;
     const card = queue[currentIndex];
     if (card) putAsideRef.current.push(card);
@@ -164,6 +147,7 @@ export function useReviewStudySession(
     const remaining = Math.max(0, queue.length - next);
     setStats(prev => ({ ...prev, remaining, putAside: putAsideRef.current.length }));
     if (next >= queue.length) {
+      void hapticCelebration();
       setPhase('complete');
     } else {
       setCurrentIndex(next);
@@ -173,7 +157,7 @@ export function useReviewStudySession(
 
   const reshufflePutAside = useCallback(() => {
     if (putAsideRef.current.length === 0) return;
-    hapticCelebration();
+    hapticNavigate();
     const shuffled = shuffle(putAsideRef.current);
     queueRef.current = shuffled;
     putAsideRef.current = [];
@@ -184,17 +168,18 @@ export function useReviewStudySession(
 
   // ── Return ──────────────────────────────────────────────────────────────
 
-  const currentCard = phase !== 'loading' && phase !== 'complete'
+  const currentCard = (phase === 'front' || phase === 'back')
     ? queueRef.current[currentIndex] ?? null
     : null;
 
   return {
     phase,
+    errorMessage,
+    retry: () => { setPhase('loading'); setLoadVersion(value => value + 1); },
     currentCard,
     stats,
     flip,
     sendToBack,
-    sendToMiddle,
     putAside,
     reshufflePutAside,
   };

@@ -6,6 +6,8 @@
 
 import type { Database } from 'sql.js';
 import { v4 as uuidv4 } from 'uuid';
+import type { DeckSnapshot } from '../sync/types';
+import { createEmptyDeckSnapshot } from './deckFactory';
 import {
   getDeckById,
   insertCard,
@@ -20,199 +22,7 @@ import type { Card, Deck } from '../../types';
 // Constants
 // ---------------------------------------------------------------------------
 
-const WELCOME_DECK_ID = 'welcome-kit-00000000-0000-0000-0000-000000000001';
-
-// ---------------------------------------------------------------------------
-// Inline SVG pixel-art cats
-// ---------------------------------------------------------------------------
-
-/** Orange tabby kitten — 12x12 pixel grid rendered as SVG. */
-const ORANGE_CAT_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" style="display:block;margin:12px auto">
-  <!-- Ears -->
-  <rect x="20" y="0" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="0" width="10" height="10" fill="#F97316"/>
-  <rect x="70" y="0" width="10" height="10" fill="#F97316"/>
-  <rect x="80" y="0" width="10" height="10" fill="#F97316"/>
-  <!-- Head -->
-  <rect x="10" y="10" width="10" height="10" fill="#F97316"/>
-  <rect x="20" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="30" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="40" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="50" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="60" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="70" y="10" width="10" height="10" fill="#FB923C"/>
-  <rect x="80" y="10" width="10" height="10" fill="#F97316"/>
-  <!-- Face row 1 -->
-  <rect x="10" y="20" width="10" height="10" fill="#FB923C"/>
-  <rect x="20" y="20" width="10" height="10" fill="#FB923C"/>
-  <rect x="30" y="20" width="10" height="10" fill="#1E293B"/>
-  <rect x="40" y="20" width="10" height="10" fill="#FB923C"/>
-  <rect x="50" y="20" width="10" height="10" fill="#FB923C"/>
-  <rect x="60" y="20" width="10" height="10" fill="#1E293B"/>
-  <rect x="70" y="20" width="10" height="10" fill="#FB923C"/>
-  <rect x="80" y="20" width="10" height="10" fill="#FB923C"/>
-  <!-- Face row 2 (nose) -->
-  <rect x="10" y="30" width="10" height="10" fill="#FB923C"/>
-  <rect x="20" y="30" width="10" height="10" fill="#FB923C"/>
-  <rect x="30" y="30" width="10" height="10" fill="#FB923C"/>
-  <rect x="40" y="30" width="10" height="10" fill="#FCA5A5"/>
-  <rect x="50" y="30" width="10" height="10" fill="#FCA5A5"/>
-  <rect x="60" y="30" width="10" height="10" fill="#FB923C"/>
-  <rect x="70" y="30" width="10" height="10" fill="#FB923C"/>
-  <rect x="80" y="30" width="10" height="10" fill="#FB923C"/>
-  <!-- Body -->
-  <rect x="20" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="40" width="10" height="10" fill="#FB923C"/>
-  <rect x="40" y="40" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="40" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="60" y="40" width="10" height="10" fill="#FB923C"/>
-  <rect x="70" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="20" y="50" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="50" width="10" height="10" fill="#FB923C"/>
-  <rect x="40" y="50" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="50" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="60" y="50" width="10" height="10" fill="#FB923C"/>
-  <rect x="70" y="50" width="10" height="10" fill="#F97316"/>
-  <rect x="20" y="60" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="60" width="10" height="10" fill="#FB923C"/>
-  <rect x="40" y="60" width="10" height="10" fill="#FB923C"/>
-  <rect x="50" y="60" width="10" height="10" fill="#FB923C"/>
-  <rect x="60" y="60" width="10" height="10" fill="#FB923C"/>
-  <rect x="70" y="60" width="10" height="10" fill="#F97316"/>
-  <!-- Legs -->
-  <rect x="20" y="70" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="70" width="10" height="10" fill="#F97316"/>
-  <rect x="60" y="70" width="10" height="10" fill="#F97316"/>
-  <rect x="70" y="70" width="10" height="10" fill="#F97316"/>
-  <!-- Paws -->
-  <rect x="20" y="80" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="30" y="80" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="60" y="80" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="80" width="10" height="10" fill="#FEFCE8"/>
-  <!-- Tail -->
-  <rect x="80" y="50" width="10" height="10" fill="#F97316"/>
-  <rect x="90" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="100" y="30" width="10" height="10" fill="#F97316"/>
-</svg>`;
-
-/** Black cat silhouette — 12x12 pixel grid. */
-const BLACK_CAT_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" style="display:block;margin:12px auto">
-  <!-- Ears -->
-  <rect x="20" y="0" width="10" height="10" fill="#374151"/>
-  <rect x="80" y="0" width="10" height="10" fill="#374151"/>
-  <rect x="10" y="10" width="10" height="10" fill="#374151"/>
-  <rect x="20" y="10" width="10" height="10" fill="#1F2937"/>
-  <rect x="80" y="10" width="10" height="10" fill="#1F2937"/>
-  <rect x="90" y="10" width="10" height="10" fill="#374151"/>
-  <!-- Head -->
-  <rect x="10" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="20" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="40" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="50" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="70" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="80" y="20" width="10" height="10" fill="#1F2937"/>
-  <!-- Eyes -->
-  <rect x="10" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="20" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="30" width="10" height="10" fill="#FBBF24"/>
-  <rect x="40" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="50" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="30" width="10" height="10" fill="#FBBF24"/>
-  <rect x="70" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="80" y="30" width="10" height="10" fill="#1F2937"/>
-  <!-- Nose -->
-  <rect x="20" y="40" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="40" width="10" height="10" fill="#1F2937"/>
-  <rect x="40" y="40" width="10" height="10" fill="#1F2937"/>
-  <rect x="50" y="40" width="10" height="10" fill="#FCA5A5"/>
-  <rect x="60" y="40" width="10" height="10" fill="#1F2937"/>
-  <rect x="70" y="40" width="10" height="10" fill="#1F2937"/>
-  <!-- Body -->
-  <rect x="20" y="50" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="50" width="10" height="10" fill="#374151"/>
-  <rect x="40" y="50" width="10" height="10" fill="#374151"/>
-  <rect x="50" y="50" width="10" height="10" fill="#374151"/>
-  <rect x="60" y="50" width="10" height="10" fill="#374151"/>
-  <rect x="70" y="50" width="10" height="10" fill="#1F2937"/>
-  <rect x="20" y="60" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="60" width="10" height="10" fill="#374151"/>
-  <rect x="40" y="60" width="10" height="10" fill="#374151"/>
-  <rect x="50" y="60" width="10" height="10" fill="#374151"/>
-  <rect x="60" y="60" width="10" height="10" fill="#374151"/>
-  <rect x="70" y="60" width="10" height="10" fill="#1F2937"/>
-  <!-- Legs -->
-  <rect x="20" y="70" width="10" height="10" fill="#1F2937"/>
-  <rect x="30" y="70" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="70" width="10" height="10" fill="#1F2937"/>
-  <rect x="70" y="70" width="10" height="10" fill="#1F2937"/>
-  <!-- Tail -->
-  <rect x="80" y="50" width="10" height="10" fill="#374151"/>
-  <rect x="90" y="40" width="10" height="10" fill="#374151"/>
-  <rect x="100" y="30" width="10" height="10" fill="#374151"/>
-  <rect x="100" y="20" width="10" height="10" fill="#374151"/>
-</svg>`;
-
-/** Calico cat — 12x12 pixel grid. */
-const CALICO_CAT_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 100" width="120" height="100" style="display:block;margin:12px auto">
-  <!-- Ears -->
-  <rect x="10" y="0" width="10" height="10" fill="#F97316"/>
-  <rect x="20" y="0" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="0" width="10" height="10" fill="#1F2937"/>
-  <rect x="80" y="0" width="10" height="10" fill="#374151"/>
-  <!-- Head -->
-  <rect x="10" y="10" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="20" y="10" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="10" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="40" y="10" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="10" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="10" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="10" width="10" height="10" fill="#1F2937"/>
-  <rect x="80" y="10" width="10" height="10" fill="#FEFCE8"/>
-  <!-- Eyes -->
-  <rect x="10" y="20" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="20" y="20" width="10" height="10" fill="#34D399"/>
-  <rect x="30" y="20" width="10" height="10" fill="#F97316"/>
-  <rect x="40" y="20" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="20" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="20" width="10" height="10" fill="#34D399"/>
-  <rect x="70" y="20" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="80" y="20" width="10" height="10" fill="#FEFCE8"/>
-  <!-- Nose row -->
-  <rect x="20" y="30" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="30" y="30" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="40" y="30" width="10" height="10" fill="#FCA5A5"/>
-  <rect x="50" y="30" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="60" y="30" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="30" width="10" height="10" fill="#FEFCE8"/>
-  <!-- Body -->
-  <rect x="20" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="30" y="40" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="40" y="40" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="40" width="10" height="10" fill="#1F2937"/>
-  <rect x="60" y="40" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="20" y="50" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="30" y="50" width="10" height="10" fill="#1F2937"/>
-  <rect x="40" y="50" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="50" y="50" width="10" height="10" fill="#F97316"/>
-  <rect x="60" y="50" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="50" width="10" height="10" fill="#1F2937"/>
-  <!-- Legs -->
-  <rect x="20" y="60" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="30" y="60" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="60" y="60" width="10" height="10" fill="#FEFCE8"/>
-  <rect x="70" y="60" width="10" height="10" fill="#FEFCE8"/>
-  <!-- Tail -->
-  <rect x="80" y="40" width="10" height="10" fill="#F97316"/>
-  <rect x="90" y="30" width="10" height="10" fill="#1F2937"/>
-  <rect x="100" y="20" width="10" height="10" fill="#F97316"/>
-</svg>`;
-
+export const WELCOME_DECK_ID = 'welcome-kit-00000000-0000-0000-0000-000000000001';
 
 // ---------------------------------------------------------------------------
 // Card content
@@ -229,13 +39,11 @@ const CARDS: RawCard[] = [
   {
     front: `
       <div style="text-align:center">
-        ${ORANGE_CAT_SVG}
         <p style="font-weight:600;margin-top:12px;font-size:1.1em">Who is Kit?</p>
       </div>
     `,
     back: `
       <div style="text-align:center">
-        ${ORANGE_CAT_SVG}
         <p style="font-weight:600;margin-bottom:8px;font-size:1.1em">Kit is your flashcard companion!</p>
       </div>
       <p style="font-size:0.9em;line-height:1.6">
@@ -259,10 +67,10 @@ const CARDS: RawCard[] = [
       <p style="font-weight:600;margin-bottom:8px">Tap the card to flip it!</p>
       <p style="font-size:0.9em;line-height:1.6">
         After seeing the answer, rate how well you knew it:<br><br>
-        <strong style="color:#EF4444">Again</strong> — forgot it completely<br>
-        <strong style="color:#F59E0B">Hard</strong> — recalled with difficulty<br>
-        <strong style="color:#22C55E">Good</strong> — recalled correctly<br>
-        <strong style="color:#3B82F6">Easy</strong> — knew it instantly
+        <strong>Again</strong> — forgot it completely<br>
+        <strong>Hard</strong> — recalled with difficulty<br>
+        <strong>Good</strong> — recalled correctly<br>
+        <strong>Easy</strong> — knew it instantly
       </p>
       <p style="font-size:0.85em;line-height:1.6;margin-top:8px;opacity:0.7">
         Each button shows when the card will come back. Kit learns your pace!
@@ -275,13 +83,11 @@ const CARDS: RawCard[] = [
   {
     front: `
       <div style="text-align:center">
-        ${BLACK_CAT_SVG}
         <p style="font-weight:600;margin-top:8px">What breed is famous for being all black with golden eyes?</p>
       </div>
     `,
     back: `
       <div style="text-align:center">
-        ${BLACK_CAT_SVG}
         <p style="font-weight:600;margin-bottom:8px">The Bombay cat</p>
       </div>
       <p style="font-size:0.9em;line-height:1.6">
@@ -297,13 +103,11 @@ const CARDS: RawCard[] = [
   {
     front: `
       <div style="text-align:center">
-        ${CALICO_CAT_SVG}
         <p style="font-weight:600;margin-top:8px">Why are almost all calico cats female?</p>
       </div>
     `,
     back: `
       <div style="text-align:center">
-        ${CALICO_CAT_SVG}
         <p style="font-weight:600;margin-bottom:8px">It's linked to the X chromosome!</p>
       </div>
       <p style="font-size:0.9em;line-height:1.6">
@@ -331,7 +135,7 @@ const CARDS: RawCard[] = [
         languages, medicine, history, and more.
       </p>
       <p style="font-size:0.9em;line-height:1.6;margin-top:8px">
-        Tap <strong>Import Deck</strong> on the home screen to get started.
+        Tap <strong>+ → Import Anki deck</strong> on the home screen to get started.
         Kit preserves images, audio, and formatting.
       </p>
     `,
@@ -342,6 +146,37 @@ const CARDS: RawCard[] = [
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
+
+/**
+ * Build the tutorial deck for the active per-deck storage architecture.
+ *
+ * @param now - Optional Unix timestamp in seconds; uses the current time when omitted.
+ * @returns A complete snapshot containing Kit's tutorial cards.
+ */
+export function createWelcomeDeckSnapshot(
+  now = Math.floor(Date.now() / 1000),
+): DeckSnapshot {
+  const snapshot = createEmptyDeckSnapshot('Welcome to Kit', WELCOME_DECK_ID, now);
+  snapshot.deck.description = 'Meet Kit the cat and learn how spaced repetition works!';
+  snapshot.cards = CARDS.map((raw, index) => ({
+    id: `${WELCOME_DECK_ID}:card:${index + 1}`,
+    deckId: WELCOME_DECK_ID,
+    noteId: null,
+    front: raw.front.trim(),
+    back: raw.back.trim(),
+    tags: [...raw.tags],
+    createdAt: now,
+    updatedAt: now,
+  }));
+  snapshot.tags = [
+    { tag: 'welcome', color: '#8E8E93' },
+    { tag: 'tutorial', color: '#3B82F6' },
+    { tag: 'cats', color: '#F97316' },
+    { tag: 'science', color: '#22C55E' },
+  ];
+  snapshot.deckTags = snapshot.tags.map(entry => entry.tag);
+  return snapshot;
+}
 
 /**
  * Check whether the welcome deck has already been seeded.

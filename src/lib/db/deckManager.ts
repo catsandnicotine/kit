@@ -487,17 +487,40 @@ export async function createDeckFromSnapshot(
 ): Promise<Database | null> {
   if (!_SQL || !_storage || !_clock) return null;
 
+  let db: Database | null = null;
   try {
     // Build local DB
-    const db = await buildDbFromSnapshot(_SQL, snapshot);
+    db = await buildDbFromSnapshot(_SQL, snapshot);
     if (!db) return null;
 
-    // Track state locally first — deck is usable even if iCloud write fails
+    const snapshotJson = JSON.stringify(snapshot);
+
+    // A newly-created deck must have one durable copy before it is placed in
+    // the in-memory cache or registry. Native callers configure the local
+    // snapshot writer; browser callers rely on SyncStorage/localStorage.
+    if (_writeLocalSnapshot) {
+      // Required on native. Let failures abort creation instead of presenting
+      // an in-memory deck that vanishes on the next launch.
+      await _writeLocalSnapshot(snapshot.deckId, snapshotJson);
+
+      // iCloud is secondary and may be unavailable while offline. The local
+      // snapshot above is already durable, so a failed mirror is non-fatal.
+      try {
+        await _storage.writeFile(`${snapshot.deckId}/snapshot.json`, snapshotJson);
+      } catch (e) {
+        console.warn('[deckManager] Sync snapshot write failed; kept durable local copy:', e);
+      }
+    } else {
+      // Browser storage is the only durable backend, so this write is required.
+      await _storage.writeFile(`${snapshot.deckId}/snapshot.json`, snapshotJson);
+    }
+
+    // Persistence succeeded. It is now safe to expose the database and update
+    // the registry so the deck appears in the UI.
     openDbs.set(snapshot.deckId, db);
     deletedCards.set(snapshot.deckId, new Set(snapshot.deletedCardIds ?? []));
     watermarks.set(snapshot.deckId, snapshot.compactedThrough);
 
-    // Update registry so the deck appears in the UI immediately
     const now = Math.floor(Date.now() / 1000);
     const countsResult = getAllDeckCardCounts(db, now);
     const deckCounts = countsResult.success ? countsResult.data[snapshot.deckId] : undefined;
@@ -514,23 +537,12 @@ export async function createDeckFromSnapshot(
       lastAccessedAt: now,
     });
 
-    const snapshotJson = JSON.stringify(snapshot);
-
-    // Write locally first — this is the reliable on-device copy.
-    if (_writeLocalSnapshot) {
-      await _writeLocalSnapshot(snapshot.deckId, snapshotJson).catch(() => {});
-    }
-
-    // Then write to iCloud for cross-device sync (best-effort).
-    try {
-      await _storage.writeFile(`${snapshot.deckId}/snapshot.json`, snapshotJson);
-    } catch (e) {
-      console.warn('[deckManager] iCloud snapshot write failed, deck available locally:', e);
-    }
-
     return db;
   } catch (e) {
     console.warn('[deckManager] Failed to create deck from snapshot:', e);
+    if (db && openDbs.get(snapshot.deckId) !== db) {
+      try { db.close(); } catch { /* already closed */ }
+    }
     return null;
   }
 }

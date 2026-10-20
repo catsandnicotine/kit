@@ -45,6 +45,13 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Kit connects to a development server on your local network during testing.</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.com.kai.kit</key>

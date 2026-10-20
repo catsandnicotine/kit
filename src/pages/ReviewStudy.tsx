@@ -1,8 +1,11 @@
+import { CardFaceIndicator } from '../components/CardFaceIndicator';
+import { SessionFinish } from '../components/SessionFinish';
+import { DeckName } from '../components/DeckName';
 /**
  * ReviewStudy — physical-flashcard mode study page.
  *
  * Cards are shuffled randomly. No FSRS, no scoring, no DB writes.
- * Actions: Send to back, Send to middle, Put aside.
+ * Actions: Return to the pile or put aside.
  *
  * @param db       - sql.js Database instance (null while loading).
  * @param deckId   - Deck UUID.
@@ -10,12 +13,14 @@
  * @param onExit   - Called when the user leaves (back or done).
  */
 
-import { useEffect, useMemo, useRef } from 'react';
+import { ShowAnswerButton } from '../components/ShowAnswerButton';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import type { Database } from 'sql.js';
 import { useReviewStudySession } from '../hooks/useReviewStudySession';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { useTheme } from '../hooks/useTheme';
 import { hapticTap } from '../lib/platform/haptics';
+import { ReviewChoices } from '../components/ReviewChoices';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
 
 // ---------------------------------------------------------------------------
@@ -32,7 +37,7 @@ function CardContent({
   const containerRef = useRef<HTMLDivElement>(null);
   const currentHtmlRef = useRef('');
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
@@ -75,12 +80,11 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
     stats,
     flip,
     sendToBack,
-    sendToMiddle,
     putAside,
     reshufflePutAside,
   } = session;
 
-  const { rewriteHtml } = useDeckMedia(db, deckId);
+  const { rewriteHtml, loading: mediaLoading } = useDeckMedia(db, deckId);
   const { theme } = useTheme();
 
   const bodyClass = useMemo(() => {
@@ -91,17 +95,17 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
   }, [theme]);
 
   const frontHtml = useMemo(() => {
-    if (!currentCard) return '';
+    if (!currentCard || mediaLoading) return '';
     return renderImageOcclusion(rewriteHtml(currentCard.front), 'front');
-  }, [currentCard, rewriteHtml]);
+  }, [currentCard, rewriteHtml, mediaLoading]);
 
   const backHtml = useMemo(() => {
-    if (!currentCard) return '';
+    if (!currentCard || mediaLoading) return '';
     return renderImageOcclusion(rewriteHtml(currentCard.back), 'back');
-  }, [currentCard, rewriteHtml]);
+  }, [currentCard, rewriteHtml, mediaLoading]);
 
   // ── Loading ─────────────────────────────────────────────────────────────
-  if (phase === 'loading') {
+  if (phase === 'loading' || mediaLoading) {
     return (
       <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
         <header
@@ -130,79 +134,22 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
     );
   }
 
+  if (phase === 'error') return <main className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <header className="kit-page-header"><button type="button" className="kit-icon-button" onClick={onExit} aria-label="Back">‹</button><DeckName name={deckName} /></header>
+    <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6"><p role="alert" className="text-sm">{session.errorMessage}</p><button type="button" className="kit-secondary-button" onClick={session.retry}>Try again</button></div>
+  </main>;
+
   // ── Complete ────────────────────────────────────────────────────────────
   if (phase === 'complete') {
-    return (
-      <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
-        <header
-          className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
-          style={{
-            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
-            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-            paddingRight: 'max(1rem, env(safe-area-inset-right))',
-          }}
-        >
-          <button
-            onClick={() => { hapticTap(); onExit(); }}
-            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
-            aria-label="Back"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          </button>
-          <span className="text-sm font-semibold truncate">{deckName}</span>
-        </header>
-
-        <div
-          className="flex-1 overflow-auto"
-          style={{
-            paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
-            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-            paddingRight: 'max(1rem, env(safe-area-inset-right))',
-          }}
-        >
-          <div className="flex flex-col items-center gap-2 pt-8 pb-6">
-            <h2 className="text-base font-bold">Review complete</h2>
-          </div>
-
-          <section className="px-4 pb-4">
-            <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-2">
-              <div className="flex justify-between text-sm">
-                <span className="text-[#C4C4C4]">Total cards</span>
-                <span className="font-medium">{stats.total}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-[#C4C4C4]">Put aside</span>
-                <span className="font-medium">{stats.putAside}</span>
-              </div>
-            </div>
-          </section>
-
-          <div className="px-4 flex flex-col gap-3">
-            {stats.putAside > 0 && (
-              <button
-                onClick={reshufflePutAside}
-                className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg active:opacity-80 transition-opacity"
-              >
-                Shuffle put-aside cards ({stats.putAside})
-              </button>
-            )}
-            <button
-              onClick={() => { hapticTap(); onExit(); }}
-              className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    return <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+      <header className="practice-finish-header"><DeckName name={deckName} /></header>
+      <SessionFinish showMark={stats.total > 0} title={stats.total ? 'Practice complete' : 'No cards yet'} detail={stats.total ? `${stats.putAside} ${stats.putAside === 1 ? 'card' : 'cards'}` : undefined} onDone={() => { hapticTap(); onExit(); }} onPractise={stats.putAside > 0 ? reshufflePutAside : undefined} />
+    </div>;
   }
 
   // ── Study screen ────────────────────────────────────────────────────────
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] select-none">
+    <div className={`study-session ${phase === 'front' ? 'study-session--question' : ''} h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] select-none`}>
       {/* Header */}
       <header
         className="flex items-center gap-3 shrink-0 border-b border-[#E5E5E5] dark:border-[#262626]"
@@ -223,23 +170,18 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
           </svg>
         </button>
         <span className="text-sm font-medium text-[#C4C4C4] truncate flex-1 text-center">
-          {deckName}
+          <DeckName name={deckName} /> <span className="study-mode-label">Practice</span>
         </span>
         <span className="text-xs text-[#C4C4C4] shrink-0 tabular-nums">
           {stats.remaining} left
         </span>
       </header>
 
-      {/* No-scoring banner */}
-      <div className="flex justify-center py-1.5 bg-[var(--kit-surface)] border-b border-[#E5E5E5] dark:border-[#262626]">
-        <span className="text-[10px] font-medium text-[#C4C4C4] uppercase tracking-widest">
-          Review mode — no scoring
-        </span>
-      </div>
+      <CardFaceIndicator face={phase === 'front' ? 'front' : 'back'} />
 
       {/* Card area — tap to flip */}
       <div
-        className="flex-1 min-h-0 relative"
+        className={`flex-1 min-h-0 relative overflow-hidden study-card-area ${phase === 'front' ? 'study-card-area--question' : ''}`}
         onClick={() => { if (phase === 'front') flip(); }}
         onKeyDown={(e) => {
           if (e.key === ' ' || e.key === 'Enter') {
@@ -252,7 +194,7 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
         aria-label={phase === 'front' ? 'Tap to flip' : 'Card back'}
       >
         {/* Front face */}
-        <div className={`absolute inset-0 flex items-center justify-center bg-[var(--kit-bg)] ${phase === 'front' ? '' : 'card-face-hidden'}`}>
+        <div className={`absolute inset-0 flex items-center justify-center study-question-content bg-[var(--kit-bg)] ${phase === 'front' ? '' : 'card-face-hidden'}`}>
           <CardContent html={frontHtml} bodyClass={bodyClass} />
         </div>
 
@@ -266,7 +208,7 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
               {currentCard.tags.map(tag => (
                 <span
                   key={tag}
-                  className="px-2 py-0.5 text-[10px] text-[#C4C4C4] bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-full"
+                  className="px-2 py-0.5 text-[10px] text-[#C4C4C4] bg-[var(--kit-surface)] rounded-full"
                 >
                   {tag}
                 </span>
@@ -275,65 +217,14 @@ export default function ReviewStudy({ db, deckId, deckName, onExit }: ReviewStud
           )}
         </div>
 
-        {/* Tap hint on front */}
-        {phase === 'front' && (
-          <div className="absolute bottom-4 left-0 right-0 text-center pointer-events-none">
-            <span className="text-xs text-[#C4C4C4]">tap to flip</span>
-          </div>
-        )}
       </div>
 
-      {/* Action bar — visible on back */}
-      {phase === 'back' && (
-        <div
-          className="shrink-0 border-t border-[#E5E5E5] dark:border-[#262626] bg-[var(--kit-bg)]"
-          style={{
-            paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
-            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-            paddingRight: 'max(1rem, env(safe-area-inset-right))',
-          }}
-        >
-          <div className="flex gap-3 pt-3">
-            {/* Send to back */}
-            <button
-              onClick={sendToBack}
-              className="flex-1 py-3 flex flex-col items-center gap-1 text-xs font-medium border border-[#D4D4D4] dark:border-[#404040] rounded-lg active:scale-[0.97] transition-transform"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="7 13 12 18 17 13" />
-                <line x1="12" y1="6" x2="12" y2="18" />
-              </svg>
-              <span>To back</span>
-            </button>
-
-            {/* Send to middle */}
-            <button
-              onClick={sendToMiddle}
-              className="flex-1 py-3 flex flex-col items-center gap-1 text-xs font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:scale-[0.97] transition-transform"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="16 3 21 3 21 8" />
-                <line x1="4" y1="20" x2="21" y2="3" />
-                <polyline points="21 16 21 21 16 21" />
-                <line x1="15" y1="15" x2="21" y2="21" />
-                <line x1="4" y1="4" x2="9" y2="9" />
-              </svg>
-              <span>To middle</span>
-            </button>
-
-            {/* Put aside */}
-            <button
-              onClick={putAside}
-              className="flex-1 py-3 flex flex-col items-center gap-1 text-xs font-medium text-green-600 dark:text-green-400 border border-green-300 dark:border-green-700 rounded-lg active:scale-[0.97] transition-transform"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              <span>Put aside</span>
-            </button>
-          </div>
+      <footer className={`study-footer ${phase === 'front' ? 'study-footer--question' : ''}`}>
+        <div className="study-controls-main">
+          {phase === 'back' ? <ReviewChoices onRepeat={sendToBack} onPutAside={putAside} />
+            : <ShowAnswerButton onReveal={flip} />}
         </div>
-      )}
+      </footer>
     </div>
   );
 }
