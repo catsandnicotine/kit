@@ -1,4 +1,3 @@
-/// <reference types="vitest" />
 /**
  * Tests for the .apkg parser.
  *
@@ -13,6 +12,7 @@ import initSqlJs from 'sql.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   configureSqlJsPath,
+  extractDecksNewSchema,
   guessMimeType,
   parseApkg,
   parseDecksJson,
@@ -274,6 +274,17 @@ describe('parseNoteTypesJson', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseDecksJson', () => {
+  it('normalizes modern Anki hierarchy separators for leaf-name handling', async () => {
+    const SQL = await initSqlJs({ locateFile: nodeLocateFile });
+    const db = new SQL.Database();
+    try {
+      db.run('CREATE TABLE decks (id INTEGER, name TEXT)');
+      db.run('INSERT INTO decks VALUES (?, ?)', [12, 'Biology\x1fCells\x1fMembranes']);
+      expect(extractDecksNewSchema(db)).toEqual([{ id: '12', name: 'Biology::Cells::Membranes', description: '' }]);
+    } finally {
+      db.close();
+    }
+  });
   it('parses a deck correctly', () => {
     const decks = parseDecksJson(BASIC_DECKS_JSON);
     const myDeck = decks.find((d) => d.name === 'My Deck');

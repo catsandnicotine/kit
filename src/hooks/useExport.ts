@@ -7,6 +7,7 @@
 
 import { useCallback, useState } from 'react';
 import type { Database } from 'sql.js';
+import { getMediaByDeck } from '../lib/db/queries';
 import type { Result } from '../types';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -15,6 +16,7 @@ import type { LoadMediaFn } from '../lib/apkg/exporter';
 import { listMediaFilenames, loadMediaFile } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
 import type { UseDeckManagerReturn } from './useDeckManager';
+import { getBundledPaintingFiles, getBundledPaintingUrl } from '../lib/jesusPaintingAssets';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -60,10 +62,16 @@ export function useExport(source: Database | UseDeckManagerReturn | null): UseEx
 
   // Build a filesystem-backed media loader for native exports.
   const nativeMediaLoader: LoadMediaFn = useCallback(async (deckId: string) => {
-    const filenames = await listMediaFilenames(deckId);
+    const filenames = new Set([...await listMediaFilenames(deckId), ...getBundledPaintingFiles(deckId)]);
     const result = [];
     for (const filename of filenames) {
-      const data = await loadMediaFile(deckId, filename);
+      let data = await loadMediaFile(deckId, filename);
+      const bundledUrl = getBundledPaintingUrl(deckId, filename);
+      if (!data && bundledUrl) {
+        const response = await fetch(bundledUrl);
+        if (!response.ok) throw new Error('A bundled painting could not be read. Please reopen Kit and try again.');
+        data = new Uint8Array(await response.arrayBuffer());
+      }
       if (data) {
         // Infer a basic mime type from the extension.
         const ext = filename.split('.').pop()?.toLowerCase() ?? '';
@@ -101,7 +109,13 @@ export function useExport(source: Database | UseDeckManagerReturn | null): UseEx
         return;
       }
 
-      const mediaLoader = isNativePlatform() ? nativeMediaLoader : undefined;
+      const mediaLoader: LoadMediaFn = async id => {
+        const files = await nativeMediaLoader(id);
+        const legacy = getMediaByDeck(deckDb, id);
+        const byName = new Map((legacy.success ? legacy.data : []).map(media => [media.filename, media]));
+        for (const file of files) byName.set(file.filename, file);
+        return [...byName.values()];
+      };
 
       try {
         const result = await exporter(deckDb, deckId, mediaLoader);

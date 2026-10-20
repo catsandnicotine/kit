@@ -1,3 +1,9 @@
+import { CardFaceIndicator } from '../components/CardFaceIndicator';
+import { UiIcon } from '../components/UiIcon';
+import { SessionFinish } from '../components/SessionFinish';
+import { usePracticeDeck } from '../hooks/usePracticeDeck';
+import { DeckName } from '../components/DeckName';
+import { StudyProgressBar } from '../components/StudyProgressBar';
 /**
  * Study page — full-screen spaced-repetition study view.
  *
@@ -14,10 +20,13 @@
  *  └──────────────────────────┘
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ShowAnswerButton } from '../components/ShowAnswerButton';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import type { Card } from '../types';
+import { RatingGlyph } from '../components/RatingGlyph';
+import type { Card, Rating } from '../types';
 import { useStudySession } from '../hooks/useStudySession';
+import { useChoiceFeedback } from '../hooks/useChoiceFeedback';
 import { ReviewPassView } from '../components/ReviewPassView';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { useTheme } from '../hooks/useTheme';
@@ -47,22 +56,6 @@ interface StudyProps {
 // ---------------------------------------------------------------------------
 
 
-/** Progress bar. */
-function ProgressBar({ studied, total }: { studied: number; total: number }) {
-  const progress = total === 0 ? 1 : studied / total;
-  const pct = Math.round(progress * 100);
-  return (
-    <div className="px-4 py-1">
-      <div className="deck-progress-track bg-[#E5E5E5] dark:bg-[#262626] w-full">
-        <div
-          className="deck-progress-fill bg-[#1c1c1e] dark:bg-[#E5E5E5]"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
 /**
  * Format a scheduled interval in days to a human-readable short string.
  *
@@ -82,34 +75,45 @@ function formatInterval(days: number): string {
   return `${Math.round(months)}mo`;
 }
 
-const RATING_COLOR_MAP: Record<string, string> = {
-  red: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
-  orange: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
-  green: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
-  blue: 'border-[#D4D4D4] dark:border-[#404040] text-[#1c1c1e] dark:text-[#E5E5E5]',
-};
+/** Format a scheduled interval for assistive technology. */
+function formatIntervalForSpeech(days: number): string {
+  const minutes = days * 24 * 60;
+  if (minutes < 1) return 'in less than a minute';
+  if (minutes < 60) {
+    const rounded = Math.round(minutes);
+    return `in ${rounded} ${rounded === 1 ? 'minute' : 'minutes'}`;
+  }
+  const hours = minutes / 60;
+  if (hours < 24) {
+    const rounded = Math.round(hours);
+    return `in ${rounded} ${rounded === 1 ? 'hour' : 'hours'}`;
+  }
+  if (days < 14) {
+    const rounded = Math.round(days);
+    return `in ${rounded} ${rounded === 1 ? 'day' : 'days'}`;
+  }
+  const weeks = days / 7;
+  if (weeks < 8) {
+    const rounded = Math.round(weeks);
+    return `in ${rounded} ${rounded === 1 ? 'week' : 'weeks'}`;
+  }
+  const rounded = Math.round(days / 30);
+  return `in ${rounded} ${rounded === 1 ? 'month' : 'months'}`;
+}
 
-/** Rating button with colour coding and optional interval display. */
-function RatingButton({
-  label,
-  onClick,
-  color,
-  interval,
-}: {
-  label: string;
-  onClick: () => void;
-  color: 'red' | 'orange' | 'green' | 'blue';
-  interval?: string | undefined;
+/** Raised controls retain short labels while their pixel symbols carry the hierarchy. */
+function RatingButton({ rating, onClick, interval, intervalLabel, selected, disabled }: {
+  rating: Rating; onClick: () => void;
+  interval?: string | undefined; intervalLabel?: string | undefined;
+  selected: boolean; disabled: boolean;
 }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rating-btn flex-1 py-3 text-base font-semibold tracking-wide border rounded-md transition-colors active:opacity-70 flex flex-col items-center gap-0.5 ${RATING_COLOR_MAP[color]}`}
-    >
-      <span>{label}</span>
-      {interval && <span className="text-sm font-normal opacity-70">{interval}</span>}
-    </button>
-  );
+  const label = rating[0]!.toUpperCase() + rating.slice(1);
+  const meaning = { again: 'Forgot', hard: 'With effort', good: 'Remembered', easy: 'Instantly' }[rating];
+  return <button type="button" onClick={onClick} disabled={disabled} aria-label={intervalLabel ? `${label}. Card returns ${intervalLabel}.` : label}
+    title={meaning} className={`rating-control rating-control--${rating} ${selected ? 'is-feedback' : ''}`}>
+    <RatingGlyph rating={rating} /><span className="rating-label">{label}</span>
+    <span className="rating-interval" aria-hidden="true">{interval ?? '—'}</span>
+  </button>;
 }
 
 /**
@@ -202,8 +206,8 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
     stopPlaybackRef.current = playAudioSequentially(audios);
   }, [getAudios, stopCurrent]);
 
-  // -- HTML injection & initial playback --
-  useEffect(() => {
+  // Commit replacement HTML before the browser can paint the previous card.
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
 
@@ -262,240 +266,12 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
         <button
           type="button"
           onClick={startPlayback}
+          aria-label="Replay audio" title="Replay audio"
           className="anki-replay-btn"
         >
-          Replay Audio
+          <UiIcon name="repeat" />
         </button>
       )}
-    </div>
-  );
-}
-
-/** Study-ahead quick-pick options (card counts). */
-const STUDY_AHEAD_OPTIONS = [5, 10, 20] as const;
-
-/** Session complete view — matches the app's section-card layout. */
-function SessionComplete({
-  studied,
-  elapsedSeconds,
-  totalRepeats,
-  nextDueLabel,
-  onExit,
-  onReviewAgain,
-  onStudyAhead,
-  isStudyAhead,
-}: {
-  studied: number;
-  elapsedSeconds: number;
-  totalRepeats: number;
-  nextDueLabel: string | null;
-  onExit?: () => void;
-  onReviewAgain?: () => void;
-  onStudyAhead?: (limit: number) => void;
-  isStudyAhead: boolean;
-}) {
-  const mins = Math.floor(elapsedSeconds / 60);
-  const secs = elapsedSeconds % 60;
-  const timeStr =
-    mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-
-  return (
-    <div
-      className="flex-1 overflow-auto"
-      style={{
-        paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
-        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-        paddingRight: 'max(1rem, env(safe-area-inset-right))',
-      }}
-    >
-      {/* Title area */}
-      <div className="flex flex-col items-center gap-2 pt-8 pb-6">
-        <h2 className="text-base font-bold text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {studied > 0 ? 'Session complete' : 'No cards due'}
-        </h2>
-      </div>
-
-      {/* Review Again */}
-      {studied > 0 && onReviewAgain && (
-        <div className="px-4 pb-4">
-          <button
-            onClick={() => { hapticTap(); onReviewAgain(); }}
-            className="w-full py-3 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-          >
-            Review Again
-          </button>
-        </div>
-      )}
-
-      {/* Stats card */}
-      <section className="px-4 pb-4">
-        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4 flex flex-col gap-2">
-          {studied > 0 ? (
-            <div className="flex justify-between text-sm">
-              <span className="text-[#C4C4C4]">Reviewed</span>
-              <span className="font-medium">{studied} {studied === 1 ? 'card' : 'cards'} in {timeStr}</span>
-            </div>
-          ) : (
-            <p className="text-sm text-[#C4C4C4]">You're all caught up!</p>
-          )}
-          {totalRepeats > 0 && (
-            <div className="flex justify-between text-sm">
-              <span className="text-[#C4C4C4]">Repeated</span>
-              <span className="font-medium">{totalRepeats} {totalRepeats === 1 ? 'time' : 'times'}</span>
-            </div>
-          )}
-          {nextDueLabel && (
-            <div className="flex justify-between text-sm">
-              <span className="text-[#C4C4C4]">Next review</span>
-              <span className="font-medium">{nextDueLabel}</span>
-            </div>
-          )}
-        </div>
-      </section>
-
-      {/* Study ahead card */}
-      {!isStudyAhead && onStudyAhead && (
-        <section className="px-4 pb-4">
-          <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
-            <p className="text-sm font-medium mb-3">Study ahead</p>
-            <div className="flex gap-2 mb-2">
-              {STUDY_AHEAD_OPTIONS.map((n) => (
-                <button
-                  key={n}
-                  onClick={() => { hapticTap(); onStudyAhead(n); }}
-                  className="flex-1 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-                >
-                  {n}
-                </button>
-              ))}
-            </div>
-            <StudyAheadCustom onStudyAhead={onStudyAhead} />
-          </div>
-        </section>
-      )}
-
-      {/* Done button */}
-      {onExit && (
-        <div className="px-4 pt-2">
-          <button
-            onClick={() => { hapticTap(); onExit(); }}
-            className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity"
-          >
-            Done
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Bottom-sheet picker for limiting review cards in the current session.
- * Tapping "All" removes the limit; tapping a number caps review cards at that value.
- */
-function ReviewLimitPicker({
-  totalDueReviews,
-  currentLimit,
-  onSelect,
-  onDismiss,
-}: {
-  totalDueReviews: number;
-  currentLimit: number | null;
-  onSelect: (limit: number | null) => void;
-  onDismiss: () => void;
-}) {
-  const [custom, setCustom] = useState('');
-  const quickOptions = [10, 20, 30, 50, 100].filter(n => n < totalDueReviews);
-
-  const handleCustom = () => {
-    const n = parseInt(custom, 10);
-    if (n > 0 && n <= totalDueReviews) { hapticTap(); onSelect(n); }
-  };
-
-  const selectedStyle = 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A]';
-  const unselectedStyle = 'bg-[#F0F0F0] dark:bg-[#2A2A2A] text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70';
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end">
-      <div className="absolute inset-0 bg-black/30" onClick={onDismiss} />
-      <div
-        className="relative bg-[var(--kit-surface)] rounded-t-2xl shadow-xl"
-        style={{ paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))' }}
-      >
-        <div className="px-5 pt-5 pb-3">
-          <p className="text-sm font-semibold mb-0.5">Limit review cards</p>
-          <p className="text-xs text-[#C4C4C4]">{totalDueReviews} due · new and learning cards always show</p>
-        </div>
-
-        <div className="px-5 pb-3 flex flex-wrap gap-2">
-          <button
-            onClick={() => { hapticTap(); onSelect(null); }}
-            className={`px-4 py-2 rounded-full text-sm font-semibold transition-opacity ${currentLimit === null ? selectedStyle : unselectedStyle}`}
-          >
-            All
-          </button>
-          {quickOptions.map(n => (
-            <button
-              key={n}
-              onClick={() => { hapticTap(); onSelect(n); }}
-              className={`px-4 py-2 rounded-full text-sm font-semibold transition-opacity ${currentLimit === n ? selectedStyle : unselectedStyle}`}
-            >
-              {n}
-            </button>
-          ))}
-        </div>
-
-        <div className="px-5 pb-4 flex gap-2">
-          <input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={totalDueReviews}
-            placeholder="Custom"
-            value={custom}
-            onChange={e => setCustom(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleCustom(); }}
-            className="flex-1 text-sm bg-[#F0F0F0] dark:bg-[#2A2A2A] rounded-full px-4 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
-          />
-          <button
-            onClick={handleCustom}
-            className="px-4 py-2 rounded-full text-sm font-semibold bg-[#F0F0F0] dark:bg-[#2A2A2A] text-[#1c1c1e] dark:text-[#E5E5E5] active:opacity-70 transition-opacity"
-          >
-            Set
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Custom card count input for study ahead. */
-function StudyAheadCustom({ onStudyAhead }: { onStudyAhead: (n: number) => void }) {
-  const [custom, setCustom] = useState('');
-
-  const handleCustom = () => {
-    const n = parseInt(custom, 10);
-    if (n > 0) { hapticTap(); onStudyAhead(n); }
-  };
-
-  return (
-    <div className="flex gap-2">
-      <input
-        type="number"
-        min={1}
-        max={9999}
-        placeholder="Custom"
-        value={custom}
-        onChange={e => setCustom(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') handleCustom(); }}
-        className="flex-1 text-center text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-3 py-2 text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
-      />
-      <button
-        onClick={handleCustom}
-        className="px-4 py-2 text-sm font-semibold border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-      >
-        Go
-      </button>
     </div>
   );
 }
@@ -552,15 +328,12 @@ function useLongPress(onLongPress: () => void) {
 export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSessionComplete }: StudyProps) {
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
-  const [studyAheadLimit, setStudyAheadLimit] = useState(0);
-  const [reviewPassCards, setReviewPassCards] = useState<Card[] | null>(null);
+  const practice = usePracticeDeck(db, deckId);
 
   const handleEditCard = useCallback((card: Card) => {
     setEditingCard(card);
   }, []);
 
-  const [sessionReviewLimit, setSessionReviewLimit] = useState<number | null>(null);
-  const [showReviewPicker, setShowReviewPicker] = useState(false);
   const [deckTags, setDeckTags] = useState<TagCount[]>([]);
 
   useEffect(() => {
@@ -569,13 +342,14 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
     if (result.success) setDeckTags(result.data);
   }, [db, deckId]);
 
-  const session = useStudySession(db, deckId, handleEditCard, studyAheadLimit, sessionReviewLimit, onSyncEdit);
+  const session = useStudySession(db, deckId, handleEditCard, 0, null, onSyncEdit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
-    totalDueReviews, studiedCards, currentCardLearningState,
-    flip, rate, repeat, undo, editCurrentCard, updateCurrentCardInQueue,
+     currentCardLearningState,
+    flip, rate,  undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
-  const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
+  const choiceFeedback = useChoiceFeedback<Rating>(rating => { void rate(rating); });
+  const { rewriteHtml, addMediaFile, loading: mediaLoading } = useDeckMedia(db, deckId);
   const { theme } = useTheme();
 
   // Build class strings for the Anki-compatible card wrapper.
@@ -589,12 +363,12 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
     return classes.join(' ');
   }, [theme]);
 
-  // Notify parent when session completes (triggers compaction + registry save)
+  // A completed session is saved once, even if sync refreshes the parent's callbacks.
+  const completeRef = useRef(onSessionComplete);
+  completeRef.current = onSessionComplete;
   useEffect(() => {
-    if (phase === 'complete') {
-      onSessionComplete?.();
-    }
-  }, [phase, onSessionComplete]);
+    if (phase === 'complete') completeRef.current?.();
+  }, [phase]);
 
   // Compute next due label when session completes
   useEffect(() => {
@@ -639,21 +413,13 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
   // then render Image Occlusion masks if present.
   // Memoized so the 1-second elapsed-time ticker doesn't re-run the regex work.
   const resolvedFront = useMemo(
-    () => renderMath(renderImageOcclusion(rewriteHtml(frontHtml), 'front')),
-    [rewriteHtml, frontHtml],
+    () => mediaLoading ? '' : renderMath(renderImageOcclusion(rewriteHtml(frontHtml), 'front')),
+    [rewriteHtml, frontHtml, mediaLoading],
   );
   const resolvedBack = useMemo(
-    () => renderMath(renderImageOcclusion(rewriteHtml(backHtml), 'back')),
-    [rewriteHtml, backHtml],
+    () => mediaLoading ? '' : renderMath(renderImageOcclusion(rewriteHtml(backHtml), 'back')),
+    [rewriteHtml, backHtml, mediaLoading],
   );
-
-  // Track total cards for the progress bar (set once on load).
-  const [totalCards, setTotalCards] = useState(0);
-  useEffect(() => {
-    if (phase === 'front' && totalCards === 0) {
-      setTotalCards(stats.studied + stats.remaining);
-    }
-  }, [phase, stats.studied, stats.remaining, totalCards]);
 
   const longPressProps = useLongPress(editCurrentCard);
 
@@ -662,18 +428,19 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
   // -------------------------------------------------------------------------
 
   // Review-again pass — renders instead of normal study UI, no DB writes
-  if (reviewPassCards) {
+  if (practice.cards) {
     return (
       <ReviewPassView
-        cards={reviewPassCards}
+        cards={practice.cards}
         {...(deckName !== undefined ? { contextLabel: deckName } : {})}
         rewriteHtml={rewriteHtml}
-        onDone={() => setReviewPassCards(null)}
+        onDone={onExit ?? practice.close}
+        onBack={practice.close}
       />
     );
   }
 
-  if (phase === 'loading') {
+  if (phase === 'loading' || mediaLoading) {
     return (
       <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark">
         <header
@@ -687,14 +454,14 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+            className="p-2 -ml-2 text-[#6B6B6B] dark:text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
             aria-label="Back"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
         </header>
         <div className="flex-1 flex items-center justify-center">
-          <p className="text-text-muted text-sm">Loading…</p>
+          <p className="text-[#6B6B6B] dark:text-[#C4C4C4] text-sm" role="status">Loading…</p>
         </div>
       </div>
     );
@@ -714,14 +481,14 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         >
           <button
             onClick={() => { hapticTap(); onExit?.(); }}
-            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+            className="p-2 -ml-2 text-[#6B6B6B] dark:text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
             aria-label="Back"
           >
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
           </button>
         </header>
         <div className="flex-1 flex flex-col items-center justify-center gap-4 px-8 text-center">
-          <p className="text-sm text-red-500">{errorMessage}</p>
+          <p className="text-sm text-red-700 dark:text-red-400" role="alert">{errorMessage}</p>
         </div>
       </div>
     );
@@ -729,45 +496,36 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
 
   if (phase === 'complete') {
     return (
-      <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+      <div className="flex flex-col h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
         <header
-          className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+          className="flex items-center gap-3 pb-3 shrink-0"
           style={{
             paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
             paddingLeft: 'max(1rem, env(safe-area-inset-left))',
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button
-            onClick={() => { hapticTap(); onExit?.(); }}
-            className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
-            aria-label="Back"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-          </button>
-          <span className="text-sm font-semibold truncate">
+          <span className="w-8 shrink-0" aria-hidden="true" />
+          <span className="text-[15px] font-medium truncate flex-1 text-center text-[#6B6B6B] dark:text-[#C4C4C4]">
             {deckName ?? 'Study'}
           </span>
+          <span className="w-8 shrink-0" aria-hidden="true" />
         </header>
-        <SessionComplete
-          studied={stats.studied}
-          elapsedSeconds={stats.elapsedSeconds}
-          totalRepeats={stats.totalRepeats}
-          nextDueLabel={nextDueLabel}
-          isStudyAhead={studyAheadLimit > 0}
-          onStudyAhead={(limit: number) => setStudyAheadLimit(limit)}
-          {...(studiedCards.length > 0 ? { onReviewAgain: () => setReviewPassCards(studiedCards) } : {})}
-          {...(onExit && { onExit })}
+        <SessionFinish
+          title={stats.studied > 0 ? 'Session complete' : 'All caught up'}
+          detail={stats.studied > 0 ? `${stats.studied} ${stats.studied === 1 ? 'card' : 'cards'}` : undefined}
+          nextDue={nextDueLabel}
+          onPractise={practice.start}
+          onDone={onExit ? () => { hapticTap(); onExit(); } : undefined}
+          error={practice.error}
         />
       </div>
     );
   }
 
-  const studied = stats.studied;
-  const total = totalCards || studied + stats.remaining;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark select-none">
+    <div className={`study-session ${phase === 'front' ? 'study-session--question' : ''} flex flex-col h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark select-none`}>
       {/* ── Header ── */}
       <header
         className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
@@ -780,53 +538,64 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
       >
         <button
           onClick={() => { hapticTap(); onExit?.(); }}
-          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+          className="p-2 -ml-2 text-[#6B6B6B] dark:text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
           aria-label="Back"
         >
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
-        <span className="text-sm font-medium text-[#C4C4C4] dark:text-[#C4C4C4] truncate flex-1 text-center">
-          {deckName ?? 'Study'}
+        <span className="text-sm font-medium text-[#6B6B6B] dark:text-[#C4C4C4] truncate flex-1 text-center">
+          <DeckName name={deckName ?? 'Study'} /> <span className="study-mode-label">Study</span>
         </span>
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
-            <span className={`text-blue-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'new' ? 'bg-blue-500/15' : ''}`}>{stats.newCount}</span>
-            <span className={`text-red-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && (currentCardLearningState === 'learning' || currentCardLearningState === 'relearning') ? 'bg-red-500/15' : ''}`}>{stats.learningCount}</span>
-            <button
-              onClick={() => { if (totalDueReviews > 0) { hapticTap(); setShowReviewPicker(true); } }}
-              className={`text-green-500 px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'review' ? 'bg-green-500/15' : ''}`}
-              aria-label="Limit review cards this session"
+            <span
+              className={`kit-count--new px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'new' ? 'bg-blue-500/15' : ''}`}
+              aria-label={`${stats.newCount} new cards`}
             >
-              {sessionReviewLimit !== null
-                ? `${stats.reviewCount}/${sessionReviewLimit}`
-                : stats.reviewCount}
-            </button>
+              {stats.newCount}
+            </span>
+            <span
+              className={`kit-count--learning px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && (currentCardLearningState === 'learning' || currentCardLearningState === 'relearning') ? 'bg-red-500/15' : ''}`}
+              aria-label={`${stats.learningCount} learning cards`}
+            >
+              {stats.learningCount}
+            </span>
+            <span className={`kit-count--review px-1.5 py-0.5 rounded ${currentCardLearningState === 'review' ? 'bg-green-500/15' : ''}`} aria-label={`${stats.reviewCount} review cards`}>{stats.reviewCount}</span>
           </div>
         </div>
       </header>
 
       {/* ── Progress bar ── */}
-      <ProgressBar studied={studied} total={total} />
+      <StudyProgressBar progress={session.progress} />
+
+      <CardFaceIndicator face={phase === 'front' ? 'front' : 'back'} />
 
       {/* ── Card area ── */}
       <div
-        className="flex-1 min-h-0 relative overflow-hidden cursor-pointer flex flex-col"
-        role="button"
-        tabIndex={0}
-        aria-label={phase === 'front' ? 'Tap to reveal answer' : 'Card answer'}
-        onClick={phase === 'front' ? flip : undefined}
-        onKeyDown={e => {
-          if (e.key === ' ' || e.key === 'Enter') {
-            if (phase === 'front') flip();
-          }
+        className={`flex-1 min-h-0 relative overflow-hidden flex flex-col study-card-area ${phase === 'front' ? 'study-card-area--question cursor-pointer' : ''}`}
+        onClick={event => {
+          if (phase !== 'front') return;
+          const target = event.target;
+          if (
+            target instanceof Element
+            && target.closest('button, a, input, select, textarea, audio, video, [contenteditable="true"]')
+          ) return;
+          flip();
         }}
         {...longPressProps}
       >
+        <p className="sr-only" aria-live="polite">
+          {phase === 'back' ? 'Answer shown. Review it, then rate how well you remembered.' : ''}
+        </p>
+
         {/* Front */}
         <div
-          className={`absolute inset-0 flex items-center justify-center card-face bg-[var(--kit-bg)] ${
+          className={`absolute inset-0 flex items-center justify-center card-face study-question-content bg-[var(--kit-bg)] ${
             phase === 'front' ? '' : 'card-face-hidden'
           }`}
+          role="region"
+          aria-label="Question"
+          aria-hidden={phase !== 'front'}
         >
           <CardContent html={resolvedFront} visible={phase === 'front'} bodyClass={bodyClass} />
         </div>
@@ -836,6 +605,9 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
           className={`absolute inset-0 flex items-center justify-center card-face bg-[var(--kit-bg)] ${
             phase === 'back' ? '' : 'card-face-hidden'
           }`}
+          role="region"
+          aria-label="Answer"
+          aria-hidden={phase !== 'back'}
         >
           <CardContent html={resolvedBack} visible={phase === 'back'} bodyClass={bodyClass} />
         </div>
@@ -846,78 +618,39 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
             {session.currentCard.tags.map(tag => (
               <span
                 key={tag}
-                className="px-2 py-0.5 text-[10px] text-[#C4C4C4] bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#333] rounded-full"
+                className="px-2 py-0.5 text-xs text-[#6B6B6B] dark:text-[#C4C4C4] bg-[var(--kit-surface)] rounded-full"
               >
                 {tag}
               </span>
             ))}
           </div>
         )}
-
-        {/* Tap-to-flip prompt overlay (only on front) */}
-        {phase === 'front' && (
-          <div className="absolute bottom-4 left-0 right-0 flex justify-center pointer-events-none">
-            <span className="text-xs text-[#C4C4C4] dark:text-[#C4C4C4] px-3 py-1 border border-[#E5E5E5] dark:border-[#404040] rounded-full">
-              tap to flip
-            </span>
-          </div>
-        )}
       </div>
 
       {/* ── Bottom bar (rating buttons) ── */}
-      <div
-        className="shrink-0"
-        style={{
-          paddingTop: '0.75rem',
-          paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
-          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-          paddingRight: 'max(1rem, env(safe-area-inset-right))',
-        }}
-      >
-        {phase === 'back' ? (
-          <div className="flex flex-col gap-2 py-3">
-            {/* Repeat button — extra practice, no scheduling */}
-            <div className="flex justify-center">
-              <button
-                onClick={repeat}
-                className="px-5 py-1.5 text-xs font-medium text-[#C4C4C4] border border-[#D4D4D4] dark:border-[#404040] rounded-full bg-[var(--kit-bg)] active:opacity-60 transition-opacity"
-              >
-                Repeat later
-              </button>
-            </div>
+      <div className={`study-footer ${phase === 'front' ? 'study-footer--question' : ''}`}>
+        <div className="study-controls">
+          {phase === 'front' && <div className="study-controls-main"><ShowAnswerButton onReveal={flip} /></div>}
+          <div className="study-tools">
+            <button type="button" onClick={() => { hapticTap(); editCurrentCard(); }} className="kit-icon-button text-[#777] dark:text-[#aaa]" aria-label="Edit this card">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z" /></svg>
+            </button>
 
-            {/* Rating buttons */}
-            <div className="flex gap-2">
-              <RatingButton label="Again" onClick={() => rate('again')} color="red" interval={ratingPreviews ? formatInterval(ratingPreviews.again.scheduledDays) : undefined} />
-              <RatingButton label="Hard" onClick={() => rate('hard')} color="orange" interval={ratingPreviews ? formatInterval(ratingPreviews.hard.scheduledDays) : undefined} />
-              <RatingButton label="Good" onClick={() => rate('good')} color="green" interval={ratingPreviews ? formatInterval(ratingPreviews.good.scheduledDays) : undefined} />
-              <RatingButton label="Easy" onClick={() => rate('easy')} color="blue" interval={ratingPreviews ? formatInterval(ratingPreviews.easy.scheduledDays) : undefined} />
-            </div>
-
-            {/* Edit + Undo row */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => { hapticTap(); editCurrentCard(); }}
-                className="py-2 text-xs text-text-muted"
-              >
-                Edit
-              </button>
-              {canUndo && (
-                <button
-                  onClick={undo}
-                  className="py-2 text-xs text-text-muted"
-                >
-                  Undo
-                </button>
-              )}
-            </div>
+            <button type="button" onClick={() => void undo()} disabled={!canUndo} className="kit-icon-button text-[#777] disabled:invisible dark:text-[#aaa]" aria-label="Undo last rating">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12" /></svg>
+            </button>
           </div>
-        ) : (
-          /* Spacer so layout doesn't shift */
-          <div className="py-3">
-            <div className="h-[52px]" />
-          </div>
-        )}
+          {phase === 'back' && <div className="study-controls-main">
+            <div className="rating-choices" role="group" aria-label="Rate your recall">
+              {(['again', 'hard', 'good', 'easy'] as Rating[]).map(rating => <RatingButton
+                key={rating} rating={rating} onClick={() => choiceFeedback.choose(rating)}
+                selected={choiceFeedback.selected === rating} disabled={choiceFeedback.pending}
+                interval={ratingPreviews ? formatInterval(ratingPreviews[rating].scheduledDays) : undefined}
+                intervalLabel={ratingPreviews ? formatIntervalForSpeech(ratingPreviews[rating].scheduledDays) : undefined}
+              />)}
+            </div>
+          </div>}
+        </div>
       </div>
 
       {/* ── Card Editor overlay ── */}
@@ -936,18 +669,7 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
       )}
 
       {/* ── Review limiter picker ── */}
-      {showReviewPicker && (
-        <ReviewLimitPicker
-          totalDueReviews={totalDueReviews}
-          currentLimit={sessionReviewLimit}
-          onSelect={(limit) => {
-            hapticTap();
-            setSessionReviewLimit(limit);
-            setShowReviewPicker(false);
-          }}
-          onDismiss={() => { hapticTap(); setShowReviewPicker(false); }}
-        />
-      )}
+
     </div>
   );
 }

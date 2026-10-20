@@ -4,11 +4,13 @@
  * On first launch after the architecture update, this module:
  *   1. Opens the existing monolithic database.
  *   2. For each deck, builds a DeckSnapshot with all data.
- *   3. Writes snapshots to iCloud via SyncStorage.
+ *   3. Writes every snapshot to durable local or sync storage.
  *   4. Updates the deck registry.
  *   5. Renames kit.db to kit.db.migrated as a safety backup.
  *
- * Non-destructive: if migration fails partway, the old path still works.
+ * Non-destructive: registry entries are committed only after every deck has a
+ * durable snapshot. The caller must keep the monolith when this function
+ * throws.
  */
 
 import type { Database, SqlJsStatic } from 'sql.js';
@@ -54,6 +56,8 @@ export function needsMigration(
  * @param dbData   - Raw bytes of the monolithic kit.db.
  * @param storage  - Sync storage backend (iCloud or browser).
  * @param deviceId - Device identifier for the HLC.
+ * @param writeLocalSnapshot  - Required native on-device snapshot writer.
+ * @param deleteLocalSnapshot - Removes staged local snapshots after failure.
  * @returns Number of decks successfully migrated.
  */
 export async function migrateMonolithicDb(
@@ -61,54 +65,91 @@ export async function migrateMonolithicDb(
   dbData: Uint8Array,
   storage: SyncStorage,
   deviceId: string,
+  writeLocalSnapshot?: (deckId: string, data: string) => Promise<void>,
+  deleteLocalSnapshot?: (deckId: string) => Promise<void>,
 ): Promise<number> {
-  // Open the monolithic DB
   const db = new SQL.Database(dbData);
-  db.run(ENABLE_FOREIGN_KEYS);
+  const stagedLocalDeckIds: string[] = [];
+  const stagedSyncPaths: string[] = [];
 
-  // Ensure schema is up to date
-  for (const ddl of ALL_TABLES) {
-    db.run(ddl);
-  }
-  runMigrations(db);
+  try {
+    db.run(ENABLE_FOREIGN_KEYS);
 
-  const decksResult = getAllDecks(db);
-  if (!decksResult.success) {
-    db.close();
-    return 0;
-  }
+    // Ensure schema is up to date
+    for (const ddl of ALL_TABLES) {
+      db.run(ddl);
+    }
+    runMigrations(db);
 
-  const hlc = formatHLC(Date.now(), deviceId.slice(0, 8), 0);
-  let migrated = 0;
+    const decksResult = getAllDecks(db);
+    if (!decksResult.success) {
+      throw new Error(`Could not read decks from the legacy database: ${decksResult.error}`);
+    }
 
-  for (const deck of decksResult.data) {
-    try {
+    const hlc = formatHLC(Date.now(), deviceId.slice(0, 8), 0);
+    const snapshots = decksResult.data.map(deck => {
       const snapshot = buildSnapshotFromMonolith(db, deck.id, hlc);
-      if (!snapshot) continue;
+      if (!snapshot) {
+        throw new Error(`Could not build a complete snapshot for legacy deck "${deck.name}".`);
+      }
+      return { deck, snapshot, data: JSON.stringify(snapshot) };
+    });
 
-      // Write snapshot to iCloud
-      const snapshotPath = `${deck.id}/snapshot.json`;
-      await storage.writeFile(snapshotPath, JSON.stringify(snapshot));
+    // Persist every required local snapshot before attempting any iCloud
+    // mirrors. This prevents a local disk failure on a later deck from leaving
+    // an earlier deck discoverable through sync as a partial migration.
+    if (writeLocalSnapshot) {
+      for (const { deck, data } of snapshots) {
+        await writeLocalSnapshot(deck.id, data);
+        stagedLocalDeckIds.push(deck.id);
+      }
+    }
 
-      // Update registry
+    // With durable native snapshots, sync is best-effort and may catch up
+    // later. Without a local writer (browser), sync storage is the required
+    // durable backend and every write must succeed.
+    for (const { deck, data } of snapshots) {
+      const syncPath = `${deck.id}/snapshot.json`;
+      try {
+        await storage.writeFile(syncPath, data);
+        stagedSyncPaths.push(syncPath);
+      } catch (e) {
+        if (!writeLocalSnapshot) {
+          throw new Error(`Could not persist legacy deck "${deck.name}".`, { cause: e });
+        }
+        // Native migration remains safe while offline because the required
+        // on-device snapshot committed above. iCloud can catch up later.
+        console.warn('[migration] Sync snapshot unavailable; kept durable local copy:', deck.id, e);
+      }
+    }
+
+    // All snapshots are durable. Only now is it safe to commit the complete
+    // registry; never expose or persist a partially migrated deck list.
+    const now = Math.floor(Date.now() / 1000);
+    for (const { deck, snapshot } of snapshots) {
       upsertDeckEntry({
         deckId: deck.id,
         name: deck.name,
-        hasLocalDb: false, // Will be built on first open
+        hasLocalDb: writeLocalSnapshot !== undefined,
         isDownloaded: true,
         cardCount: snapshot.cards.length,
-        lastAccessedAt: Math.floor(Date.now() / 1000),
+        lastAccessedAt: now,
       });
-
-      migrated++;
-    } catch (e) {
-      console.warn('[migration] Failed to migrate deck:', deck.id, deck.name, e);
-      // Continue with other decks
     }
-  }
 
-  db.close();
-  return migrated;
+    return snapshots.length;
+  } catch (e) {
+    // Do not leave a failed sync-only migration discoverable as a partial deck
+    // list. Native staged snapshots are also removed when the caller supplies
+    // the matching cleanup callback; the monolith remains authoritative.
+    await Promise.allSettled(stagedSyncPaths.map(path => storage.deleteFile(path)));
+    if (deleteLocalSnapshot) {
+      await Promise.allSettled(stagedLocalDeckIds.map(deckId => deleteLocalSnapshot(deckId)));
+    }
+    throw e;
+  } finally {
+    db.close();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +202,7 @@ function buildSnapshotFromMonolith(
     againSteps: settings?.againSteps ?? [1, 10],
     graduatingInterval: settings?.graduatingInterval ?? 1,
     easyInterval: settings?.easyInterval ?? 4,
-    maxInterval: settings?.maxInterval ?? 36500,
+    maxInterval: settings?.maxInterval ?? 365,
     leechThreshold: settings?.leechThreshold ?? 8,
     desiredRetention: settings?.desiredRetention ?? 0.9,
   };

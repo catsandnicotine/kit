@@ -1,3 +1,4 @@
+import { TagColourPicker } from '../components/TagColourPicker';
 /**
  * TagBrowser — "All Tags" screen.
  *
@@ -14,7 +15,7 @@ import type { TagCount } from '../lib/db/queries';
 import { addTagToDeck, removeTagFromDeck, getDecksByTag, upsertTagColor } from '../lib/db/queries';
 import type { DeckAssociation } from '../hooks/useTagSheet';
 import { hapticTap } from '../lib/platform/haptics';
-import { TAG_PALETTE, pillTextColor } from '../lib/tagColors';
+import { pillTextColor } from '../lib/tagColors';
 import { sortTagsByColor, groupTagsByFamily } from '../lib/tagSort';
 import { TagBottomSheet } from '../components/TagBottomSheet';
 
@@ -62,7 +63,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
     setTags(toTagCounts(deckManager.getGlobalTags()));
   }, [deckManager]);
 
-  useEffect(() => { loadTags(); }, [deckManager]);
+  useEffect(() => { loadTags(); }, [loadTags]);
 
   // ── Filtered + sorted + grouped ────────────────────────────────────────
   const grouped = useMemo(() => {
@@ -188,7 +189,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
           </svg>
         </button>
         <span className="text-base font-bold truncate flex-1">
-          All Tags
+          Tags
         </span>
         <button
           onClick={() => { hapticTap(); setShowCreateTag(true); }}
@@ -228,7 +229,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
         {totalTags === 0 && (
           <div className="px-4 py-12 text-center">
             <p className="text-sm text-[#C4C4C4]">
-              {search.trim() ? 'No tags match your search' : 'No tags yet — import a deck or tap + to create one'}
+              {search.trim() ? 'No tags match your search' : 'No tags yet'}
             </p>
           </div>
         )}
@@ -308,7 +309,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
           <div className="bg-[var(--kit-surface)] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="px-6 pt-5 pb-4">
-              <p className="text-base font-semibold text-center mb-4">New Tag</p>
+              <p className="text-base font-semibold text-center mb-4">New tag</p>
               <input
                 ref={newTagInputRef}
                 type="text"
@@ -318,23 +319,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
                 placeholder="Tag name"
                 className="w-full px-4 py-2.5 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
               />
-              <div className="mt-3">
-                <p className="text-xs text-[#C4C4C4] mb-2">Color (optional)</p>
-                <div className="grid grid-cols-8 gap-1.5">
-                  {TAG_PALETTE.map(c => (
-                    <button
-                      key={c.hex}
-                      onClick={() => setNewTagColor(newTagColor === c.hex ? '' : c.hex)}
-                      className="w-7 h-7 rounded-full active:scale-90 transition-transform"
-                      style={{
-                        background: c.hex,
-                        boxShadow: newTagColor === c.hex ? `0 0 0 2px var(--kit-bg), 0 0 0 4px ${c.hex}` : 'none',
-                      }}
-                      aria-label={c.name}
-                    />
-                  ))}
-                </div>
-              </div>
+              <div className="mt-3"><TagColourPicker value={newTagColor} onChange={setNewTagColor} /></div>
             </div>
             <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
               <button

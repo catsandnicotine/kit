@@ -40,7 +40,7 @@ export function rewriteMediaUrls(
   result = result.replace(
     /\bsrc=(["'])((?:(?!\1)[^\\])*?)\1/g,
     (match: string, quote: string, filename: string) => {
-      const url = urlMap.get(filename);
+      const url = urlMap.get(filename) ?? urlMap.get(normalizeMediaFilename(filename));
       if (url) return `src=${quote}${url}${quote}`;
       return match;
     },
@@ -54,7 +54,7 @@ export function rewriteMediaUrls(
   result = result.replace(
     /\b(xlink:)?href=(["'])((?:(?!\2)[^\\])*?)\2/g,
     (match: string, prefix: string | undefined, quote: string, filename: string) => {
-      const url = urlMap.get(filename);
+      const url = urlMap.get(filename) ?? urlMap.get(normalizeMediaFilename(filename));
       if (url) return `${prefix ?? ''}href=${quote}${url}${quote}`;
       return match;
     },
@@ -65,7 +65,7 @@ export function rewriteMediaUrls(
   result = result.replace(
     /\burl\((['"]?)((?:(?!\1)[^)\\])*?)\1\)/g,
     (match: string, quote: string, filename: string) => {
-      const url = urlMap.get(filename);
+      const url = urlMap.get(filename) ?? urlMap.get(normalizeMediaFilename(filename));
       if (url) return `url(${quote}${url}${quote})`;
       return match;
     },
@@ -78,11 +78,38 @@ export function rewriteMediaUrls(
   result = result.replace(
     /\[sound:([^\]]+)\]/g,
     (match: string, filename: string) => {
-      const url = urlMap.get(filename);
+      const url = urlMap.get(filename) ?? urlMap.get(normalizeMediaFilename(filename));
       if (url) return `<audio src="${url}" controls preload="auto" class="anki-audio"></audio>`;
       return match;
     },
   );
 
   return result;
+}
+
+
+/** Match encoded/HTML-escaped local filenames without altering external URLs.
+ * @param value - A filename as represented in card HTML.
+ * @returns Its original local filename.
+ */
+export function normalizeMediaFilename(value: string): string {
+  const unescaped = value.replace(/&amp;/gi, '&').replace(/&#(?:0*38|x0*26);/gi, '&').replace(/&quot;/gi, '"').replace(/&#(?:0*39|x0*27);/gi, "'");
+  try { return decodeURIComponent(unescaped).replace(/^\.\//, ''); }
+  catch { return unescaped.replace(/^\.\//, ''); }
+}
+
+/** Collect local media references used by rendered cards and their styles.
+ * @param html - Card HTML, including style blocks.
+ * @returns Distinct original filenames suitable for media routing and repair.
+ */
+export function getMediaReferences(html: string): Set<string> {
+  const found = new Set<string>();
+  for (const pattern of [/\b(?:src|(?:xlink:)?href)\s*=\s*(["'])(.*?)\1/gi, /\burl\(\s*(["']?)(.*?)\1\s*\)/gi]) {
+    for (const match of html.matchAll(pattern)) {
+      const value = match[2];
+      if (value && !/^(?:[a-z]+:|#|\/)/i.test(value)) found.add(normalizeMediaFilename(value));
+    }
+  }
+  for (const match of html.matchAll(/\[sound:([^\]]+)\]/gi)) if (match[1]) found.add(normalizeMediaFilename(match[1]));
+  return found;
 }

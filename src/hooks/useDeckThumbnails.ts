@@ -20,15 +20,17 @@ export interface UseDeckThumbnailsReturn {
  */
 export function useDeckThumbnails(deckIds: string[]): UseDeckThumbnailsReturn {
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const deckIdsKey = deckIds.join(',');
 
   useEffect(() => {
-    if (deckIds.length === 0) return;
+    const ids = deckIdsKey ? deckIdsKey.split(',') : [];
+    if (ids.length === 0) return;
     let cancelled = false;
-    loadAllThumbnails(deckIds).then((loaded) => {
+    loadAllThumbnails(ids).then((loaded) => {
       if (!cancelled) setThumbnails(loaded);
     }).catch(() => { /* thumbnail load failed — degrade gracefully */ });
     return () => { cancelled = true; };
-  }, [deckIds.join(',')]);
+  }, [deckIdsKey]);
 
   const setThumbnail = useCallback(async (deckId: string, base64: string) => {
     await saveThumbnail(deckId, base64);

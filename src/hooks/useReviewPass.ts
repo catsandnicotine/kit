@@ -7,7 +7,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import type { Card } from '../types';
-import { hapticFlip, hapticTap, hapticUndo } from '../lib/platform/haptics';
+import { hapticFlip, hapticCelebration } from '../lib/platform/haptics';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,6 +65,7 @@ export function useReviewPass(initialCards: Card[]): UseReviewPassReturn {
         totalRepeats: prev.totalRepeats + (extraRepeat ? 1 : 0),
       }));
       if (nextIndex >= queue.length) {
+        void hapticCelebration();
         setPhase('complete');
       } else {
         setCurrentIndex(nextIndex);
@@ -82,13 +83,11 @@ export function useReviewPass(initialCards: Card[]): UseReviewPassReturn {
 
   const gotIt = useCallback(() => {
     if (phase !== 'back') return;
-    hapticTap();
     advance(currentIndex + 1);
   }, [phase, currentIndex, advance]);
 
   const repeat = useCallback(() => {
     if (phase !== 'back') return;
-    hapticUndo();
     const queue = queueRef.current;
     const card = queue[currentIndex];
     if (!card) return;

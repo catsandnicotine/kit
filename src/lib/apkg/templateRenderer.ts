@@ -51,13 +51,12 @@ type FieldMap = Record<string, string>;
 /**
  * Render the front and back HTML for one card generated from a note.
  *
- * The `templateIndex` must correspond to an entry in `noteType.templates`.
- * For cloze note types, templateIndex 0 = cloze {{c1::…}},
- * templateIndex 1 = cloze {{c2::…}}, and so on.
+ * Basic cards use a template index. Cloze cards reuse one template: their
+ * ordinal selects the active deletion (0 = c1, 1 = c2, and so on).
  *
  * @param note          - The source Anki note with field values.
  * @param noteType      - The note type that owns the template and CSS.
- * @param templateIndex - Zero-based index into `noteType.templates`.
+ * @param templateIndex - Zero-based card ordinal from the Anki collection.
  * @returns Rendered front and back HTML, or an error if the index is invalid.
  */
 export function renderTemplate(
@@ -65,14 +64,15 @@ export function renderTemplate(
   noteType: ParsedNoteType,
   templateIndex: number,
 ): Result<RenderedCard> {
-  if (templateIndex < 0 || templateIndex >= noteType.templates.length) {
+  const clozeTemplate = noteType.templates.find(t => /\{\{cloze:[^}]+\}\}/.test(t.qfmt));
+  if (templateIndex < 0 || (!clozeTemplate && templateIndex >= noteType.templates.length)) {
     return {
       success: false,
       error: `Template index ${templateIndex} is out of range (note type "${noteType.name}" has ${noteType.templates.length} template(s))`,
     };
   }
 
-  const template  = noteType.templates[templateIndex]!;
+  const template  = clozeTemplate ?? noteType.templates[templateIndex]!;
   const fieldMap  = buildFieldMap(note, noteType);
   const clozeNum  = templateIndex + 1; // cloze numbers are 1-based
   const styleTag  = noteType.css ? `<style>${noteType.css}</style>` : '';

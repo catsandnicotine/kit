@@ -1,12 +1,14 @@
 {
-  "name": "kit-template",
+  "name": "kit",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "vitest run",
+    "check": "npm run lint && npm run test && npm run build",
     "preview": "vite preview",
     "sync:ios": "npm run build && npx cap sync ios && node scripts/patch-ios-plugins.mjs"
   },

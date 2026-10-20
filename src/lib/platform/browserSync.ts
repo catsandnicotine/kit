@@ -58,6 +58,8 @@ export function createBrowserSyncStorage(): SyncStorage {
 
     async copyFileFromSync(_remotePath: string, _localPath: string): Promise<void> {
       // No-op in browser
+      void _remotePath;
+      void _localPath;
     },
 
     async queuePendingEdit(deckId: string, filename: string, data: string): Promise<void> {

@@ -1,926 +1,142 @@
-/**
- * Settings page — theme, study preferences, backup, learning steps, stats.
- */
-
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Database } from 'sql.js';
-import type { Theme, ReminderTime, NotificationPrefs } from '../types';
-import { useBackup } from '../hooks/useBackup';
+import { useCallback, useEffect, useState } from 'react';
+import type { Theme } from '../types';
 import { useTheme } from '../hooks/useTheme';
+import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import type { UseDeckManagerReturn } from '../hooks/useDeckManager';
 import type { ICloudAvailability } from '../hooks/useICloudAvailability';
-import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import { hapticTap } from '../lib/platform/haptics';
-import {
-  getGlobalStats,
-  getAppSetting,
-  setAppSetting,
-  applyLearningStepsToAllDecks,
-  applyRetentionToAllDecks,
-  getNotificationPrefs,
-  setNotificationPrefs,
-} from '../lib/db/queries';
-import { persistDatabase } from '../hooks/useDatabase';
-
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
+import { applyLearningStepsToAllDecks, applyRetentionToAllDecks } from '../lib/db/queries';
+import { loadStudyPreferences, saveStudyPreferences } from '../lib/studyPreferences';
+import { useJesusPaintingDeck } from '../hooks/useJesusPaintingDeck';
 
 interface SettingsProps {
-  db: Database | null;
-  /** Per-deck manager — used by the iCloud "Sync Now" flush. */
   deckManager: UseDeckManagerReturn | null;
-  /** Timestamp (ms) of the last successful sync from useSync. */
   lastSyncedAt: number | null;
-  /** iCloud availability from the shared hook. */
   icloudAvailability: ICloudAvailability;
   onBack: () => void;
-  /** If set, auto-scroll to a section on mount (e.g. 'icloud-sync'). */
+  onSync: () => Promise<void>;
+  onOpenDeck: (deckId: string, deckName: string) => void;
   scrollTo?: string | undefined;
 }
 
-// ---------------------------------------------------------------------------
-// Icons
-// ---------------------------------------------------------------------------
-
-function SunIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <circle cx="12" cy="12" r="4" />
-      <line x1="12" y1="2" x2="12" y2="5" />
-      <line x1="12" y1="19" x2="12" y2="22" />
-      <line x1="4.22" y1="4.22" x2="6.34" y2="6.34" />
-      <line x1="17.66" y1="17.66" x2="19.78" y2="19.78" />
-      <line x1="2" y1="12" x2="5" y2="12" />
-      <line x1="19" y1="12" x2="22" y2="12" />
-      <line x1="4.22" y1="19.78" x2="6.34" y2="17.66" />
-      <line x1="17.66" y1="6.34" x2="19.78" y2="4.22" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </svg>
-  );
-}
-
-function BlackMoonIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" />
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// StepsEditor
-// ---------------------------------------------------------------------------
-
-/** Editable chip list for learning step minutes. */
-function StepsEditor({
-  steps,
-  onChange,
-}: {
-  steps: number[];
-  onChange: (s: number[]) => void;
-}) {
-  const [isAdding, setIsAdding] = useState(false);
-  const [draftValue, setDraftValue] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (isAdding) inputRef.current?.focus();
-  }, [isAdding]);
-
-  const commit = () => {
-    const n = parseInt(draftValue, 10);
-    if (!isNaN(n) && n > 0) onChange([...steps, n]);
-    setDraftValue('');
-    setIsAdding(false);
-  };
-
-  return (
-    <div className="flex flex-wrap gap-1.5 mt-2">
-      {steps.map((s, i) => (
-        <div
-          key={i}
-          className="flex items-center gap-1 bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2.5 py-1.5"
-        >
-          <span className="text-sm font-semibold tabular-nums">{s}m</span>
-          {steps.length > 1 && (
-            <button
-              onClick={() => onChange(steps.filter((_, idx) => idx !== i))}
-              className="text-[#C4C4C4] text-base leading-none ml-0.5"
-            >
-              ×
-            </button>
-          )}
-        </div>
-      ))}
-      {isAdding ? (
-        <input
-          ref={inputRef}
-          type="number"
-          value={draftValue}
-          onChange={(e) => setDraftValue(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commit();
-            if (e.key === 'Escape') { setDraftValue(''); setIsAdding(false); }
-          }}
-          className="w-16 text-center bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-1.5 text-sm font-semibold outline-none"
-          placeholder="min"
-          min={1}
-        />
-      ) : (
-        <button
-          onClick={() => setIsAdding(true)}
-          className="p-1.5 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors"
-          aria-label="Add step"
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="4" x2="12" y2="20" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-          </svg>
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Notification helpers
-// ---------------------------------------------------------------------------
-
-const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => {
-  const ampm = h < 12 ? 'AM' : 'PM';
-  const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return { value: h, label: `${display} ${ampm}` };
-});
-
-const MINUTE_OPTIONS = Array.from({ length: 12 }, (_, i) => {
-  const m = i * 5;
-  return { value: m, label: m.toString().padStart(2, '0') };
-});
-
-/** Single reminder time row: hour picker + minute picker + remove button. */
-function ReminderTimeRow({
-  time,
-  onChange,
-  onRemove,
-  canRemove,
-}: {
-  time: ReminderTime;
-  onChange: (t: ReminderTime) => void;
-  onRemove: () => void;
-  canRemove: boolean;
-}) {
-  const selectClass =
-    'bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg px-2 py-2 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] outline-none appearance-none text-center';
-
-  return (
-    <div className="flex items-center gap-2">
-      <select
-        value={time.hour}
-        onChange={e => { hapticTap(); onChange({ ...time, hour: Number(e.target.value) }); }}
-        className={`${selectClass} min-w-[5.5rem]`}
-      >
-        {HOUR_OPTIONS.map(({ value, label }) => (
-          <option key={value} value={value}>{label}</option>
-        ))}
-      </select>
-      <span className="text-sm font-semibold text-[#C4C4C4]">:</span>
-      <select
-        value={time.minute}
-        onChange={e => { hapticTap(); onChange({ ...time, minute: Number(e.target.value) }); }}
-        className={`${selectClass} min-w-[4rem]`}
-      >
-        {MINUTE_OPTIONS.map(({ value, label }) => (
-          <option key={value} value={value}>{label}</option>
-        ))}
-      </select>
-      {canRemove && (
-        <button
-          onClick={() => { hapticTap(); onRemove(); }}
-          className="ml-auto text-[#C4C4C4] text-xl leading-none px-1"
-          aria-label="Remove reminder"
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Format a Unix timestamp (seconds) to a human-readable string.
- *
- * @param ts - Unix timestamp in seconds.
- * @returns Formatted date/time string.
- */
-function formatTimestamp(ts: number): string {
-  const date = new Date(ts * 1000);
-  const now = new Date();
-  const isToday =
-    date.getDate() === now.getDate() &&
-    date.getMonth() === now.getMonth() &&
-    date.getFullYear() === now.getFullYear();
-
-  const time = date.toLocaleTimeString(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-
-  if (isToday) return `Today at ${time}`;
-
-  const yesterday = new Date(now);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const isYesterday =
-    date.getDate() === yesterday.getDate() &&
-    date.getMonth() === yesterday.getMonth() &&
-    date.getFullYear() === yesterday.getFullYear();
-
-  if (isYesterday) return `Yesterday at ${time}`;
-
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-  }) + ` at ${time}`;
-}
-
-/** Render current iCloud sync state for the Settings iCloud section. */
-function SyncStatusRow({
-  icloudAvailable,
-  lastSyncedAt,
-  deviceName,
-}: {
-  icloudAvailable: boolean;
-  lastSyncedAt: number | null;
-  deviceName: string;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex justify-between text-sm">
-        <span className="text-[#C4C4C4]">iCloud</span>
-        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {icloudAvailable ? 'Connected' : 'Unavailable'}
-        </span>
-      </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-[#C4C4C4]">Device</span>
-        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">{deviceName}</span>
-      </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-[#C4C4C4]">Last synced</span>
-        <span className="text-[#1c1c1e] dark:text-[#E5E5E5]">
-          {icloudAvailable
-            ? (lastSyncedAt ? formatTimestamp(Math.floor(lastSyncedAt / 1000)) : 'Not synced yet')
-            : '—'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
-
-/**
- * Settings page with theme, study preferences, backup, learning steps, and stats.
- *
- * @param db     - sql.js Database instance (null while loading).
- * @param onBack - Called when the user navigates back.
- */
-export default function Settings({ db, deckManager, lastSyncedAt, icloudAvailability, onBack, scrollTo }: SettingsProps) {
+/** App preferences, with scheduling and storage details available on demand. */
+export default function Settings({ deckManager, lastSyncedAt, icloudAvailability, onBack, onSync, onOpenDeck, scrollTo }: SettingsProps) {
   const { theme, setTheme } = useTheme();
-  const icloudSyncRef = useRef<HTMLElement>(null);
-  const [flashIcloud, setFlashIcloud] = useState(false);
-
-  // Edge-swipe to go back
-  const edgeSwipeRef = useRef({ startX: 0, startY: 0, decided: false, isEdge: false, isHorizontal: false });
-  const [edgeSwipeX, setEdgeSwipeX] = useState(0);
-  const [edgeSwipeTransition, setEdgeSwipeTransition] = useState(false);
-  const pageRef = useRef<HTMLDivElement>(null);
-  const onBackRef = useRef(onBack);
-  onBackRef.current = onBack;
-
-  useEffect(() => {
-    const el = pageRef.current;
-    if (!el) return;
-    const ref = edgeSwipeRef;
-    const onMove = (e: TouchEvent) => {
-      if (!ref.current.isEdge) return;
-      const touch = e.touches[0];
-      if (!touch) return;
-      const dx = touch.clientX - ref.current.startX;
-      const dy = touch.clientY - ref.current.startY;
-
-      if (!ref.current.decided && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-        ref.current.decided = true;
-        ref.current.isHorizontal = dx > 0 && Math.abs(dx) > Math.abs(dy);
-      }
-      if (!ref.current.decided || !ref.current.isHorizontal) return;
-
-      e.preventDefault();
-      setEdgeSwipeX(Math.max(0, dx));
-    };
-    el.addEventListener('touchmove', onMove, { passive: false });
-    return () => el.removeEventListener('touchmove', onMove);
-  }, []);
-
-  const handleEdgeStart = useCallback((e: React.TouchEvent) => {
-    const touch = e.touches[0]!;
-    const isEdge = touch.clientX < 30;
-    edgeSwipeRef.current = { startX: touch.clientX, startY: touch.clientY, decided: false, isEdge, isHorizontal: false };
-    setEdgeSwipeTransition(false);
-    setEdgeSwipeX(0);
-  }, []);
-
-  const handleEdgeEnd = useCallback(() => {
-    if (!edgeSwipeRef.current.isHorizontal) { setEdgeSwipeX(0); return; }
-    if (edgeSwipeX > 100) {
-      setEdgeSwipeTransition(true);
-      setEdgeSwipeX(window.innerWidth);
-      hapticTap();
-      setTimeout(() => onBackRef.current(), 200);
-    } else {
-      setEdgeSwipeTransition(true);
-      setEdgeSwipeX(0);
-      setTimeout(() => setEdgeSwipeTransition(false), 200);
-    }
-    edgeSwipeRef.current.isHorizontal = false;
-    edgeSwipeRef.current.decided = false;
-  }, [edgeSwipeX]);
-
-  useEffect(() => {
-    if (scrollTo === 'icloud-sync' && icloudSyncRef.current) {
-      // Small delay so the page renders first
-      const timer = setTimeout(() => {
-        icloudSyncRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        setFlashIcloud(true);
-        setTimeout(() => setFlashIcloud(false), 1500);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [scrollTo]);
-
-  const {
-    phase,
-    errorMessage,
-    flushedCount,
-    backupNow,
-    reset,
-  } = useBackup(deckManager, icloudAvailability);
-
-  const { deviceName, version, build } = useDeviceInfo();
-
-  // Global stats
-  const [globalStats, setGlobalStats] = useState<{
-    totalCards: number;
-    totalReviews: number;
-    retentionRate: number;
-    currentStreak: number;
-  } | null>(null);
-
-  // Show/hide timer
+  const { version, build } = useDeviceInfo();
+  const paintings = useJesusPaintingDeck(deckManager, onOpenDeck);
+  const [preferences, setPreferences] = useState(loadStudyPreferences);
+  const [steps, setSteps] = useState(() => preferences.againSteps.join(', '));
   const [showTimer, setShowTimer] = useState(() => {
     try { return localStorage.getItem('kit_show_timer') !== 'false'; } catch { return true; }
   });
+  const [applyState, setApplyState] = useState<'idle' | 'working' | 'done' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  useEffect(() => { saveStudyPreferences(preferences); }, [preferences]);
 
-  // Notification preferences
-  const [notifEnabled, setNotifEnabled] = useState(false);
-  const [notifTimes, setNotifTimes] = useState<ReminderTime[]>([{ hour: 9, minute: 0 }]);
-
-  // Default learning steps
-  const [defaultStepsArr, setDefaultStepsArr] = useState<number[]>([1, 10]);
-  const [defaultGradInt, setDefaultGradInt] = useState(1);
-  const [defaultEasyInt, setDefaultEasyInt] = useState(4);
-
-  // Retention tooltip visibility
-  const [showRetentionInfo, setShowRetentionInfo] = useState(false);
-
-  // Default retention
-  const [defaultRetention, setDefaultRetention] = useState(0.9);
-
-  // Load settings
-  useEffect(() => {
-    if (!db) return;
-    const now = Math.floor(Date.now() / 1000);
-    const statsResult = getGlobalStats(db, now);
-    if (statsResult.success) setGlobalStats(statsResult.data);
-
-    const stepsResult = getAppSetting(db, 'default_again_steps');
-    if (stepsResult.success && stepsResult.data) {
-      const parsed = stepsResult.data.split(',').map(s => Number(s.trim())).filter(n => !isNaN(n) && n > 0);
-      if (parsed.length > 0) setDefaultStepsArr(parsed);
+  const apply = useCallback(async () => {
+    if (!deckManager || applyState === 'working') return;
+    hapticTap();
+    setApplyState('working');
+    try {
+      for (const entry of deckManager.deckEntries) {
+        const cached = deckManager.getCachedDeckDb(entry.deckId);
+        const db = cached ?? await deckManager.openDeckDb(entry.deckId);
+        if (!db) throw new Error(`Could not open ${entry.name}.`);
+        try {
+          const learning = applyLearningStepsToAllDecks(db, preferences.againSteps, preferences.graduatingInterval, preferences.easyInterval);
+          const retention = applyRetentionToAllDecks(db, preferences.desiredRetention);
+          if (!learning.success) throw new Error(learning.error);
+          if (!retention.success) throw new Error(retention.error);
+          const saved = await deckManager.writeEdit(entry.deckId, [{ type: 'deck_settings', settings: preferences }]);
+          if (!saved) throw new Error(`Could not save ${entry.name}.`);
+          await deckManager.compact(entry.deckId);
+        } finally { if (!cached) deckManager.closeDeckDb(entry.deckId); }
+      }
+      setApplyState('done');
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Could not update decks.');
+      setApplyState('error');
     }
+  }, [deckManager, preferences, applyState]);
 
-    const gradResult = getAppSetting(db, 'default_graduating_interval');
-    if (gradResult.success && gradResult.data) setDefaultGradInt(Number(gradResult.data) || 1);
-
-    const easyResult = getAppSetting(db, 'default_easy_interval');
-    if (easyResult.success && easyResult.data) setDefaultEasyInt(Number(easyResult.data) || 4);
-
-    const retResult = getAppSetting(db, 'default_retention');
-    if (retResult.success && retResult.data) setDefaultRetention(Number(retResult.data) || 0.9);
-
-    const notifResult = getNotificationPrefs(db);
-    if (notifResult.success) {
-      setNotifEnabled(notifResult.data.enabled);
-      setNotifTimes(notifResult.data.times);
-    }
-  }, [db]);
-
-  const handleBackup = useCallback(async () => {
-    hapticTap();
-    await backupNow();
-  }, [backupNow]);
-
-  const isBackingUp = phase === 'syncing';
-
-  const handleThemeChange = useCallback((t: Theme) => {
-    hapticTap();
-    setTheme(t);
-  }, [setTheme]);
-
-  const handleTimerToggle = useCallback(() => {
-    hapticTap();
-    setShowTimer(prev => {
-      const next = !prev;
-      try { localStorage.setItem('kit_show_timer', String(next)); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
-
-  const saveDefaultSteps = useCallback((steps = defaultStepsArr) => {
-    if (!db) return;
-    setAppSetting(db, 'default_again_steps', steps.join(', '));
-    setAppSetting(db, 'default_graduating_interval', String(defaultGradInt));
-    setAppSetting(db, 'default_easy_interval', String(defaultEasyInt));
-    persistDatabase();
-    hapticTap();
-  }, [db, defaultStepsArr, defaultGradInt, defaultEasyInt]);
-
-  const applyToAllDecks = useCallback(() => {
-    if (!db || defaultStepsArr.length === 0) return;
-    applyLearningStepsToAllDecks(db, defaultStepsArr, defaultGradInt || 1, defaultEasyInt || 4);
-    saveDefaultSteps();
-  }, [db, defaultStepsArr, defaultGradInt, defaultEasyInt, saveDefaultSteps]);
-
-  const handleSaveRetention = useCallback((val: number) => {
-    if (!db) return;
-    setDefaultRetention(val);
-    setAppSetting(db, 'default_retention', String(val));
-    applyRetentionToAllDecks(db, val);
-    persistDatabase();
-  }, [db]);
-
-  const applyToNewOnly = useCallback(() => {
-    saveDefaultSteps();
-  }, [saveDefaultSteps]);
-
-  const saveNotifPrefs = useCallback((prefs: NotificationPrefs) => {
-    if (!db) return;
-    setNotificationPrefs(db, prefs);
-    persistDatabase();
-  }, [db]);
-
-  const handleNotifToggle = useCallback(() => {
-    hapticTap();
-    setNotifEnabled(prev => {
-      const next = !prev;
-      saveNotifPrefs({ enabled: next, times: notifTimes });
-      return next;
-    });
-  }, [saveNotifPrefs, notifTimes]);
-
-  const handleTimeChange = useCallback((index: number, time: ReminderTime) => {
-    setNotifTimes(prev => {
-      const next = prev.map((t, i) => i === index ? time : t);
-      saveNotifPrefs({ enabled: notifEnabled, times: next });
-      return next;
-    });
-  }, [saveNotifPrefs, notifEnabled]);
-
-  const handleTimeRemove = useCallback((index: number) => {
-    hapticTap();
-    setNotifTimes(prev => {
-      const next = prev.filter((_, i) => i !== index);
-      saveNotifPrefs({ enabled: notifEnabled, times: next });
-      return next;
-    });
-  }, [saveNotifPrefs, notifEnabled]);
-
-  const handleTimeAdd = useCallback(() => {
-    hapticTap();
-    setNotifTimes(prev => {
-      if (prev.length >= 3) return prev;
-      const next = [...prev, { hour: 9, minute: 0 }];
-      saveNotifPrefs({ enabled: notifEnabled, times: next });
-      return next;
-    });
-  }, [saveNotifPrefs, notifEnabled]);
-
-  const THEME_OPTIONS: { value: Theme; label: string; icon: React.ReactNode }[] = [
-    { value: 'light', label: 'Light', icon: <SunIcon /> },
-    { value: 'dark',  label: 'Dark',  icon: <MoonIcon /> },
-    { value: 'black', label: 'Black', icon: <BlackMoonIcon /> },
-  ];
+  if (showPrivacy) return <main className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <header className="kit-page-header"><button type="button" className="kit-icon-button" aria-label="Back to settings" onClick={() => setShowPrivacy(false)}><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg></button><h1 className="text-sm font-semibold">Privacy</h1></header>
+    <iframe className="flex-1 w-full border-0" title="Privacy policy" src={`${import.meta.env.BASE_URL}privacy.html`} />
+  </main>;
 
   return (
-    <div
-      ref={pageRef}
-      onTouchStart={handleEdgeStart}
-      onTouchEnd={handleEdgeEnd}
-      className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] page-enter"
-      style={{
-        transform: edgeSwipeX ? `translateX(${edgeSwipeX}px)` : undefined,
-        transition: edgeSwipeTransition ? 'transform 0.2s ease-out' : undefined,
-        willChange: edgeSwipeX ? 'transform' : undefined,
-      }}
-    >
-      {/* Header */}
-      <header
-        className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
-        style={{
-          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
-          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-          paddingRight: 'max(1rem, env(safe-area-inset-right))',
-        }}
-      >
-        <button
-          onClick={() => { hapticTap(); onBack(); }}
-          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
-          aria-label="Back"
-        >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
+    <main className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+      <header className="kit-page-header">
+        <button type="button" className="kit-icon-button" aria-label="Back" onClick={() => { hapticTap(); onBack(); }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m15 5-7 7 7 7" /></svg>
         </button>
-        <span className="text-base font-bold">
-          Settings
-        </span>
+        <h1 className="text-sm font-semibold">Settings</h1>
       </header>
-
-      <div
-        className="flex-1 overflow-auto"
-        style={{
-          paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
-          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-          paddingRight: 'max(1rem, env(safe-area-inset-right))',
-        }}
-      >
-        {/* ── Appearance ── */}
-        <section className="py-4">
-          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">Appearance</h2>
-          <div className="bg-[var(--kit-surface)] rounded-xl">
-            <div className="px-4 py-3 flex gap-2">
-              {THEME_OPTIONS.map(({ value, label, icon }) => (
-                <button
-                  key={value}
-                  onClick={() => handleThemeChange(value)}
-                  className={`flex-1 py-2.5 flex flex-col items-center gap-1.5 text-xs rounded-lg transition-colors ${
-                    theme === value
-                      ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] font-semibold'
-                      : 'bg-[#F0F0F0] dark:bg-[#1A1A1A] text-[#C4C4C4]'
-                  }`}
-                >
-                  {icon}
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm">Show session timer</span>
-              <button
-                onClick={handleTimerToggle}
-                className={`w-11 h-6 rounded-full transition-colors relative ${showTimer ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#333]'}`}
-              >
-                <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[var(--kit-bg)] transition-transform ${showTimer ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
-                />
+      <div className="mx-auto max-w-lg space-y-5 px-5 pb-10 pt-6">
+        <section aria-label="Appearance" className="settings-panel">
+          <div className="grid grid-cols-3 gap-2" role="group" aria-label="Appearance">
+            {(['light', 'dark', 'black'] as Theme[]).map(option => (
+              <button key={option} type="button" aria-pressed={theme === option} onClick={() => { hapticTap(); setTheme(option); }} className={`theme-choice ${theme === option ? 'theme-choice--selected' : ''}`}>
+                <span aria-hidden="true" className={`theme-swatch theme-swatch--${option}`}><span /><span /><span /></span>
+                <span className="theme-choice-caption">{option}
+                  <svg className="theme-choice-check" style={{ visibility: theme === option ? 'visible' : 'hidden' }} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 8 3 3 7-7" /></svg>
+                </span>
               </button>
-            </div>
+            ))}
           </div>
         </section>
-
-        {/* ── Study ── */}
-        <section className="pb-4">
-          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">Study</h2>
-          <div className="bg-[var(--kit-surface)] rounded-xl">
-            {/* Target retention */}
-            <div className="px-4 py-3">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center gap-1">
-                  <span className="text-sm">Target retention</span>
-                  <button
-                    onClick={() => { hapticTap(); setShowRetentionInfo(v => !v); }}
-                    aria-label="More info"
-                    className="text-[#C4C4C4]"
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <path d="M12 16v-4M12 8h.01" />
-                    </svg>
-                  </button>
-                </div>
-                <span className="text-sm font-semibold tabular-nums">{Math.round(defaultRetention * 100)}%</span>
-              </div>
-              {showRetentionInfo && (
-                <p className="text-[11px] text-[#C4C4C4] mb-1 leading-relaxed">How often you should remember a card when it comes due. Higher = more frequent reviews but better memory. Applied to all decks.</p>
-              )}
-              <div onTouchMove={e => e.stopPropagation()}>
-                <input
-                  type="range"
-                  min={70}
-                  max={99}
-                  step={1}
-                  value={Math.round(defaultRetention * 100)}
-                  onInput={e => handleSaveRetention(Number((e.target as HTMLInputElement).value) / 100)}
-                  onChange={e => handleSaveRetention(Number(e.target.value) / 100)}
-                  className="w-full accent-[#1c1c1e] dark:accent-[#E5E5E5]"
-                  style={{ touchAction: 'none' }}
-                />
-              </div>
-              <div className="flex justify-between text-[11px] text-[#C4C4C4] mt-0.5">
-                <span>70%</span>
-                <span>99%</span>
-              </div>
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            {/* Learning steps */}
-            <div className="px-4 py-3">
-              <span className="text-sm">Practice intervals</span>
-              <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">Minutes to wait before re-showing a card you got wrong.</p>
-              <StepsEditor
-                steps={defaultStepsArr}
-                onChange={(s) => { setDefaultStepsArr(s); saveDefaultSteps(s); }}
-              />
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm">First review after learning</span>
-              <select
-                value={defaultGradInt}
-                onChange={(e) => { hapticTap(); setDefaultGradInt(Number(e.target.value)); }}
-                className="bg-[#F0F0F0] dark:bg-[#1A1A1A] rounded-lg px-3 py-1.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
-              >
-                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm">Easy interval</span>
-              <select
-                value={defaultEasyInt}
-                onChange={(e) => { hapticTap(); setDefaultEasyInt(Number(e.target.value)); }}
-                className="bg-[#F0F0F0] dark:bg-[#1A1A1A] rounded-lg px-3 py-1.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums outline-none appearance-none text-center min-w-[4.5rem]"
-              >
-                {Array.from({ length: 60 }, (_, i) => i + 1).map(n => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            <div className="px-4 py-3 flex gap-2">
-              <button
-                onClick={applyToAllDecks}
-                className="flex-1 py-2 text-xs font-semibold border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              >
-                Apply to all decks
-              </button>
-              <button
-                onClick={applyToNewOnly}
-                className="flex-1 py-2 text-xs border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              >
-                New decks only
-              </button>
-            </div>
-          </div>
-
-          {/* Study reminders — separate card within Study section */}
-          <div className="bg-[var(--kit-surface)] rounded-xl mt-3">
-            <div className="flex items-center justify-between px-4 py-3">
-              <div>
-                <span className="text-sm">Study reminders</span>
-                <p className="text-[11px] text-[#C4C4C4] mt-0.5 leading-relaxed">
-                  Daily notifications showing how many cards are due.
-                </p>
-              </div>
-              <button
-                onClick={handleNotifToggle}
-                className={`ml-4 w-11 h-6 rounded-full transition-colors relative shrink-0 ${notifEnabled ? 'bg-[#1c1c1e] dark:bg-[#E5E5E5]' : 'bg-[#D4D4D4] dark:bg-[#333]'}`}
-                aria-label={notifEnabled ? 'Disable study reminders' : 'Enable study reminders'}
-              >
-                <div
-                  className={`absolute top-0.5 w-5 h-5 rounded-full bg-white dark:bg-[var(--kit-bg)] transition-transform ${notifEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`}
-                />
-              </button>
-            </div>
-
-            {notifEnabled && (
-              <>
-                <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-                <div className="px-4 py-3 flex flex-col gap-3">
-                  <span className="text-xs font-medium text-[#C4C4C4] uppercase tracking-wider">
-                    Reminder times
-                  </span>
-                  {notifTimes.map((time, i) => (
-                    <ReminderTimeRow
-                      key={i}
-                      time={time}
-                      onChange={t => handleTimeChange(i, t)}
-                      onRemove={() => handleTimeRemove(i)}
-                      canRemove={notifTimes.length > 1}
-                    />
-                  ))}
-                  {notifTimes.length < 3 && (
-                    <button
-                      onClick={handleTimeAdd}
-                      className="flex items-center gap-1.5 text-sm text-[#C4C4C4] self-start"
-                    >
-                      <span className="w-6 h-6 flex items-center justify-center rounded-full border border-dashed border-[#D4D4D4] dark:border-[#333] text-base leading-none">+</span>
-                      Add reminder
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+        <section className="settings-panel">
+          <label className="settings-row cursor-pointer">
+            <span>Session timer</span>
+            <input type="checkbox" role="switch" checked={showTimer} className="kit-switch" onChange={event => {
+              hapticTap(); setShowTimer(event.target.checked);
+              try { localStorage.setItem('kit_show_timer', String(event.target.checked)); } catch { /* preference unavailable */ }
+            }} />
+          </label>
         </section>
-
-        {/* ── iCloud ── */}
-        <section ref={icloudSyncRef} className="pb-4">
-          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">iCloud Sync</h2>
-          <div className={`bg-[var(--kit-surface)] rounded-xl ${flashIcloud ? 'flash-ring' : ''}`}>
-            {/* Plain-language explainer */}
-            <div className="px-4 py-3">
-              <p className="text-sm leading-relaxed">
-                Your decks are saved on {deviceName.toLowerCase()}. When iCloud is available, changes sync to your other devices automatically.
-              </p>
-              <p className="text-xs text-[#C4C4C4] leading-relaxed mt-1.5">
-                If iCloud isn't available, nothing is lost — your changes stay here and sync once iCloud is back.
-              </p>
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            {/* Status */}
-            <div className="px-4 py-3">
-              {icloudAvailability === 'checking' ? (
-                <div className="flex items-center gap-3">
-                  <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-[#C4C4C4]">Checking iCloud…</span>
-                </div>
-              ) : (
-                <SyncStatusRow
-                  icloudAvailable={icloudAvailability === 'available'}
-                  lastSyncedAt={lastSyncedAt}
-                  deviceName={deviceName}
-                />
-              )}
-
-              {isBackingUp && (
-                <div className="flex items-center gap-3 mt-3">
-                  <div className="w-4 h-4 border-2 border-[#1c1c1e] dark:border-[#E5E5E5] border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm text-[#C4C4C4]">Syncing…</span>
-                </div>
-              )}
-
-              {phase === 'done' && (
-                <div className="flex items-center justify-between mt-3">
-                  <p className="text-sm text-green-600 dark:text-green-400">
-                    {flushedCount > 0
-                      ? `Synced ${flushedCount} pending ${flushedCount === 1 ? 'change' : 'changes'}.`
-                      : 'Everything is already up to date.'}
-                  </p>
-                  <button onClick={reset} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
-                </div>
-              )}
-
-              {phase === 'error' && errorMessage && (
-                <div className="flex flex-col gap-2 mt-3">
-                  <p className="text-sm text-red-500">{errorMessage}</p>
-                  <button onClick={reset} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
-                </div>
-              )}
-
-              <button
-                onClick={handleBackup}
-                disabled={isBackingUp || !deckManager}
-                className="w-full mt-3 py-2.5 text-sm font-semibold border border-[#E5E5E5]/60 dark:border-[#333]/60 rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] disabled:opacity-40 disabled:cursor-not-allowed active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors"
-              >
-                {isBackingUp ? 'Syncing…' : 'Sync Now'}
-              </button>
-            </div>
-
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-
-            {/* Troubleshooting */}
-            <div className="px-4 py-3">
-              <p className="text-sm mb-2">Having trouble?</p>
-              <ul className="flex flex-col gap-1.5 text-xs text-[#C4C4C4] leading-relaxed">
-                <li>· Same <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Apple ID</strong> on all your devices</li>
-                <li>· <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud Drive</strong> turned on in iOS Settings</li>
-                <li>· Kit toggled <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">on</strong> under "Apps using iCloud"</li>
-                <li>· Enough <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud storage</strong> available</li>
-              </ul>
-              <div className="mt-3 rounded-lg bg-[#F0F0F0] dark:bg-[#1A1A1A] px-3 py-2.5">
-                <p className="text-[11px] font-medium text-[#1c1c1e] dark:text-[#E5E5E5] mb-1">
-                  To check these:
-                </p>
-                <p className="text-[11px] text-[#C4C4C4] leading-relaxed">
-                  Open the iOS <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Settings</strong> app → tap your <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">name</strong> at the top → <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">iCloud</strong> → <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">See All</strong> under Apps Using iCloud → turn on <strong className="text-[#1c1c1e] dark:text-[#E5E5E5] font-medium">Kit</strong>.
-                </p>
-              </div>
-              <p className="text-[11px] text-[#C4C4C4] mt-2 leading-relaxed">
-                Sync happens automatically. Changes may take a few minutes to appear on other devices.
-              </p>
-            </div>
+        <details className="settings-panel">
+          <summary className="settings-row cursor-pointer"><span>Study defaults</span><span className="settings-chevron" aria-hidden="true">⌄</span></summary>
+          <div className="settings-details space-y-5">
+            <label className="block text-xs"><span className="flex justify-between">Retention <strong>{Math.round(preferences.desiredRetention * 100)}%</strong></span>
+              <input type="range" min="70" max="99" className="mt-3 w-full accent-current" value={Math.round(preferences.desiredRetention * 100)} onChange={event => setPreferences(p => ({ ...p, desiredRetention: Number(event.target.value) / 100 }))} />
+            </label>
+            <label className="settings-field"><span>Learning steps · minutes</span><input aria-label="Learning steps in minutes" value={steps} onChange={event => setSteps(event.target.value)} onBlur={() => {
+              const parsed = steps.split(/[,\s]+/).map(Number).filter(n => Number.isFinite(n) && n > 0).map(Math.round).slice(0, 8);
+              const next = parsed.length ? parsed : preferences.againSteps;
+              setSteps(next.join(', ')); setPreferences(p => ({ ...p, againSteps: next }));
+            }} /></label>
+            <label className="settings-field"><span>First review · days</span><input type="number" min="1" max="365" value={preferences.graduatingInterval} onChange={event => { const n = Number(event.target.value); if (n > 0) setPreferences(p => ({ ...p, graduatingInterval: Math.round(n) })); }} /></label>
+            <label className="settings-field"><span>Easy review · days</span><input type="number" min="1" max="365" value={preferences.easyInterval} onChange={event => { const n = Number(event.target.value); if (n > 0) setPreferences(p => ({ ...p, easyInterval: Math.round(n) })); }} /></label>
+            <p className="text-[11px] text-[#777] dark:text-[#aaa]">Used for new decks. Existing decks keep their settings.</p>
+            <button type="button" onClick={() => void apply()} disabled={!deckManager || applyState === 'working'} className="kit-secondary-button w-full">
+              {applyState === 'working' ? 'Applying…' : applyState === 'done' ? 'Applied' : 'Apply to existing decks'}
+            </button>
+            {applyState === 'error' && <p role="alert" className="text-xs text-red-600">{message}</p>}
           </div>
-        </section>
-
-        {/* ── About ── */}
-        <section className="pb-4">
-          <h2 className="text-xs font-semibold text-[#C4C4C4] uppercase tracking-wider mb-2 px-1">About</h2>
-          <div className="bg-[var(--kit-surface)] rounded-xl">
-            {globalStats && (
-              <>
-                <div className="px-4 py-3">
-                  <div className="grid grid-cols-4 gap-2">
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="text-lg font-semibold tabular-nums">{globalStats.totalCards.toLocaleString()}</span>
-                      <span className="text-[10px] text-[#C4C4C4] text-center">Cards</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="text-lg font-semibold tabular-nums">{globalStats.totalReviews.toLocaleString()}</span>
-                      <span className="text-[10px] text-[#C4C4C4] text-center">Reviews</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="text-lg font-semibold tabular-nums">{globalStats.retentionRate > 0 ? `${globalStats.retentionRate}%` : '—'}</span>
-                      <span className="text-[10px] text-[#C4C4C4] text-center">Retention</span>
-                    </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                      <span className="text-lg font-semibold tabular-nums">{globalStats.currentStreak > 0 ? `${globalStats.currentStreak}d` : '—'}</span>
-                      <span className="text-[10px] text-[#C4C4C4] text-center">Streak</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-              </>
-            )}
-            <a
-              href="mailto:jikelvin9@gmail.com"
-              className="flex items-center justify-between px-4 py-3 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              onClick={() => hapticTap()}
-            >
-              <span className="text-sm">Contact Support</span>
-              <span className="text-sm text-[#C4C4C4]">jikelvin9@gmail.com</span>
-            </a>
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-            <a
-              href="https://catsandnicotine.github.io/kit/public/privacy.html"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-between px-4 py-3 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A]"
-              onClick={() => hapticTap()}
-            >
-              <span className="text-sm">Privacy Policy</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#C4C4C4]">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                <polyline points="15 3 21 3 21 9" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-              </svg>
-            </a>
-            <div className="h-px bg-[#E5E5E5]/50 dark:bg-[#262626]/50 mx-4" />
-            <div className="flex items-center justify-between px-4 py-3">
-              <span className="text-sm text-[#C4C4C4]">Version</span>
-              <span className="text-sm text-[#C4C4C4]">{version} ({build})</span>
-            </div>
+        </details>
+        <details className="settings-panel" open={scrollTo === 'icloud-sync' ? true : undefined}>
+          <summary className="settings-row cursor-pointer"><span>Storage & sync</span><span className="settings-chevron" aria-hidden="true">⌄</span></summary>
+          <div className="settings-details space-y-4 text-xs">
+            <div className="flex justify-between"><span>iCloud Drive</span><span>{icloudAvailability === 'available' ? 'Available' : icloudAvailability === 'checking' ? 'Checking…' : 'Unavailable'}</span></div>
+            {lastSyncedAt && <div className="flex justify-between"><span>Last checked</span><span>{new Date(lastSyncedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</span></div>}
+            <p className="text-[11px] text-[#777] dark:text-[#aaa]">Saved on this device. iCloud Drive uses your Apple account and storage.</p>
+            <button type="button" disabled={checking} className="kit-secondary-button w-full" onClick={async () => { hapticTap(); setChecking(true); try { await onSync(); } finally { setChecking(false); } }}>{checking ? 'Checking…' : 'Check sync'}</button>
           </div>
+        </details>
+        <section className="settings-panel">
+          <a href="mailto:jikelvin9@gmail.com" className="settings-row" onClick={() => hapticTap()}><span>Support</span><span aria-hidden="true">↗</span></a>
+          <button type="button" className="settings-row w-full" onClick={() => { hapticTap(); setShowPrivacy(true); }}><span>Privacy</span><span aria-hidden="true">›</span></button>
         </section>
+        <div className="text-center">
+          <button type="button" disabled={!deckManager || paintings.busy} onClick={() => void paintings.tapVersion()} className="min-h-11 px-4 text-[10px] text-[#888] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" aria-label={`Kit ${version}, build ${build}`}>
+            Kit {version} · {build}
+          </button>
+          {paintings.busy && <p role="status" className="text-xs text-[#777] dark:text-[#aaa]">Opening paintings…</p>}
+          {paintings.error && <p role="alert" className="text-xs text-red-600">{paintings.error}</p>}
+        </div>
       </div>
-    </div>
+    </main>
   );
 }

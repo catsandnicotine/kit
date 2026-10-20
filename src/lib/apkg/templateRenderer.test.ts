@@ -1,4 +1,3 @@
-/// <reference types="vitest" />
 /**
  * Tests for the Anki template renderer.
  *
@@ -429,6 +428,22 @@ describe('cloze rendering via renderTemplate', () => {
     expect(r.data.front).toContain('Eiffel Tower');
     expect(r.data.front).toContain('[...]');
     expect(r.data.front).not.toContain('Paris');
+  });
+
+  it('reuses a single cloze template for later deletion ordinals from Anki', () => {
+    const note = makeClozeNote('The {{c1::Eiffel Tower}} is in {{c2::Paris}}. {{c3::France}}');
+    const nt = makeClozeNoteType(1);
+    const second = renderTemplate(note, nt, 1);
+    const third = renderTemplate(note, nt, 2);
+    expect(second.success).toBe(true);
+    expect(third.success).toBe(true);
+    if (!second.success || !third.success) return;
+    expect(second.data.front).toContain('Eiffel Tower');
+    expect(second.data.front).not.toContain('Paris');
+    expect(second.data.back).toContain('<span class="cloze">Paris</span>');
+    expect(third.data.front).toContain('Paris');
+    expect(third.data.front).not.toContain('France');
+    expect(third.data.back).toContain('<span class="cloze">France</span>');
   });
 
   it('cloze with hint shows hint text on front', () => {

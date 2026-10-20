@@ -13,7 +13,7 @@
  * Database instances that work with the unchanged queries.ts functions.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
 import initSqlJs from 'sql.js';
 import { configureSqlJsPath, configureWasmBinary } from '../lib/apkg';
@@ -43,7 +43,7 @@ import {
 import { createICloudSyncStorage } from '../lib/platform/icloudSync';
 import { createBrowserSyncStorage } from '../lib/platform/browserSync';
 import { loadDatabaseSnapshot } from '../lib/platform/persistence';
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 import { atomicReadText, atomicWriteText } from '../lib/platform/atomicWrite';
 import type { DeckRegistryEntry, EditOp, GlobalTag } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
@@ -113,6 +113,7 @@ async function writeLocalSnapshot(deckId: string, data: string): Promise<void> {
     });
   } catch (e) {
     console.warn('[snapshot] Failed to write local snapshot:', e);
+    throw e;
   }
 }
 
@@ -128,32 +129,21 @@ const LS_EVICT_MEDIA_KEY = 'kit_evict_media';
 
 async function loadRegistryJson(): Promise<string | null> {
   if (isNativePlatform()) {
-    try {
-      const result = await Filesystem.readFile({
-        path: REGISTRY_PATH,
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-      });
-      return typeof result.data === 'string' ? result.data : null;
-    } catch {
-      return null;
-    }
+    return atomicReadText({
+      path: REGISTRY_PATH,
+      directory: Directory.Documents,
+    });
   }
   return localStorage.getItem(REGISTRY_LS_KEY);
 }
 
 async function saveRegistryJson(json: string): Promise<void> {
   if (isNativePlatform()) {
-    try {
-      await Filesystem.writeFile({
-        path: REGISTRY_PATH,
-        data: json,
-        directory: Directory.Documents,
-        encoding: Encoding.UTF8,
-      });
-    } catch {
-      // Best effort
-    }
+    await atomicWriteText({
+      path: REGISTRY_PATH,
+      data: json,
+      directory: Directory.Documents,
+    });
   } else {
     localStorage.setItem(REGISTRY_LS_KEY, json);
   }
@@ -194,12 +184,12 @@ async function cleanupMigrationBackup(): Promise<void> {
         path: 'kit.db.migrated',
         directory: Directory.Documents,
       });
-      try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch {}
+      try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch { /* best effort */ }
     }
     // File still exists but isn't old enough yet — check again next launch.
   } catch {
     // stat failed → file doesn't exist; remember so we never check again.
-    try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch {}
+    try { localStorage.setItem(LS_MIG_BACKUP_GONE, '1'); } catch { /* best effort */ }
   }
 }
 
@@ -281,7 +271,6 @@ export function useDeckManager(): UseDeckManagerReturn {
   const [error, setError] = useState('');
   const [deckEntries, setDeckEntries] = useState<DeckRegistryEntry[]>([]);
   const [failedDeckIds, setFailedDeckIds] = useState<ReadonlySet<string>>(new Set());
-  const initializedRef = useRef(false);
 
   // Subscribe to deck-health changes from the deckManager so the UI can
   // dim rows whose last open attempt failed and show the recovery sheet.
@@ -305,9 +294,6 @@ export function useDeckManager(): UseDeckManagerReturn {
 
   // ── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-
     let cancelled = false;
 
     async function init() {
@@ -330,7 +316,14 @@ export function useDeckManager(): UseDeckManagerReturn {
         if (cancelled) return;
 
         // 4. Initialize DeckManager
-        initDeckManager({ SQL, storage, registryJson, readLocalSnapshot, writeLocalSnapshot, deleteLocalSnapshot: deleteLocalDeckSnapshot });
+        const localSnapshotConfig = isNativePlatform()
+          ? {
+              readLocalSnapshot,
+              writeLocalSnapshot,
+              deleteLocalSnapshot: deleteLocalDeckSnapshot,
+            }
+          : {};
+        initDeckManager({ SQL, storage, registryJson, ...localSnapshotConfig });
 
         // 5. Check if migration from monolithic DB is needed.
         // If the registry already exists, migration already happened — skip the
@@ -361,7 +354,12 @@ export function useDeckManager(): UseDeckManagerReturn {
             if (snapshot && snapshot !== 'too_large') {
               const deviceId = getDeviceId();
               await migrateMonolithicDb(
-                SQL, snapshot, storage, deviceId,
+                SQL,
+                snapshot,
+                storage,
+                deviceId,
+                isNativePlatform() ? writeLocalSnapshot : undefined,
+                isNativePlatform() ? deleteLocalDeckSnapshot : undefined,
               );
 
               // Save registry after migration
@@ -402,9 +400,9 @@ export function useDeckManager(): UseDeckManagerReturn {
         //    deleted (flagged via LS_EVICT_MEDIA_KEY). Skipped on normal cold starts.
         if (isNativePlatform()) {
           let needsEviction = false;
-          try { needsEviction = localStorage.getItem(LS_EVICT_MEDIA_KEY) === '1'; } catch {}
+          try { needsEviction = localStorage.getItem(LS_EVICT_MEDIA_KEY) === '1'; } catch { /* unavailable */ }
           if (needsEviction) {
-            try { localStorage.removeItem(LS_EVICT_MEDIA_KEY); } catch {}
+            try { localStorage.removeItem(LS_EVICT_MEDIA_KEY); } catch { /* best effort */ }
             const activeIds = new Set(entries.map(e => e.deckId));
             evictOrphanedMedia(activeIds).catch(() => {});
           }
@@ -510,7 +508,7 @@ export function useDeckManager(): UseDeckManagerReturn {
     await removeDeckFn(deckId);
     await persistRegistry();
     // Flag that media eviction is needed on the next cold start.
-    try { localStorage.setItem(LS_EVICT_MEDIA_KEY, '1'); } catch {}
+    try { localStorage.setItem(LS_EVICT_MEDIA_KEY, '1'); } catch { /* best effort */ }
   }, []);
 
   return {

@@ -890,6 +890,7 @@ export interface MediaBlob {
  * @returns Array of media blobs, or an error.
  */
 export function getMediaByDeck(db: Database, _deckId: string): Result<MediaBlob[]> {
+  void _deckId;
   try {
     // Load ALL media regardless of deck_id. Media is stored under the
     // primaryDeckId during import, but cards may belong to sub-decks.
@@ -1427,13 +1428,13 @@ export function getDeckStats(
       SELECT
         COUNT(*)                                                              AS total,
         SUM(CASE WHEN cs.card_id IS NULL OR cs.state = 'new' THEN 1 ELSE 0 END) AS new_count,
-        SUM(CASE WHEN cs.state IN ('learning', 'relearning') AND cs.due <= ? THEN 1 ELSE 0 END) AS learning_count,
+        SUM(CASE WHEN cs.state IN ('learning', 'relearning') THEN 1 ELSE 0 END) AS learning_count,
         SUM(CASE WHEN cs.state = 'review'                     THEN 1 ELSE 0 END) AS review_count
       FROM cards c
       LEFT JOIN card_states cs ON c.id = cs.card_id
       WHERE c.deck_id = ?
     `);
-    countStmt.bind([now, deckId]);
+    countStmt.bind([deckId]);
     countStmt.step();
     const countRow = countStmt.getAsObject() as Row;
     const totalCards = num(countRow, 'total');
@@ -1461,65 +1462,53 @@ export function getDeckStats(
       : 0;
     reviewStmt.free();
 
-    // ── Reviews per day (last 7 days) ─────────────────────────────────
-    const daySeconds = 86400;
-    const todayStart = now - (now % daySeconds);
-    const weekAgo = todayStart - 6 * daySeconds;
-
-    const dailyStmt = db.prepare(`
-      SELECT
-        CAST((rl.reviewed_at - ?) / 86400 AS INTEGER) AS day_idx,
-        COUNT(*) AS cnt
+    // Use local calendar midnights, rather than fixed 24-hour UTC buckets.
+    // setDate also handles the 23/25-hour days at daylight-saving changes.
+    const today = new Date(now * 1000);
+    today.setHours(0, 0, 0, 0);
+    const dayStarts: number[] = [];
+    for (let offset = -6; offset <= 0; offset++) {
+      const day = new Date(today);
+      day.setDate(day.getDate() + offset);
+      dayStarts.push(day.getTime());
+    }
+    const reviewsPerDay = Array<number>(7).fill(0);
+    const studyDays = new Set<number>();
+    const activityStmt = db.prepare(`
+      SELECT rl.reviewed_at
       FROM review_logs rl
       JOIN cards c ON rl.card_id = c.id
-      WHERE c.deck_id = ? AND rl.reviewed_at >= ?
-      GROUP BY day_idx
+      WHERE c.deck_id = ? AND rl.reviewed_at <= ?
+      ORDER BY rl.reviewed_at DESC
     `);
-    dailyStmt.bind([weekAgo, deckId, weekAgo]);
-    const dailyMap = new Map<number, number>();
-    while (dailyStmt.step()) {
-      const row = dailyStmt.getAsObject() as Row;
-      dailyMap.set(num(row, 'day_idx'), num(row, 'cnt'));
+    activityStmt.bind([deckId, now]);
+    while (activityStmt.step()) {
+      const row = activityStmt.getAsObject() as Row;
+      const day = new Date(num(row, 'reviewed_at') * 1000);
+      day.setHours(0, 0, 0, 0);
+      const midnight = day.getTime();
+      studyDays.add(midnight);
+      const index = dayStarts.indexOf(midnight);
+      if (index >= 0) reviewsPerDay[index] = (reviewsPerDay[index] ?? 0) + 1;
     }
-    dailyStmt.free();
-    const reviewsPerDay: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      reviewsPerDay.push(dailyMap.get(i) ?? 0);
-    }
+    activityStmt.free();
 
-    // ── Current streak (consecutive days studied) ─────────────────────
+    // Yesterday's streak stays alive until the user has had today to study.
     let currentStreak = 0;
-    const streakStmt = db.prepare(`
-      SELECT DISTINCT CAST(rl.reviewed_at / 86400 AS INTEGER) AS day
-      FROM review_logs rl
-      JOIN cards c ON rl.card_id = c.id
-      WHERE c.deck_id = ?
-      ORDER BY day DESC
-    `);
-    streakStmt.bind([deckId]);
-    const todayDay = Math.floor(now / daySeconds);
-    let expectedDay = todayDay;
-    while (streakStmt.step()) {
-      const row = streakStmt.getAsObject() as Row;
-      const day = num(row, 'day');
-      if (day === expectedDay) {
-        currentStreak++;
-        expectedDay--;
-      } else if (day === expectedDay + 1) {
-        // Same as expected (rounding), skip
-        continue;
-      } else {
-        break;
-      }
+    const streakDay = new Date(today);
+    if (!studyDays.has(streakDay.getTime())) streakDay.setDate(streakDay.getDate() - 1);
+    while (studyDays.has(streakDay.getTime())) {
+      currentStreak++;
+      streakDay.setDate(streakDay.getDate() - 1);
     }
-    streakStmt.free();
 
     // ── Next due card ─────────────────────────────────────────────────
     const nextDueStmt = db.prepare(`
       SELECT MIN(cs.due) AS next_due
       FROM card_states cs
       JOIN cards c ON cs.card_id = c.id
-      WHERE c.deck_id = ? AND cs.state = 'review' AND cs.due > ?
+      WHERE c.deck_id = ? AND cs.state IN ('learning', 'relearning', 'review')
+        AND cs.suspended = 0 AND cs.due > ?
     `);
     nextDueStmt.bind([deckId, now]);
     nextDueStmt.step();

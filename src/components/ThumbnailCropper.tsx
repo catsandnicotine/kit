@@ -172,7 +172,7 @@ export function ThumbnailCropper({ file, onSave, onCancel }: ThumbnailCropperPro
         <div className="flex gap-3 p-4">
           <button
             onClick={() => { hapticTap(); onCancel(); }}
-            className="flex-1 py-2 text-sm text-[#C4C4C4] border border-[#D4D4D4] dark:border-[#404040] rounded-lg"
+            className="flex-1 py-2 text-sm text-[#C4C4C4] rounded-lg"
           >
             Cancel
           </button>

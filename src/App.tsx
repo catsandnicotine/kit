@@ -1,24 +1,39 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
 import { useDeckManager } from './hooks/useDeckManager';
 import { useSync } from './hooks/useSync';
+import { useConnectivity } from './hooks/useConnectivity';
+import { useConnectionNotice } from './hooks/useConnectionNotice';
+import { SyncNotice } from './components/SyncNotice';
 import { useICloudAvailability } from './hooks/useICloudAvailability';
-import { PixelCat } from './components/PixelCat';
+import { Onboarding } from './components/Onboarding';
+import type { OnboardingAction } from './components/Onboarding';
 import Home from './pages/Home';
 import { App as CapApp } from '@capacitor/app';
 import { isApkgFileUrl, readFileFromUrl } from './lib/platform/fileOpener';
 import type { Database } from 'sql.js';
 import type { EditOp } from './lib/sync/types';
+import { createEmptyDeckSnapshot } from './lib/db/deckFactory';
+import { createWelcomeDeckSnapshot, WELCOME_DECK_ID } from './lib/db/welcomeDeck';
+import { pickApkgFile } from './lib/platform/filePicker';
+import { hapticNavigate, hapticSuccess, hapticTap } from './lib/platform/haptics';
 
 // Lazy-loaded pages — keeps KaTeX, Konva, and other heavy deps out of the
 // initial chunk so the WKWebView doesn't OOM during database init.
-const Study = lazy(() => import('./pages/Study'));
-const Browse = lazy(() => import('./pages/Browse'));
-const Settings = lazy(() => import('./pages/Settings'));
-const DeckStats = lazy(() => import('./pages/DeckStats'));
-const DeckSettings = lazy(() => import('./pages/DeckSettings'));
-const TagBrowser = lazy(() => import('./pages/TagBrowser'));
-const ReviewStudy = lazy(() => import('./pages/ReviewStudy'));
+const loadStudy = () => import('./pages/Study');
+const Study = lazy(loadStudy);
+const loadBrowse = () => import('./pages/Browse');
+const Browse = lazy(loadBrowse);
+const loadSettings = () => import('./pages/Settings');
+const Settings = lazy(loadSettings);
+const loadDeckStats = () => import('./pages/DeckStats');
+const DeckStats = lazy(loadDeckStats);
+const loadDeckSettings = () => import('./pages/DeckSettings');
+const DeckSettings = lazy(loadDeckSettings);
+const loadTagBrowser = () => import('./pages/TagBrowser');
+const TagBrowser = lazy(loadTagBrowser);
+const loadReviewStudy = () => import('./pages/ReviewStudy');
+const ReviewStudy = lazy(loadReviewStudy);
 
 // ---------------------------------------------------------------------------
 // Route state
@@ -28,7 +43,7 @@ type Route =
   | { page: 'home' }
   | { page: 'study'; deckId: string; deckName: string }
   | { page: 'review-study'; deckId: string; deckName: string }
-  | { page: 'browse'; deckId: string; deckName: string }
+  | { page: 'browse'; deckId: string; deckName: string; guideFirstCard?: boolean }
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
   | { page: 'settings'; scrollTo?: string | undefined }
@@ -43,44 +58,6 @@ export type AppMode = 'learn' | 'review';
 const LS_ONBOARDED_KEY = 'kit_onboarded';
 
 // ---------------------------------------------------------------------------
-// Onboarding screen
-// ---------------------------------------------------------------------------
-
-function Onboarding({ onDismiss }: { onDismiss: () => void }) {
-  return (
-    <div
-      className="min-h-screen bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex items-center justify-center"
-      style={{
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-        paddingLeft: 'max(1.5rem, env(safe-area-inset-left))',
-        paddingRight: 'max(1.5rem, env(safe-area-inset-right))',
-      }}
-    >
-      <div className="max-w-sm w-full flex flex-col items-center gap-6 text-center">
-        <PixelCat size={96} />
-        <h1 className="text-xl font-semibold">Welcome to Kit</h1>
-        <p className="text-sm text-[#C4C4C4] leading-relaxed">
-          Kit is a flashcard app that uses spaced repetition to help you
-          remember anything. Import your Anki .apkg decks and study on the go.
-        </p>
-        <div className="flex flex-col gap-2 text-xs text-[#C4C4C4] leading-relaxed">
-          <p>1. Tap <strong className="text-[#1c1c1e] dark:text-[#E5E5E5]">Import Deck</strong> to add an .apkg file</p>
-          <p>2. Tap a deck to start studying</p>
-          <p>3. Rate each card and Kit schedules your reviews</p>
-        </div>
-        <button
-          onClick={onDismiss}
-          className="w-full py-3 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-lg active:opacity-80 transition-opacity mt-2"
-        >
-          Get Started
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // App inner (has access to theme context)
 // ---------------------------------------------------------------------------
 
@@ -90,7 +67,15 @@ function AppInner() {
 
   const [route, setRoute] = useState<Route>({ page: 'home' });
   const [mode, setMode] = useState<AppMode>('learn');
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return !localStorage.getItem(LS_ONBOARDED_KEY);
+    } catch {
+      return false;
+    }
+  });
+  const [onboardingBusy, setOnboardingBusy] = useState<OnboardingAction | null>(null);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
   const navSeqRef = useRef(0);
 
   // Per-deck database for the currently active deck-scoped page.
@@ -100,13 +85,15 @@ function AppInner() {
   const currentDeckId = 'deckId' in route ? route.deckId : undefined;
 
   // Real-time iCloud sync — watches for edits from other devices.
-  const { status: syncStatus, syncError, lastSyncedAt } = useSync(
+  const { status: syncStatus, lastSyncedAt, progress: syncProgress, syncAll } = useSync(
     loading ? null : deckManager,
     currentDeckId,
   );
 
   // One source of truth for iCloud availability — used by Home chip + Settings.
   const icloudAvailability = useICloudAvailability();
+  const online = useConnectivity();
+  const connectionNotice = useConnectionNotice(online, icloudAvailability, syncStatus, route.page === 'home' && !showOnboarding);
 
   // File opened via iOS "Open in" / share sheet / Files tap
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -122,18 +109,7 @@ function AppInner() {
 
   const clearPendingFile = useCallback(() => setPendingFile(null), []);
 
-  // Check if this is the first launch
-  useEffect(() => {
-    try {
-      if (!localStorage.getItem(LS_ONBOARDED_KEY)) {
-        setShowOnboarding(true);
-      }
-    } catch {
-      // localStorage unavailable — skip onboarding.
-    }
-  }, []);
-
-  const dismissOnboarding = useCallback(() => {
+  const markOnboarded = useCallback(() => {
     setShowOnboarding(false);
     try {
       localStorage.setItem(LS_ONBOARDED_KEY, '1');
@@ -141,6 +117,11 @@ function AppInner() {
       // Best effort.
     }
   }, []);
+
+  const dismissOnboarding = useCallback(() => {
+    hapticTap();
+    markOnboarded();
+  }, [markOnboarded]);
 
   const finalizeDeck = useCallback((deckId: string) => {
     deckManager.refreshCounts(deckId);
@@ -159,23 +140,25 @@ function AppInner() {
   }, [currentDeckId, deckManager, finalizeDeck]);
 
   const navigateToDeck = useCallback(
-    (page: Route['page'], deckId: string, deckName: string) => {
+    (page: Route['page'], deckId: string, deckName: string, guideFirstCard = false) => {
       const seq = ++navSeqRef.current;
 
-      // Navigate immediately — the screen shows its loading skeleton while the
-      // database hydrates in the background. Only clear the old DB when coming
-      // from Home (no prior deck); deck-to-deck keeps the old content visible
-      // until the new DB arrives, avoiding an empty flash.
-      if (!currentDeckId) setActiveDeckDb(null);
-      setRoute({ page, deckId, deckName } as Route);
-
-      deckManager.openDeckDb(deckId).then(db => {
-        if (seq !== navSeqRef.current) return; // Superseded by goHome or another tap
-        setActiveDeckDb(db);
+      // Keep the current screen until both its replacement and database are ready.
+      const loaders = { study: loadStudy, 'review-study': loadReviewStudy, browse: loadBrowse, stats: loadDeckStats, 'deck-settings': loadDeckSettings };
+      const loadPage = loaders[page as keyof typeof loaders];
+      Promise.all([deckManager.openDeckDb(deckId), loadPage?.()]).then(([db]) => {
+        if (seq !== navSeqRef.current || !db) return;
+        startTransition(() => {
+          setActiveDeckDb(db);
+          if (page === 'browse') setRoute({ page, deckId, deckName, guideFirstCard });
+          else setRoute({ page, deckId, deckName } as Route);
+        });
       }).catch(() => {
+        // DeckManager marks failed decks so Home can offer recovery.
+        deckManager.refreshDecks();
       });
     },
-    [deckManager, currentDeckId],
+    [deckManager],
   );
 
   const goStudy = useCallback(
@@ -189,7 +172,9 @@ function AppInner() {
   );
 
   const goBrowse = useCallback(
-    (deckId: string, deckName: string) => navigateToDeck('browse', deckId, deckName),
+    (deckId: string, deckName: string, guideFirstCard = false) => (
+      navigateToDeck('browse', deckId, deckName, guideFirstCard)
+    ),
     [navigateToDeck],
   );
 
@@ -198,8 +183,8 @@ function AppInner() {
     [navigateToDeck],
   );
 
-  const goSettings = useCallback((scrollTo?: string) => setRoute({ page: 'settings', scrollTo }), []);
-  const goTags = useCallback(() => setRoute({ page: 'tags' }), []);
+  const goSettings = useCallback((scrollTo?: string) => { void loadSettings().then(() => startTransition(() => setRoute({ page: 'settings', scrollTo }))); }, []);
+  const goTags = useCallback(() => { void loadTagBrowser().then(() => startTransition(() => setRoute({ page: 'tags' }))); }, []);
 
   const goDeckSettings = useCallback(
     (deckId: string, deckName: string) => navigateToDeck('deck-settings', deckId, deckName),
@@ -216,20 +201,103 @@ function AppInner() {
     };
   }, [currentDeckId, deckManager]);
 
+  const handleTrySample = useCallback(async () => {
+    if (loading || onboardingBusy) return;
+    setOnboardingBusy('sample');
+    setOnboardingError(null);
+    try {
+      const snapshot = createWelcomeDeckSnapshot();
+      const db = deckEntries.some(entry => entry.deckId === WELCOME_DECK_ID)
+        ? await deckManager.openDeckDb(snapshot.deckId)
+        : await deckManager.createFromSnapshot(snapshot);
+      if (!db) throw new Error('Kit could not prepare the sample deck.');
+      await deckManager.saveRegistry();
+      deckManager.refreshDecks();
+      hapticSuccess();
+      setMode('learn');
+      await loadStudy();
+      startTransition(() => {
+        markOnboarded();
+        setActiveDeckDb(db);
+        setRoute({ page: 'study', deckId: snapshot.deckId, deckName: snapshot.deck.name });
+      });
+    } catch (cause) {
+      setOnboardingError(cause instanceof Error ? cause.message : 'Could not create the sample deck.');
+    } finally {
+      setOnboardingBusy(null);
+    }
+  }, [loading, onboardingBusy, deckEntries, deckManager, markOnboarded]);
+
+  const handleCreateFirstDeck = useCallback(async (name: string) => {
+    if (loading || onboardingBusy) return;
+    setOnboardingBusy('create');
+    setOnboardingError(null);
+    try {
+      const snapshot = createEmptyDeckSnapshot(name);
+      const db = await deckManager.createFromSnapshot(snapshot);
+      if (!db) throw new Error('Kit could not create that deck.');
+      await deckManager.saveRegistry();
+      deckManager.refreshDecks();
+      hapticSuccess();
+      setMode('learn');
+      await loadBrowse();
+      startTransition(() => {
+        markOnboarded();
+        setActiveDeckDb(db);
+        setRoute({
+        page: 'browse',
+        deckId: snapshot.deckId,
+        deckName: snapshot.deck.name,
+        guideFirstCard: true,
+        });
+      });
+    } catch (cause) {
+      setOnboardingError(cause instanceof Error ? cause.message : 'Could not create that deck.');
+    } finally {
+      setOnboardingBusy(null);
+    }
+  }, [loading, onboardingBusy, deckManager, markOnboarded]);
+
+  const handleImportFirstDeck = useCallback(async () => {
+    if (onboardingBusy) return;
+    setOnboardingBusy('import');
+    setOnboardingError(null);
+    try {
+      hapticNavigate();
+      const file = await pickApkgFile();
+      if (!file) return;
+      setPendingFile(file);
+      markOnboarded();
+      setRoute({ page: 'home' });
+    } catch (cause) {
+      setOnboardingError(cause instanceof Error ? cause.message : 'Could not open that file.');
+    } finally {
+      setOnboardingBusy(null);
+    }
+  }, [onboardingBusy, markOnboarded]);
+
+  const withStatus = (content: ReactNode) => <>
+    <Suspense fallback={<div className="min-h-[100dvh] bg-[var(--kit-bg)]" aria-busy="true" />}>{content}</Suspense>
+  </>;
+
   // ── Onboarding (first launch) ────────────────────────────────────────
   if (showOnboarding) {
-    return <Onboarding onDismiss={dismissOnboarding} />;
+    return withStatus(
+      <Onboarding
+        ready={!loading && !error}
+        existingDeckCount={deckEntries.length}
+        busyAction={onboardingBusy}
+        error={onboardingError ?? (error || null)}
+        onTrySample={handleTrySample}
+        onCreateDeck={handleCreateFirstDeck}
+        onImportDeck={handleImportFirstDeck}
+        onDismiss={dismissOnboarding}
+      />
+    );
   }
 
-  const pageFallback = (
-    <div className="min-h-[100dvh] bg-[var(--kit-bg)] flex items-center justify-center">
-      <p className="text-sm text-[#C4C4C4]">Loading…</p>
-    </div>
-  );
-
   if (route.page === 'study') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <Study
           db={activeDeckDb}
           deckId={route.deckId}
@@ -238,53 +306,47 @@ function AppInner() {
           onSyncEdit={handleSyncEdit}
           onSessionComplete={handleSessionComplete}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'review-study') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <ReviewStudy
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onExit={goHome}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'browse') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <Browse
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onBack={goHome}
+          guideFirstCard={route.guideFirstCard ?? false}
+          onStartStudy={() => goStudy(route.deckId, route.deckName)}
           onSyncEdit={handleSyncEdit}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'stats') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <DeckStats
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
           onBack={goHome}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'deck-settings') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <DeckSettings
           db={activeDeckDb}
           deckId={route.deckId}
@@ -292,47 +354,40 @@ function AppInner() {
           onBack={goHome}
           onSyncEdit={handleSyncEdit}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'settings') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <Settings
-          db={activeDeckDb}
           deckManager={loading ? null : deckManager}
           lastSyncedAt={lastSyncedAt}
-          icloudAvailability={icloudAvailability}
+              icloudAvailability={icloudAvailability}
           onBack={goHome}
+          onSync={syncAll}
+          onOpenDeck={goBrowse}
           scrollTo={route.scrollTo}
         />
-      </Suspense>
     );
   }
 
   if (route.page === 'tags') {
-    return (
-      <Suspense fallback={pageFallback}>
+    return withStatus(
         <TagBrowser
           deckManager={deckManager}
           onBack={goHome}
         />
-      </Suspense>
     );
   }
 
-  return (
+  return withStatus(
     <Home
+      connectionNotice={<SyncNotice visible={connectionNotice.visible} kind={connectionNotice.kind} progress={syncProgress} onDismiss={connectionNotice.dismiss} />}
       db={null}
       dbLoading={loading}
       dbError={error}
       deckEntries={deckEntries}
       deckManager={deckManager}
-      syncStatus={syncStatus}
-      syncError={syncError}
-      lastSyncedAt={lastSyncedAt}
-      icloudAvailability={icloudAvailability}
       mode={mode}
       onModeChange={setMode}
       onStudy={goStudy}

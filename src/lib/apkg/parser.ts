@@ -393,6 +393,7 @@ export async function extractMediaBatch(
   batchSize: number,
   _mediaCompressed = false,
 ): Promise<ParsedMedia[]> {
+  void _mediaCompressed;
   const end = Math.min(startIdx + batchSize, manifest.length);
   const results: ParsedMedia[] = [];
 
@@ -721,7 +722,7 @@ export function extractDecksNewSchema(db: Database): ParsedAnkiDeck[] {
 
   return (first.values as Row[]).map((row) => ({
     id: String(row[0]),
-    name: String(row[1] ?? ''),
+    name: String(row[1] ?? '').split('\x1f').join('::'),
     description: '',
   }));
 }
@@ -954,6 +955,7 @@ function extractStructure(
   db: Database,
   _dbName: string,
 ): Result<{ noteTypes: ParsedNoteType[]; decks: ParsedAnkiDeck[] }> {
+  void _dbName;
   if (hasNewSchema(db)) {
     // New schema (Anki 2.1.50+): notetypes/fields/templates tables
     let noteTypes: ParsedNoteType[];

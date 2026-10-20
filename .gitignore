@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Generated deck download; source images and catalogue are versioned separately.
+/design/jesus-paintings/*.apkg

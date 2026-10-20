@@ -1,8 +1,10 @@
+import { UiIcon } from '../components/UiIcon';
+import { DeckName } from '../components/DeckName';
 /**
  * Browse page — visual card browser with selection, tag filter, sort, and review pass.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { getCardsByDeck, deleteCards, renameDeck, getTagsForDeck, updateCardTags, type TagCount } from '../lib/db/queries';
@@ -10,6 +12,7 @@ import { sortTagsByColor } from '../lib/tagSort';
 import { pillTextColor, getColorSortKey } from '../lib/tagColors';
 import { v4 as uuidv4 } from 'uuid';
 import { useDeckMedia } from '../hooks/useDeckMedia';
+import { useTheme } from '../hooks/useTheme';
 import { CardEditor } from '../components/CardEditor';
 import { hapticAgain, hapticTap } from '../lib/platform/haptics';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
@@ -31,6 +34,10 @@ interface BrowseProps {
   deckId: string;
   deckName: string;
   onBack: () => void;
+  /** Automatically open the first-card editor for a newly-created deck. */
+  guideFirstCard?: boolean;
+  /** Start a study session after the guided first card is saved. */
+  onStartStudy?: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
   onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
 }
@@ -49,13 +56,15 @@ function stripHtml(html: string): string {
 
 function CardFacePreview({ html, tagColors }: { html: string; tagColors?: string[] }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (ref.current) ref.current.innerHTML = `<div class="card">${html}</div>`;
-  }, [html]);
+  const { theme } = useTheme();
+  const bodyClass = theme === 'black' ? 'night_mode black_mode' : theme === 'dark' ? 'night_mode' : '';
+  useLayoutEffect(() => {
+    if (ref.current) ref.current.innerHTML = `<div class="${bodyClass}"><div class="card">${html}</div></div>`;
+  }, [html, bodyClass]);
   return (
     <div className="flex-1 min-w-0 flex flex-col">
       <div
-        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-md relative"
+        className="browse-card-preview card-content bg-[#FFFFFF] dark:bg-[var(--kit-surface)] rounded-md relative"
         style={{ height: '12rem', overflow: 'hidden' }}
       >
         {/* Tag dots — up to 9, rainbow ordered, top-left */}
@@ -324,12 +333,23 @@ function CardPreviewRow({
 // Main component
 // ---------------------------------------------------------------------------
 
-export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: BrowseProps) {
+export default function Browse({
+  db,
+  deckId,
+  deckName,
+  onBack,
+  guideFirstCard = false,
+  onStartStudy,
+  onSyncEdit,
+}: BrowseProps) {
   const [cards, setCards] = useState<Card[]>([]);
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [isNewCard, setIsNewCard] = useState(false);
+  const [showPracticePrompt, setShowPracticePrompt] = useState(false);
+  const guideStartedRef = useRef(false);
+  const guidePromptedRef = useRef(false);
 
   // Selection mode
   const [selectionMode, setSelectionMode] = useState(false);
@@ -439,7 +459,11 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     setEditingCard(null);
     setIsNewCard(false);
     loadDeckTags(); // refresh pills in case new tags were added
-  }, [isNewCard, loadDeckTags]);
+    if (isNewCard && guideFirstCard && guideStartedRef.current && !guidePromptedRef.current) {
+      guidePromptedRef.current = true;
+      setShowPracticePrompt(true);
+    }
+  }, [isNewCard, loadDeckTags, guideFirstCard]);
 
   const handleEditorDelete = useCallback(() => {
     const deletedId = editingCard?.id;
@@ -455,6 +479,12 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
     setIsNewCard(true);
     setEditingCard(blank);
   }, [deckId]);
+
+  useEffect(() => {
+    if (!guideFirstCard || !db || guideStartedRef.current) return;
+    guideStartedRef.current = true;
+    handleAddCard();
+  }, [guideFirstCard, db, handleAddCard]);
 
   // ── Selection callbacks ────────────────────────────────────────────────
 
@@ -533,11 +563,15 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
         }}
       >
         <button
-          onClick={() => { hapticTap(); selectionMode ? exitSelection() : onBack(); }}
+          onClick={() => {
+            hapticTap();
+            if (selectionMode) exitSelection();
+            else onBack();
+          }}
           className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 text-sm"
-          aria-label="Back"
+          aria-label={selectionMode ? 'Cancel selection' : 'Back'}
         >
-          {selectionMode ? 'Cancel' : (
+          {selectionMode ? <UiIcon name="close" /> : (
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6" />
             </svg>
@@ -545,7 +579,6 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
         </button>
         {editingTitle && !selectionMode ? (
           <input
-            // eslint-disable-next-line jsx-a11y/no-autofocus
             autoFocus
             value={titleDraft}
             onChange={e => setTitleDraft(e.target.value)}
@@ -565,9 +598,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             onClick={() => { setTitleDraft(currentDeckName); setEditingTitle(true); }}
             className="flex-1 flex items-center gap-1.5 min-w-0 text-left"
           >
-            <span className="text-sm font-semibold truncate text-[#1c1c1e] dark:text-[#E5E5E5] border-b border-dashed border-[#C4C4C4]">
-              {currentDeckName}
-            </span>
+            <DeckName name={currentDeckName} className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]" />
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -605,7 +636,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search cards or tags…"
-          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
+          className="flex-1 px-3 py-1.5 text-sm bg-[#FFFFFF] dark:bg-[var(--kit-surface)] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5]"
         />
       </div>
 
@@ -661,7 +692,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           {!confirmDelete ? (
             <button
               onClick={() => { hapticAgain(); setConfirmDelete(true); }}
-              className="flex-1 py-2 text-sm font-semibold border border-red-500/40 rounded-lg text-red-500 active:bg-red-50 dark:active:bg-red-950 transition-colors"
+              className="flex-1 py-2 text-sm font-semibold rounded-lg text-red-500 active:bg-red-50 dark:active:bg-red-950 transition-colors"
             >
               Delete ({selectedCount})
             </button>
@@ -669,7 +700,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
             <div className="flex flex-1 gap-1">
               <button
                 onClick={() => setConfirmDelete(false)}
-                className="flex-1 py-2 text-sm border border-[#E5E5E5] dark:border-[#262626] rounded-lg text-[#C4C4C4]"
+                className="flex-1 py-2 text-sm rounded-lg text-[#C4C4C4]"
               >
                 Cancel
               </button>
@@ -677,7 +708,7 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
                 onClick={handleDeleteSelected}
                 className="flex-1 py-2 text-sm font-semibold bg-red-500 text-white rounded-lg active:opacity-80"
               >
-                Confirm
+                Delete
               </button>
             </div>
           )}
@@ -690,12 +721,23 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       >
         {filtered.length === 0 && (
-          <div className="px-4 py-12 text-center">
+          <div className="px-6 py-12 text-center flex flex-col items-center">
             <p className="text-sm text-[#C4C4C4]">
               {search.trim() || activeTagFilters.length > 0
                 ? 'No cards match your filters'
                 : 'No cards in this deck'}
             </p>
+            {!search.trim() && activeTagFilters.length === 0 && (
+              <>
+
+                <button
+                  onClick={handleAddCard}
+                  className="mt-5 px-5 py-3 rounded-xl bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-semibold active:opacity-80"
+                >
+                  Add card
+                </button>
+              </>
+            )}
           </div>
         )}
         {filtered.length > 0 && (
@@ -746,6 +788,8 @@ export default function Browse({ db, deckId, deckName, onBack, onSyncEdit }: Bro
           onSyncEdit={onSyncEdit}
         />
       )}
+
+      {showPracticePrompt && <div className="first-card-next" role="status"><span>Card saved</span><button type="button" onClick={() => { hapticTap(); setShowPracticePrompt(false); onStartStudy?.(); }}>Study <UiIcon name="arrow" /></button><button type="button" className="kit-icon-button" aria-label="Dismiss saved card message" onClick={() => setShowPracticePrompt(false)}><UiIcon name="close" /></button></div>}
     </div>
   );
 }

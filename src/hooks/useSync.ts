@@ -1,195 +1,133 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PluginListenerHandle } from '@capacitor/core';
 import {
-  startICloudWatching,
-  stopICloudWatching,
-  addICloudChangeListener,
+  startICloudWatching, stopICloudWatching, addICloudChangeListener,
 } from '../lib/platform/icloudSync';
-import type { ICloudFileChange } from '../lib/platform/icloudSync';
+import { deckIdsFromChanges } from '../lib/sync/fileChanges';
 import type { UseDeckManagerReturn } from './useDeckManager';
 
-/** Sync status for UI display. */
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
-/** How long the "synced" badge stays visible before reverting to idle. */
-const SYNCED_DISPLAY_MS = 3000;
-
-/** Minimum interval between sync attempts for the same deck (ms). */
-const SYNC_THROTTLE_MS = 2000;
-
+/** Sync activity counts completed deck checks, not bytes uploaded to Apple's servers. */
 export interface UseSyncReturn {
-  /** Current sync status for UI indicator. */
   status: SyncStatus;
-  /** Number of edits applied in the most recent sync. */
   lastSyncCount: number;
-  /** Human-readable error when status is 'error'. */
   syncError: string | null;
-  /** Timestamp (ms) of the last successful sync. */
   lastSyncedAt: number | null;
-  /** Manually trigger a sync for a specific deck. */
+  progress: { completed: number; total: number } | null;
   syncDeck: (deckId: string) => Promise<void>;
+  syncAll: () => Promise<void>;
 }
 
-/** Extract deck IDs from edit file paths. */
-function extractDeckIds(changes: ICloudFileChange[]): string[] {
-  const ids = new Set<string>();
-  for (const change of changes) {
-    // Edit files live at: {deckId}/edits/{hlc}.json
-    const match = change.path.match(/^([^/]+)\/edits\//);
-    if (match && (change.event === 'added' || change.event === 'changed')) {
-      ids.add(match[1]!);
-    }
-  }
-  return Array.from(ids);
-}
-
-/**
- * Hook that listens for iCloud file change events and auto-syncs affected decks.
- *
- * @param deckManager - The deck manager instance (null while loading).
- * @param activeDeckId - Currently open deck ID (if any) — prioritised for sync.
- * @returns Sync status and manual sync trigger.
- */
-export function useSync(
-  deckManager: UseDeckManagerReturn | null,
-  activeDeckId?: string,
-): UseSyncReturn {
+/** Replay remote edits and retry queued local work on reconnect and foreground. */
+export function useSync(deckManager: UseDeckManagerReturn | null, activeDeckId?: string): UseSyncReturn {
   const [status, setStatus] = useState<SyncStatus>('idle');
   const [lastSyncCount, setLastSyncCount] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  const managerRef = useRef(deckManager);
+  const activeRef = useRef(activeDeckId);
+  managerRef.current = deckManager;
+  activeRef.current = activeDeckId;
+  const allInFlight = useRef<Promise<void> | null>(null);
+  const decksInFlight = useRef(new Map<string, Promise<void>>());
+  const ready = deckManager !== null;
 
-  const listenerRef = useRef<PluginListenerHandle | null>(null);
-  const syncedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastSyncTimeRef = useRef<Map<string, number>>(new Map());
-
-  // Stable refs so the iCloud watcher effect doesn't tear down on every navigation
-  const deckManagerRef = useRef(deckManager);
-  deckManagerRef.current = deckManager;
-  const activeDeckIdRef = useRef(activeDeckId);
-  activeDeckIdRef.current = activeDeckId;
-
-  // ── Sync a single deck with throttling ────────────────────────────────
-  const syncDeck = useCallback(async (deckId: string) => {
-    const dm = deckManagerRef.current;
-    if (!dm) return;
-
-    const now = Date.now();
-    const lastSync = lastSyncTimeRef.current.get(deckId) ?? 0;
-    if (now - lastSync < SYNC_THROTTLE_MS) return;
-    lastSyncTimeRef.current.set(deckId, now);
-
-    setStatus('syncing');
-    try {
-      const count = await dm.sync(deckId);
-      setLastSyncCount(count);
-      setSyncError(null);
-      setLastSyncedAt(Date.now());
-
-      if (count > 0) {
-        dm.refreshCounts(deckId);
-        setStatus('synced');
-        if (syncedTimerRef.current) clearTimeout(syncedTimerRef.current);
-        syncedTimerRef.current = setTimeout(() => setStatus('idle'), SYNCED_DISPLAY_MS);
-      } else {
-        setStatus('idle');
+  const syncDeck = useCallback((deckId: string): Promise<void> => {
+    const existing = decksInFlight.current.get(deckId);
+    if (existing) return existing;
+    const manager = managerRef.current;
+    if (!manager || !navigator.onLine) return Promise.resolve();
+    const task = (async () => {
+      try {
+        const count = await manager.sync(deckId);
+        setLastSyncCount(count);
+        if (count > 0) manager.refreshCounts(deckId);
+      } finally {
+        decksInFlight.current.delete(deckId);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Sync failed';
-      setSyncError(message);
-      setStatus('error');
-    }
+    })();
+    decksInFlight.current.set(deckId, task);
+    return task;
   }, []);
 
-  // ── Handle incoming file change events ────────────────────────────────
-  const handleChanges = useCallback(
-    async (changes: ICloudFileChange[]) => {
-      const deckIds = extractDeckIds(changes);
-      if (deckIds.length === 0) return;
-
-      const active = activeDeckIdRef.current;
-
-      // Sync the active deck first (most visible to the user)
-      if (active && deckIds.includes(active)) {
-        await syncDeck(active);
+  const syncAll = useCallback((): Promise<void> => {
+    if (allInFlight.current) return allInFlight.current;
+    const manager = managerRef.current;
+    if (!manager || !navigator.onLine) return Promise.resolve();
+    const task = (async () => {
+      setStatus('syncing');
+      setSyncError(null);
+      try {
+        await manager.flushPending();
+        const ids = manager.deckEntries.map(entry => entry.deckId);
+        const active = activeRef.current;
+        if (active && ids.includes(active)) {
+          ids.splice(ids.indexOf(active), 1);
+          ids.unshift(active);
+        }
+        setProgress({ completed: 0, total: ids.length });
+        for (let index = 0; index < ids.length; index++) {
+          if (!navigator.onLine) break;
+          await syncDeck(ids[index]!);
+          setProgress({ completed: index + 1, total: ids.length });
+        }
+        if (navigator.onLine) {
+          // This is a local iCloud Drive check, not confirmation that another device received it.
+          setLastSyncedAt(Date.now());
+          setStatus('synced');
+        } else setStatus('idle');
+      } catch (cause) {
+        setSyncError(cause instanceof Error ? cause.message : 'Sync unavailable');
+        setStatus('error');
+      } finally {
+        setProgress(null);
+        allInFlight.current = null;
       }
+    })();
+    allInFlight.current = task;
+    return task;
+  }, [syncDeck]);
 
-      // Sync other changed decks in parallel
-      const others = deckIds.filter(id => id !== active);
-      if (others.length > 0) {
-        await Promise.all(others.map(id => syncDeck(id)));
-      }
-    },
-    [syncDeck],
-  );
-
-  // ── Start/stop watching on mount/unmount ──────────────────────────────
-  // Only depends on deckManager identity (not activeDeckId) to avoid
-  // tearing down the native NSMetadataQuery watcher on every navigation.
   useEffect(() => {
-    if (!deckManager) return;
-
+    if (!ready) return;
     let cancelled = false;
-
+    let removeListener: (() => Promise<void>) | undefined;
     const setup = async () => {
       try {
+        // Register before starting the native query so early changes aren't missed.
+        const listener = await addICloudChangeListener(changes => {
+          for (const id of deckIdsFromChanges(changes)) {
+            syncDeck(id).catch(() => setSyncError('Sync unavailable'));
+          }
+        });
+        if (cancelled) { await listener?.remove(); return; }
+        removeListener = listener ? () => listener.remove() : undefined;
         await startICloudWatching('');
-        if (cancelled) return;
-
-        const handle = await addICloudChangeListener(handleChanges);
-        if (cancelled) {
-          if (handle) handle.remove();
-          return;
-        }
-        listenerRef.current = handle;
       } catch {
-        setSyncError('iCloud unavailable');
-        setStatus('error');
+        if (!cancelled) setSyncError('iCloud unavailable');
       }
     };
-
-    setup();
-
+    void setup();
+    void syncAll();
+    const retry = () => { if (document.visibilityState === 'visible') void syncAll(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') retry();
+      else if (activeRef.current) managerRef.current?.compact(activeRef.current).catch(() => {});
+    };
+    window.addEventListener('online', retry);
+    document.addEventListener('visibilitychange', onVisibility);
+    // iCloud errors and connectivity events are not always delivered immediately.
+    const timer = setInterval(retry, 30000);
     return () => {
       cancelled = true;
-      if (listenerRef.current) {
-        listenerRef.current.remove();
-        listenerRef.current = null;
-      }
-      stopICloudWatching().catch(() => {});
-      if (syncedTimerRef.current) {
-        clearTimeout(syncedTimerRef.current);
-        syncedTimerRef.current = null;
-      }
+      clearInterval(timer);
+      window.removeEventListener('online', retry);
+      document.removeEventListener('visibilitychange', onVisibility);
+      void removeListener?.();
+      void stopICloudWatching().catch(() => {});
     };
-  }, [deckManager, handleChanges]);
+  }, [ready, syncAll, syncDeck]);
 
-  // ── Sync/save decks on visibility changes ──────────────────────────────
-  // On foreground: sync the active deck first, then catch-up sync all other
-  // known decks. This compensates for NSMetadataQuery events that may have
-  // been missed while the app was suspended. The per-deck throttle prevents
-  // redundant calls if the query already triggered a sync.
-  useEffect(() => {
-    if (!deckManager) return;
-
-    const handleVisibility = async () => {
-      if (document.visibilityState === 'visible') {
-        deckManager.flushPending().catch(() => {});
-        const active = activeDeckIdRef.current;
-        if (active) await syncDeck(active);
-        for (const entry of deckManagerRef.current?.deckEntries ?? []) {
-          if (entry.deckId !== active) syncDeck(entry.deckId);
-        }
-      } else if (activeDeckIdRef.current) {
-        // App going to background — snapshot current state locally so a
-        // force-kill doesn't lose the session's edits on next open.
-        deckManager.compact(activeDeckIdRef.current).catch(() => {});
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [deckManager, syncDeck]);
-
-  return { status, lastSyncCount, syncError, lastSyncedAt, syncDeck };
+  return { status, lastSyncCount, syncError, lastSyncedAt, progress, syncDeck, syncAll };
 }

@@ -155,6 +155,9 @@ export function renderImageOcclusion(
     /<button\b[^>]*onclick=["'][^"']*_masks[^"']*["'][^>]*>[\s\S]*?<\/button>/gi,
     '',
   );
+  // Current built-in Anki templates bind this button from their runtime.
+  // That runtime is replaced by our SVG renderer, so the button has no action.
+  result = result.replace(/<button\b[^>]*id=["']toggle["'][^>]*>[\s\S]*?<\/button>/gi, '');
   // Also strip the io-buttons container if it's now empty (or was button-only)
   result = result.replace(/<div\b[^>]*id=["']io-buttons["'][^>]*>\s*<\/div>/gi, '');
 

@@ -1,21 +1,14 @@
+import { UiIcon } from '../components/UiIcon';
+import type { DeckMenuItem } from '../types/deckMenu';
+import { DeckName } from '../components/DeckName';
+import { useMediaRepair } from '../hooks/useMediaRepair';
 /**
  * Home page — deck list with card counts and import button.
  *
- * Layout:
- *  ┌──────────────────────────┐
- *  │  [cat + KitLogo] [gear]  │
- *  │  ● New  ● Learning ● Due│
- *  ├──────────────────────────┤
- *  │  deck list               │
- *  │    deck name   N  L  R   │
- *  │    ┈┈┈┈┈🐱┈┈┈┈┈┈┈       │
- *  │    …                     │
- *  ├──────────────────────────┤
- *  │  [ Import Deck ]         │
- *  └──────────────────────────┘
+ * The inline connection row sits between the toolbar and deck list.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Deck } from '../types';
 import { useDeckImport } from '../hooks/useDeckImport';
@@ -31,22 +24,22 @@ import {
   searchDecksByTagLike,
   type DeckCardCounts,
 } from '../lib/db/queries';
-import { v4 as uuidv4 } from 'uuid';
 import { persistAndBackup } from '../hooks/useDatabase';
 import { deleteMediaForDeck } from '../lib/platform/mediaFiles';
 import { hapticTap, hapticNavigate, hapticAgain } from '../lib/platform/haptics';
 import { pickApkgFile, pickImageFile } from '../lib/platform/filePicker';
-import { PixelCat } from '../components/PixelCat';
 import { ThumbnailCropper } from '../components/ThumbnailCropper';
+import { CreateDeckDialog } from '../components/CreateDeckDialog';
 import { TabBar, TAB_BAR_TOTAL_HEIGHT } from '../components/TabBar';
-import { useDeviceInfo } from '../hooks/useDeviceInfo';
 import type { AppMode } from '../App';
+import { createEmptyDeckSnapshot } from '../lib/db/deckFactory';
 
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
 interface HomeProps {
+  connectionNotice: ReactNode;
   db: Database | null;
   dbLoading: boolean;
   dbError: string;
@@ -54,21 +47,13 @@ interface HomeProps {
   deckEntries?: import('../lib/sync/types').DeckRegistryEntry[];
   /** Deck manager for per-deck operations (new sync architecture). */
   deckManager?: import('../hooks/useDeckManager').UseDeckManagerReturn;
-  /** iCloud sync status indicator. */
-  syncStatus?: import('../hooks/useSync').SyncStatus;
-  /** Human-readable sync error message. */
-  syncError?: string | null;
-  /** Timestamp (ms) of last successful sync. */
-  lastSyncedAt?: number | null;
-  /** Whether iCloud is reachable on this device. */
-  icloudAvailability: import('../hooks/useICloudAvailability').ICloudAvailability;
   /** Current app mode (learn vs review). */
   mode: AppMode;
   /** Called when user switches tabs. */
   onModeChange: (mode: AppMode) => void;
   onStudy: (deckId: string, deckName: string) => void;
   onReviewStudy: (deckId: string, deckName: string) => void;
-  onBrowse: (deckId: string, deckName: string) => void;
+  onBrowse: (deckId: string, deckName: string, guideFirstCard?: boolean) => void;
   onStats: (deckId: string, deckName: string) => void;
   onSettings: (scrollTo?: string) => void;
   onTags: () => void;
@@ -116,32 +101,37 @@ function PlusIcon() {
 
 
 const IMPORT_LABELS: Record<string, string> = {
-  parsing: 'Parsing .apkg file…',
-  'storing-cards': 'Storing cards — this may take a moment for large decks…',
-  'storing-media': 'Storing media files…',
+  parsing: 'Opening deck…',
+  'storing-cards': 'Saving cards…',
+  'storing-media': 'Saving pictures & audio…',
 };
 
 
 /** Action menu for a deck row — "..." button that opens a dropdown. */
 function DeckActionMenu({
-  onBrowse,
   onStats,
+  onRename,
+  onSettings,
   onExportFresh,
   onExportWithProgress,
   onSetThumbnail,
+  onRestoreMedia,
   onDelete,
   exporting,
 }: {
-  onBrowse: () => void;
   onStats: () => void;
+  onRename: () => void;
+  onSettings: () => void;
   onExportFresh: () => void;
   onExportWithProgress: () => void;
   onSetThumbnail: () => void;
+  onRestoreMedia: () => void;
   onDelete: () => void;
   exporting: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [expandUp, setExpandUp] = useState(false);
+  const [stage, setStage] = useState<'main' | 'edit' | 'share'>('main');
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const toggle = () => {
@@ -150,22 +140,30 @@ function DeckActionMenu({
       setExpandUp(rect.top > window.innerHeight / 2);
     }
     hapticTap();
+    setStage('main');
     setOpen(v => !v);
   };
-  const close = () => setOpen(false);
+  const close = () => { setOpen(false); triggerRef.current?.focus(); };
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); } };
+    window.addEventListener('keydown', dismiss);
+    return () => window.removeEventListener('keydown', dismiss);
+  }, [open]);
 
-  const items: { label: string; icon: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean }[] = [
-    { label: 'Cards', onClick: onBrowse, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" /><line x1="7" y1="10" x2="17" y2="10" /><line x1="7" y1="14" x2="13" y2="14" /></svg> },
+  const items: DeckMenuItem[] = [
     { label: 'Statistics', onClick: onStats, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg> },
-    { label: 'Set Thumbnail', onClick: onSetThumbnail, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg> },
+    { label: 'Rename', onClick: onRename, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" /></svg> },
+    { label: 'Deck options', onClick: onSettings, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></svg> },
+    { label: 'Cover', onClick: onSetThumbnail, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg> },
     { label: exporting ? 'Exporting…' : 'Share', onClick: onExportFresh, disabled: exporting, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></svg> },
     { label: exporting ? 'Exporting…' : 'Export with progress', onClick: onExportWithProgress, disabled: exporting, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg> },
-    { label: 'Delete Deck', onClick: onDelete, danger: true, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg> },
+    { label: 'Delete', onClick: onDelete, danger: true, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></svg> },
   ];
 
-  // Reverse item order when expanding upward so the closest items appear first
-  const ordered = expandUp ? [...items].reverse() : items;
-  const animClass = expandUp ? 'fab-item-enter' : 'fab-item-enter-down';
+  const ordered: DeckMenuItem[] = stage === 'edit' ? [items[1]!, items[3]!, { label:'Restore pictures & audio…', icon:items[3]!.icon, onClick:onRestoreMedia }]
+    : stage === 'share' ? [{ ...items[4]!, label:exporting ? 'Exporting…' : 'Cards only' }, { ...items[5]!, label:exporting ? 'Exporting…' : 'With study progress' }]
+    : [{ label:'Deck details', icon:items[1]!.icon, onClick:() => setStage('edit'), next:true }, items[0]!, { ...items[2]!, label:'Study settings' }, { label:'Share', icon:items[4]!.icon, onClick:() => setStage('share'), next:true }, items[6]!];
 
   return (
     <div className="shrink-0">
@@ -174,6 +172,8 @@ function DeckActionMenu({
         onClick={toggle}
         className="w-10 h-10 flex items-center justify-center text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
         aria-label="Deck actions"
+        aria-expanded={open}
+        aria-haspopup="menu"
       >
         {open ? (
           <svg
@@ -195,7 +195,7 @@ function DeckActionMenu({
             onClick={close}
           />
           <div
-            className="fixed z-50 flex flex-col items-end gap-2"
+            className="deck-action-menu fixed z-50" role="menu" aria-label={stage === 'main' ? 'Deck actions' : stage === 'edit' ? 'Deck details' : 'Share deck'}
             style={{
               right: 'max(1rem, env(safe-area-inset-right))',
               ...(expandUp
@@ -203,20 +203,17 @@ function DeckActionMenu({
                 : { top: `${(triggerRef.current?.getBoundingClientRect().bottom ?? 0) + 4}px` }),
             }}
           >
-            {ordered.map((item, i) => (
+            {stage !== 'main' && <button type="button" role="menuitem" className="deck-menu-back" onClick={() => { hapticTap(); setStage('main'); }}>‹ <span>{stage === 'edit' ? 'Deck details' : 'Share deck'}</span></button>}
+            {ordered.map(item => (
               <button
                 key={item.label}
-                onClick={() => { close(); hapticNavigate(); item.onClick(); }}
+                role="menuitem"
+                onClick={() => { if (!item.next) close(); hapticNavigate(); item.onClick(); }}
                 disabled={item.disabled}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-medium shadow-lg active:opacity-80 transition-opacity disabled:opacity-40 ${animClass} ${
-                  item.danger
-                    ? 'bg-red-500/90 text-white border border-red-400/30'
-                    : 'text-[var(--kit-pill-text)] pill-border'
-                }`}
-                style={{ animationDelay: `${i * 0.03}s` }}
+                className={`deck-menu-item ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-[var(--kit-pill-text)] active:bg-black/5 dark:active:bg-white/10'}`}
               >
                 {item.icon}
-                {item.label}
+                <span>{item.label}</span>{item.next && <span className="deck-menu-chevron" aria-hidden="true">›</span>}
               </button>
             ))}
           </div>
@@ -237,9 +234,12 @@ function DeckRow({
   onTap,
   onBrowse,
   onStats,
+  onRename,
+  onSettings,
   onExportFresh,
   onExportWithProgress,
   onSetThumbnail,
+  onRestoreMedia,
   onDelete,
   exporting,
 }: {
@@ -254,9 +254,12 @@ function DeckRow({
   onTap: () => void;
   onBrowse: () => void;
   onStats: () => void;
+  onRename: () => void;
+  onSettings: () => void;
   onExportFresh: () => void;
   onExportWithProgress: () => void;
   onSetThumbnail: () => void;
+  onRestoreMedia: () => void;
   onDelete: () => void;
   exporting: boolean;
 }) {
@@ -283,21 +286,16 @@ function DeckRow({
             />
           )}
           <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-            <span
-              className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] truncate"
-              style={{ fontFamily: "-apple-system, 'Apple Color Emoji', 'Segoe UI Emoji', system-ui, sans-serif" }}
-            >
-              {deck.name}
-            </span>
+            <DeckName name={deck.name} className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]" />
             <span className="text-xs text-[#C4C4C4]">
               {matchedTag ? `Contains: ${matchedTag}` : `${totalCount} ${totalCount === 1 ? 'card' : 'cards'}`}
             </span>
           </div>
           {mode === 'learn' && totalCount > 0 && (
             <div className="flex gap-2 ml-4 shrink-0 text-sm font-semibold tabular-nums">
-              <span className="text-blue-500">{newCount}</span>
-              <span className="text-red-500">{learningCount}</span>
-              <span className="text-green-500">{reviewCount}</span>
+              <span className="kit-count--new">{newCount}</span>
+              <span className="kit-count--learning">{learningCount}</span>
+              <span className="kit-count--review">{reviewCount}</span>
             </div>
           )}
           {mode === 'review' && totalCount > 0 && (
@@ -306,12 +304,17 @@ function DeckRow({
             </span>
           )}
         </button>
+        <button type="button" onClick={() => { hapticTap(); onBrowse(); }} className="kit-icon-button shrink-0 text-[#777] dark:text-[#aaa]" aria-label={`Edit cards in ${deck.name}`}>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z" /></svg>
+        </button>
         <DeckActionMenu
-          onBrowse={onBrowse}
           onStats={onStats}
+          onRename={onRename}
+          onSettings={onSettings}
           onExportFresh={onExportFresh}
           onExportWithProgress={onExportWithProgress}
           onSetThumbnail={onSetThumbnail}
+          onRestoreMedia={onRestoreMedia}
           onDelete={onDelete}
           exporting={exporting}
         />
@@ -374,7 +377,7 @@ function PlusMenu({
           >
             <button
               onClick={() => { close(); hapticNavigate(); onCreateDeck(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter-down"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter-down"
               style={{ animationDelay: '0s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -385,7 +388,7 @@ function PlusMenu({
             </button>
             <button
               onClick={() => { close(); hapticNavigate(); onImportDeck(); }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity pill-border fab-item-enter-down"
+              className="flex items-center gap-2 px-4 py-2.5 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter-down"
               style={{ animationDelay: '0.03s' }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -416,72 +419,6 @@ function ImportProgress({ phase }: { phase: ImportPhase }) {
   );
 }
 
-/** Format a timestamp as a human-readable relative time string. */
-function formatTimeAgo(ms: number): string {
-  const seconds = Math.floor((Date.now() - ms) / 1000);
-  if (seconds < 5) return 'just now';
-  if (seconds < 60) return `${seconds}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-/** Persistent sync status chip in the Home header. Always-visible, tap to open Settings. */
-function SyncChip({
-  icloudAvailability,
-  syncStatus,
-  syncError,
-  lastSyncedAt,
-  deviceName,
-  onOpenSync,
-}: {
-  icloudAvailability: import('../hooks/useICloudAvailability').ICloudAvailability;
-  syncStatus: import('../hooks/useSync').SyncStatus | undefined;
-  syncError: string | null;
-  lastSyncedAt: number | null;
-  deviceName: string;
-  onOpenSync: () => void;
-}) {
-  // Derive a single visual state from availability + sync status.
-  let dotClass = 'bg-[#C4C4C4]';
-  let label = `Saved on ${deviceName.toLowerCase()}`;
-
-  if (icloudAvailability === 'checking') {
-    dotClass = 'bg-[#C4C4C4]';
-    label = 'Checking iCloud…';
-  } else if (icloudAvailability === 'unavailable') {
-    dotClass = 'bg-[#C4C4C4]';
-    label = `Saved on ${deviceName.toLowerCase()}`;
-  } else if (syncStatus === 'syncing') {
-    dotClass = 'bg-blue-400 animate-pulse';
-    label = 'Syncing…';
-  } else if (syncStatus === 'error') {
-    dotClass = 'bg-amber-400';
-    label = syncError === 'iCloud unavailable' ? `Saved on ${deviceName.toLowerCase()}` : 'Sync issue';
-  } else if (lastSyncedAt) {
-    dotClass = 'bg-green-400';
-    label = `Synced ${formatTimeAgo(lastSyncedAt)}`;
-  } else {
-    // Available but nothing synced yet this session.
-    dotClass = 'bg-green-400';
-    label = 'iCloud ready';
-  }
-
-  return (
-    <button
-      onClick={onOpenSync}
-      className="flex items-center gap-1.5 px-2 py-1 rounded-full active:opacity-70 transition-opacity"
-      aria-label={`Sync status: ${label}. Tap for details.`}
-    >
-      <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
-      <span className="text-[11px] text-[#C4C4C4] whitespace-nowrap">{label}</span>
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -493,15 +430,17 @@ function SyncChip({
  * @param dbError   - Non-empty string if DB init failed.
  * @param onStudy   - Called when the user taps a deck to study.
  */
-export default function Home({ db, dbLoading, dbError, deckEntries, deckManager, syncStatus, syncError, lastSyncedAt, icloudAvailability, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags, pendingFile, onPendingFileConsumed }: HomeProps) {
+export default function Home({ connectionNotice, db, dbLoading, dbError, deckEntries, deckManager, mode, onModeChange, onStudy, onReviewStudy, onBrowse, onStats, onSettings, onTags, onDeckSettings, pendingFile, onPendingFileConsumed }: HomeProps) {
   /** True when using the new per-deck architecture. */
   const useNewArch = !!(deckEntries && deckManager);
 
-  const [decks, setDecks] = useState<Deck[] | null>(null);
-  const [counts, setCounts] = useState<Record<string, DeckCardCounts>>({});
-  const [catBouncing, setCatBouncing] = useState(false);
-
-  const { deviceName } = useDeviceInfo();
+  const [decks, setDecks] = useState<Deck[] | null>(() => deckEntries ? deckEntries.map(e => ({
+    id: e.deckId, name: e.name || 'Untitled', description: '', createdAt: 0, updatedAt: e.lastAccessedAt,
+  })) : null);
+  const [counts, setCounts] = useState<Record<string, DeckCardCounts>>(() => Object.fromEntries(
+    (deckEntries ?? []).map(e => [e.deckId, { deckId: e.deckId, newCount: e.newCount ?? 0,
+      learningCount: e.learningCount ?? 0, reviewCount: e.reviewCount ?? 0, totalCount: e.cardCount }]),
+  ));
 
   // Swipe-to-switch-tabs state
   const swipeRef = useRef({ startX: 0, startY: 0, decided: false, isHorizontal: false });
@@ -700,7 +639,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     refreshDecks();
   }, [refreshDecks]);
 
-  const { phase: importPhase, errorMessage: importError, importInfo, conflictInfo, importFile, resolveConflict, reset: resetImport } =
+  const { phase: importPhase, errorMessage: importError, conflictInfo, importFile, resolveConflict, reset: resetImport } =
     useDeckImport(db, onImportComplete, deckManager);
 
   // ── Export hook ──────────────────────────────────────────────────────
@@ -708,6 +647,8 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   // deck's own db on demand — there's no longer a monolithic db to share.
   const { phase: exportPhase, errorMessage: exportError, exportDeckFresh, exportDeckWithProgress, reset: resetExport } =
     useExport(useNewArch ? deckManager : db);
+
+  const mediaRepair = useMediaRepair(db, useNewArch ? deckManager : undefined);
 
   const isExporting = exportPhase === 'exporting';
 
@@ -718,7 +659,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   useEffect(() => {
     if (importPhase === 'done') {
       if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current);
-      setImportToast({ type: 'success', message: `Deck imported successfully!${importInfo ? ` (${importInfo})` : ''}` });
+      setImportToast({ type: 'success', message: 'Imported' });
       importToastTimerRef.current = setTimeout(() => {
         setImportToast(null);
         resetImport();
@@ -727,7 +668,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current);
       setImportToast({ type: 'error', message: importError });
     }
-  }, [importPhase, importInfo, importError, resetImport]);
+  }, [importPhase, importError, resetImport]);
 
   useEffect(() => {
     return () => { if (importToastTimerRef.current) clearTimeout(importToastTimerRef.current); };
@@ -761,53 +702,39 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   );
 
   // ── Create deck handler ────────────────────────────────────────────
-  const handleCreateDeck = useCallback(async () => {
-    const now = Math.floor(Date.now() / 1000);
-    const deck = { id: uuidv4(), name: 'New Deck', description: '', createdAt: now, updatedAt: now };
+  const [showCreateDeck, setShowCreateDeck] = useState(false);
+  const [creatingDeck, setCreatingDeck] = useState(false);
+  const [createDeckError, setCreateDeckError] = useState<string | null>(null);
 
-    if (useNewArch) {
-      const snapshot: import('../lib/sync/types').DeckSnapshot = {
-        v: 1,
-        deckId: deck.id,
-        compactedThrough: '',
-        mergedEditFiles: [],
-        deck,
-        settings: {
-          deckId: deck.id,
-          newCardsPerDay: 20,
-          maxReviewsPerDay: 200,
-          againSteps: [1, 10],
-          graduatingInterval: 1,
-          easyInterval: 4,
-          maxInterval: 36500,
-          leechThreshold: 8,
-          desiredRetention: 0.9,
-        },
-        noteTypes: [],
-        notes: [],
-        cards: [],
-        cardStates: [],
-        reviewLogs: [],
-        tags: [],
-        deckTags: [],
-        deletedCardIds: [],
-      };
-      const newDb = await deckManager.createFromSnapshot(snapshot);
-      if (newDb) {
+  const handleCreateDeck = useCallback(async (name: string) => {
+    setCreatingDeck(true);
+    setCreateDeckError(null);
+    const snapshot = createEmptyDeckSnapshot(name);
+    const deck = snapshot.deck;
+
+    try {
+      if (useNewArch) {
+        const newDb = await deckManager.createFromSnapshot(snapshot);
+        if (!newDb) throw new Error('Kit could not create that deck.');
         await deckManager.saveRegistry();
         await deckManager.refreshDecks();
         hapticTap();
-        onBrowse(deck.id, deck.name);
+        setShowCreateDeck(false);
+        onBrowse(deck.id, deck.name, true);
+        return;
       }
-      return;
-    }
-    if (!db) return;
-    const result = insertDeck(db, deck);
-    if (result.success) {
+      if (!db) throw new Error('Database not ready.');
+      const result = insertDeck(db, deck);
+      if (!result.success) throw new Error(result.error);
       persistAndBackup();
       refreshDecks();
       hapticTap();
-      onBrowse(deck.id, deck.name);
+      setShowCreateDeck(false);
+      onBrowse(deck.id, deck.name, true);
+    } catch (cause) {
+      setCreateDeckError(cause instanceof Error ? cause.message : 'Could not create that deck.');
+    } finally {
+      setCreatingDeck(false);
     }
   }, [useNewArch, deckManager, db, refreshDecks, onBrowse]);
 
@@ -846,18 +773,12 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     const retryDb = await deckManager.openDeckDb(recoveringDeck.id);
     if (retryDb) {
       setRecoveringDeck(null);
-      mode === 'review' ? onReviewStudy(recoveringDeck.id, recoveringDeck.name) : onStudy(recoveringDeck.id, recoveringDeck.name);
+      if (mode === 'review') onReviewStudy(recoveringDeck.id, recoveringDeck.name);
+      else onStudy(recoveringDeck.id, recoveringDeck.name);
     }
     // If it still failed, leave the sheet open so the user can try again
     // or choose to remove the local copy.
   }, [recoveringDeck, deckManager, mode, onReviewStudy, onStudy]);
-
-  const handleRemoveLocal = useCallback(async () => {
-    if (!recoveringDeck || !deckManager) return;
-    hapticTap();
-    await deckManager.removeDeckLocal(recoveringDeck.id);
-    setRecoveringDeck(null);
-  }, [recoveringDeck, deckManager]);
 
   const handleDeleteRequest = useCallback((deckId: string, deckName: string) => {
     hapticAgain();
@@ -926,12 +847,6 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
     setCropDeckId(null);
   }, []);
 
-  // ── Cat bounce ────────────────────────────────────────────────────────
-  const handleCatTap = useCallback(() => {
-    hapticTap();
-    setCatBouncing(true);
-  }, []);
-
   // ── Importing state ───────────────────────────────────────────────────
   const isImporting =
     importPhase === 'parsing' ||
@@ -945,7 +860,6 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   if ((dbLoading || decks === null) && !dbError) {
     return (
       <div className="min-h-[100dvh] bg-[var(--kit-bg)] flex flex-col items-center justify-center gap-3">
-        <PixelCat size={28} />
         <p className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">
           Kit
         </p>
@@ -957,7 +871,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
   }
 
   return (
-    <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col page-enter">
+    <div className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex flex-col">
       {/* Header */}
       <header
         className="flex items-center justify-between pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -968,27 +882,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
         }}
       >
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleCatTap}
-            className="p-0.5"
-            aria-label="Kit mascot"
-          >
-            <div
-              className={catBouncing ? 'cat-bounce' : ''}
-              onAnimationEnd={() => setCatBouncing(false)}
-            >
-              <PixelCat size={16} />
-            </div>
-          </button>
-          <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">Kit</span>
-          <SyncChip
-            icloudAvailability={icloudAvailability}
-            syncStatus={syncStatus}
-            syncError={syncError ?? null}
-            lastSyncedAt={lastSyncedAt ?? null}
-            deviceName={deviceName}
-            onOpenSync={() => { hapticTap(); onSettings('icloud-sync'); }}
-          />
+          <span className="text-xs font-semibold tracking-widest text-[#1c1c1e] dark:text-[#E5E5E5] uppercase">KIT</span>
         </div>
         <div className="flex items-center gap-0.5">
           <button
@@ -1005,12 +899,18 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
             {searchOpen ? <XMarkIcon /> : <MagnifyingGlassIcon />}
           </button>
           <PlusMenu
-            onCreateDeck={() => { hapticTap(); handleCreateDeck(); }}
+            onCreateDeck={() => {
+              hapticTap();
+              setCreateDeckError(null);
+              setShowCreateDeck(true);
+            }}
             onImportDeck={openFilePicker}
             disabled={dbLoading || !!dbError}
           />
         </div>
       </header>
+
+      {connectionNotice}
 
       {/* Search / sort bar — expands below header */}
       {searchOpen && (
@@ -1064,12 +964,23 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
           <>
             {decks!.length === 0 && importPhase === 'idle' && !searchQuery && (
               <div className="px-4 py-12 text-center flex flex-col items-center gap-4">
-                <PixelCat size={80} className="opacity-30" />
-                <div>
-                  <p className="text-sm text-[#C4C4C4]">No decks yet</p>
-                  <p className="text-xs text-[#C4C4C4] mt-1">
-                    Tap + to import an Anki .apkg file or create a deck
-                  </p>
+                <div className="w-full max-w-xs flex flex-col gap-2">
+                  <button
+                    onClick={() => {
+                      hapticTap();
+                      setCreateDeckError(null);
+                      setShowCreateDeck(true);
+                    }}
+                    className="w-full py-3 rounded-xl bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] text-sm font-semibold active:opacity-80"
+                  >
+                    Create a deck
+                  </button>
+                  <button
+                    onClick={() => { void openFilePicker(); }}
+                    className="w-full py-3 rounded-xl bg-[var(--kit-surface)] text-sm font-medium active:opacity-70"
+                  >
+                    Import an Anki deck
+                  </button>
                 </div>
               </div>
             )}
@@ -1095,14 +1006,26 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                       setRecoveringDeck({ id: deck.id, name: deck.name });
                     } else {
                       hapticNavigate();
-                      mode === 'review' ? onReviewStudy(deck.id, deck.name) : onStudy(deck.id, deck.name);
+                      if ((counts[deck.id]?.totalCount ?? 0) === 0) {
+                        onBrowse(deck.id, deck.name, true);
+                      } else if (mode === 'review') {
+                        onReviewStudy(deck.id, deck.name);
+                      } else {
+                        onStudy(deck.id, deck.name);
+                      }
                     }
                   }}
                   onBrowse={() => { hapticNavigate(); onBrowse(deck.id, deck.name); }}
                   onStats={() => { hapticNavigate(); onStats(deck.id, deck.name); }}
+                  onRename={() => {
+                    setRenameDraft(deck.name);
+                    setRenamingDeck({ id: deck.id, name: deck.name });
+                  }}
+                  onSettings={() => { hapticNavigate(); onDeckSettings?.(deck.id, deck.name); }}
                   onExportFresh={() => { hapticTap(); exportDeckFresh(deck.id, deck.name); }}
                   onExportWithProgress={() => { hapticTap(); exportDeckWithProgress(deck.id, deck.name); }}
                   onSetThumbnail={() => handleSetThumbnail(deck.id)}
+                  onRestoreMedia={() => { void mediaRepair.restore(deck.id); }}
                   onDelete={() => handleDeleteRequest(deck.id, deck.name)}
                   exporting={isExporting}
                 />
@@ -1116,6 +1039,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       {isImporting && <ImportProgress phase={importPhase} />}
 
       {/* Import toast — fixed at top of screen */}
+      {mediaRepair.message && <div className="media-repair-status" role="status"><span>{mediaRepair.message}</span>{!mediaRepair.busy && <button type="button" aria-label="Dismiss media restoration message" onClick={mediaRepair.dismiss}>×</button>}</div>}
       {importToast && (
         <div
           className="fixed left-4 right-4 z-[100] toast-enter"
@@ -1143,14 +1067,14 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       )}
       {exportPhase === 'done' && (
         <div className="px-4 py-3 flex items-center justify-between">
-          <p className="text-sm text-green-600 dark:text-green-400">Deck exported!</p>
-          <button onClick={resetExport} className="text-xs text-[#C4C4C4] underline">Dismiss</button>
+          <p className="text-sm text-green-600 dark:text-green-400">Exported</p>
+          <button onClick={resetExport} className="kit-icon-button text-[#999]" aria-label="Dismiss export status"><UiIcon name="close" /></button>
         </div>
       )}
       {exportPhase === 'error' && exportError && (
         <div className="px-4 py-3 flex flex-col gap-2">
           <p className="text-sm text-red-500">{exportError}</p>
-          <button onClick={resetExport} className="text-xs text-[#C4C4C4] underline self-start">Dismiss</button>
+          <button onClick={resetExport} className="kit-icon-button text-[#999] self-end" aria-label="Dismiss export error"><UiIcon name="close" /></button>
         </div>
       )}
 
@@ -1163,21 +1087,22 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 Deck already exists
               </p>
               <p className="text-sm text-[#C4C4C4] mt-2">
-                A deck named <span className="font-medium text-[#1c1c1e] dark:text-[#E5E5E5]">"{conflictInfo.deckName}"</span> already exists. What would you like to do?
+                <span className="font-medium text-[#1c1c1e] dark:text-[#E5E5E5]">"{conflictInfo.deckName}"</span> is already in your library.
               </p>
             </div>
             <div className="flex flex-col border-t border-[#E5E5E5] dark:border-[#333]">
-              <button
+              {conflictInfo.canReplace && (              <button
                 onClick={() => { hapticTap(); resolveConflict('replace'); }}
                 className="py-3.5 text-sm font-medium text-red-500 active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
               >
                 Replace existing deck
-              </button>
+                <span className="block mt-1 text-xs font-normal">Replaces its cards and study history.</span>
+              </button>)}
               <button
                 onClick={() => { hapticTap(); resolveConflict('new'); }}
                 className="py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
               >
-                Import as new deck
+                {conflictInfo.canReplace ? 'Keep both decks' : 'Import copies'}
               </button>
               <button
                 onClick={() => { hapticTap(); resetImport(); }}
@@ -1191,6 +1116,19 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
       )}
 
       {/* Delete confirmation dialog */}
+      {showCreateDeck && (
+        <CreateDeckDialog
+          creating={creatingDeck}
+          error={createDeckError}
+          onCreate={name => { void handleCreateDeck(name); }}
+          onCancel={() => {
+            if (creatingDeck) return;
+            setShowCreateDeck(false);
+            setCreateDeckError(null);
+          }}
+        />
+      )}
+
       {deletingDeck && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-8">
           <div className="bg-[#FDFBF7] dark:bg-[#1A1A1A] rounded-2xl w-full max-w-sm overflow-hidden">
@@ -1234,7 +1172,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 value={renameDraft}
                 onChange={(e) => setRenameDraft(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleRenameConfirm(); }}
-                className="w-full px-3 py-2.5 text-sm bg-[#F0F0F0] dark:bg-[#262626] border border-[#D4D4D4] dark:border-[#404040] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
+                className="w-full px-3 py-2.5 text-sm bg-[#F0F0F0] dark:bg-[#262626] rounded-lg text-[#1c1c1e] dark:text-[#E5E5E5] outline-none"
               />
             </div>
             <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
@@ -1269,7 +1207,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
                 This deck didn't load
               </p>
               <p className="text-sm text-[#C4C4C4] mt-2">
-                Your cards and progress are safely stored on iCloud. This copy on your device is having trouble.
+                Kit couldn’t open this deck. Try again; your local files have been kept.
               </p>
             </div>
             <div className="flex flex-col border-t border-[#E5E5E5] dark:border-[#333]">
@@ -1279,12 +1217,7 @@ export default function Home({ db, dbLoading, dbError, deckEntries, deckManager,
               >
                 Try Again
               </button>
-              <button
-                onClick={handleRemoveLocal}
-                className="py-3.5 text-sm text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-b border-[#E5E5E5] dark:border-[#333]"
-              >
-                Remove from this device
-              </button>
+
               <button
                 onClick={() => setRecoveringDeck(null)}
                 className="py-3.5 text-sm text-[#C4C4C4] active:bg-[#F0F0F0] dark:active:bg-[#262626]"

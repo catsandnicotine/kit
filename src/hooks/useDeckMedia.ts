@@ -10,12 +10,15 @@
  *     to free the underlying memory.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import { getMediaFilenames, getMediaBlobByFilename } from '../lib/db/queries';
 import { rewriteMediaUrls } from '../lib/media';
-import { listMediaFilenames, getMediaDirUri, mediaUriToWebUrl } from '../lib/platform/mediaFiles';
+import { listMediaFilenames, getMediaDirUri, mediaUriToWebUrl, getMediaFileWebUrl } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
+import { refreshBuiltInKitArtwork } from '../lib/kitCat';
+import { WELCOME_DECK_ID } from '../lib/db/welcomeDeck';
+import { getBundledPaintingFiles, getBundledPaintingUrl } from '../lib/jesusPaintingAssets';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -77,7 +80,7 @@ export function useDeckMedia(
     knownFilesRef.current = new Set();
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // Revoke previous deck's URLs before loading new ones.
     revokeAll();
     setLoading(true);
@@ -95,6 +98,10 @@ export function useDeckMedia(
         ]);
         if (cancelled) return;
         knownFilesRef.current = new Set(filenames);
+        if (db) {
+          const legacy = getMediaFilenames(db);
+          if (legacy.success) for (const filename of legacy.data) knownFilesRef.current.add(filename);
+        }
         if (dirUri) {
           for (const filename of filenames) {
             urlCacheRef.current.set(filename, mediaUriToWebUrl(dirUri, filename));
@@ -103,12 +110,22 @@ export function useDeckMedia(
         setLoading(false);
       })();
     } else {
-      // Browser dev mode: use DB blobs as before.
-      if (db) {
-        const result = getMediaFilenames(db);
-        if (result.success) knownFilesRef.current = result.data;
-      }
-      setLoading(false);
+      (async () => {
+        const filenames = await listMediaFilenames(deckId);
+        const entries = await Promise.all(filenames.map(async filename => [filename, await getMediaFileWebUrl(deckId, filename)] as const));
+        if (cancelled) {
+          for (const [, url] of entries) if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+          return;
+        }
+        knownFilesRef.current = new Set(filenames);
+        for (const [filename, url] of entries) if (url) urlCacheRef.current.set(filename, url);
+        // Retain legacy DB media as a fallback for decks imported before file storage.
+        if (db) {
+          const result = getMediaFilenames(db);
+          if (result.success) for (const filename of result.data) knownFilesRef.current.add(filename);
+        }
+        setLoading(false);
+      })();
     }
 
     // Revoke on unmount or before next effect run.
@@ -128,14 +145,14 @@ export function useDeckMedia(
     if (cached) return cached;
 
     // Not a known media file?
-    if (!knownFilesRef.current.has(filename)) return undefined;
+    if (!knownFilesRef.current.has(filename)) return getBundledPaintingUrl(deckId, filename);
 
     // Fetch blob from DB on demand
     const db = dbRef.current;
     if (!db) return undefined;
 
     const result = getMediaBlobByFilename(db, filename);
-    if (!result.success || !result.data) return undefined;
+    if (!result.success || !result.data) return getBundledPaintingUrl(deckId, filename);
 
     const blob = result.data;
     const buffer = blob.data.buffer.slice(
@@ -147,7 +164,7 @@ export function useDeckMedia(
     );
     urlCacheRef.current.set(filename, objectUrl);
     return objectUrl;
-  }, []);
+  }, [deckId]);
 
   const addMediaFile = useCallback((filename: string, url: string) => {
     knownFilesRef.current.add(filename);
@@ -158,7 +175,7 @@ export function useDeckMedia(
     (html: string): string => {
       // Build a lazy proxy map that resolves URLs on demand
       const proxyMap: ReadonlyMap<string, string> = {
-        get size() { return knownFilesRef.current.size; },
+        get size() { return knownFilesRef.current.size + getBundledPaintingFiles(deckId).length; },
         get(key: string) { return resolveUrl(key); },
         has(key: string) { return knownFilesRef.current.has(key); },
         forEach() { /* not used by rewriteMediaUrls */ },
@@ -167,9 +184,10 @@ export function useDeckMedia(
         values() { return (new Map<string, string>()).values(); },
         [Symbol.iterator]() { return (new Map<string, string>())[Symbol.iterator](); },
       };
-      return rewriteMediaUrls(html, proxyMap);
+      const content = deckId === WELCOME_DECK_ID ? refreshBuiltInKitArtwork(html) : html;
+      return loading ? content : rewriteMediaUrls(content, proxyMap);
     },
-    [resolveUrl],
+    [resolveUrl, deckId, loading],
   );
 
   return { rewriteHtml, loading, addMediaFile };

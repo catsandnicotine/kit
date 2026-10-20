@@ -1,3 +1,4 @@
+import { DeckName } from '../components/DeckName';
 /**
  * DeckStats page — retention rate, reviews, streak, bar chart.
  *
@@ -40,7 +41,7 @@ interface DeckStatsProps {
 /** A single stat card. */
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col items-center gap-1 p-3 bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg">
+    <div className="flex flex-col items-center gap-1 p-3 bg-[var(--kit-surface)] rounded-lg">
       <span className="text-lg font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] tabular-nums">
         {value}
       </span>
@@ -123,7 +124,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
           }}
         >
           <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
-          <span className="text-sm font-semibold truncate">{deckName}</span>
+          <DeckName name={deckName} className="text-sm font-semibold" />
         </header>
         <div className="flex items-center justify-center py-12">
           <p className="text-sm text-[#C4C4C4]">Loading…</p>
@@ -144,7 +145,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
         }}
       >
         <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
-        <span className="text-sm font-semibold truncate">{deckName}</span>
+        <DeckName name={deckName} className="text-sm font-semibold" />
       </header>
 
       {/* Scrollable content with safe area */}
@@ -160,11 +161,11 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
       <section className="px-4 py-4">
         <div className="grid grid-cols-2 gap-3">
           <StatCard
-            label="Retention"
+            label="Recall rate"
             value={stats.totalReviews > 0 ? `${stats.retentionRate}%` : '—'}
           />
           <StatCard
-            label="Total Reviews"
+            label="Study ratings"
             value={stats.totalReviews.toLocaleString()}
           />
           <StatCard
@@ -178,9 +179,10 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
         </div>
       </section>
 
+      <p className="px-4 pb-4 text-xs text-[#777] dark:text-[#aaa]">Recall rate counts Hard, Good, or Easy ratings. Practice is excluded.</p>
       {/* Cards by state */}
       <section className="px-4 pb-4">
-        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+        <div className="bg-[var(--kit-surface)] rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#C4C4C4] mb-3">
             Cards by State
           </h3>
@@ -203,7 +205,7 @@ export default function DeckStats({ db, deckId, deckName, onBack }: DeckStatsPro
 
       {/* 7-day chart */}
       <section className="px-4 pb-4">
-        <div className="bg-[var(--kit-surface)] border border-[#E5E5E5] dark:border-[#262626] rounded-lg p-4">
+        <div className="bg-[var(--kit-surface)] rounded-lg p-4">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-[#C4C4C4] mb-3">
             Reviews — Last 7 Days
           </h3>
