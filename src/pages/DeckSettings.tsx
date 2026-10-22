@@ -1,3 +1,6 @@
+import { InlineConfirmation } from '../components/InlineConfirmation';
+import { useDeckSettingsDraft } from '../hooks/useDeckSettingsDraft';
+import type { UseDeckManagerReturn } from '../hooks/useDeckManager';
 import { DeckName } from '../components/DeckName';
 /**
  * DeckSettings page — per-deck configuration with plain-English descriptions.
@@ -6,19 +9,9 @@ import { DeckName } from '../components/DeckName';
  * scroll wheel picker.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
-import {
-  getDeckSettings,
-  setNewCardsPerDay,
-  setDeckLearningSteps,
-  setDeckSetting,
-  setDesiredRetention as saveDesiredRetention,
-  type DeckSettings as DeckSettingsType,
-} from '../lib/db/queries';
-import { persistDatabase } from '../hooks/useDatabase';
 import { hapticTap } from '../lib/platform/haptics';
-import type { EditOp } from '../lib/sync/types';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -30,7 +23,7 @@ interface DeckSettingsProps {
   deckName: string;
   onBack: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
-  onSyncEdit?: ((ops: EditOp[]) => void) | undefined;
+  manager?: UseDeckManagerReturn | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,110 +256,24 @@ const LEECH_OPTIONS = [0, 4, 6, 8, 10, 12, 15, 20]; // 0 = disabled
  * @param deckName - Human-readable deck name.
  * @param onBack   - Navigate back.
  */
-export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit }: DeckSettingsProps) {
-  const [settings, setSettings] = useState<DeckSettingsType | null>(null);
-  const [limit, setLimit] = useState(20);
-  const [maxReviews, setMaxReviews] = useState(200);
-  const [gradInt, setGradInt] = useState(1);
-  const [easyInt, setEasyInt] = useState(4);
-  const [maxInterval, setMaxInterval] = useState(365);
-  const [leechThreshold, setLeechThreshold] = useState(8);
-  const [desiredRetention, setDesiredRetention] = useState(0.9);
-  const [steps, setSteps] = useState<number[]>([1, 10]);
-
-  useEffect(() => {
-    if (!db) return;
-    const settingsResult = getDeckSettings(db, deckId);
-    if (settingsResult.success) {
-      const d = settingsResult.data;
-      setSettings(d);
-      setLimit(d.newCardsPerDay);
-      setMaxReviews(d.maxReviewsPerDay);
-      setSteps(d.againSteps);
-      setGradInt(d.graduatingInterval);
-      setEasyInt(d.easyInterval);
-      setMaxInterval(d.maxInterval);
-      setLeechThreshold(d.leechThreshold);
-      setDesiredRetention(d.desiredRetention);
-    }
-  }, [db, deckId]);
-
-  /** Persist after a settings change — emits sync edit or falls back to old path. */
-  const persistSettingsChange = useCallback((partial: Partial<DeckSettingsType>) => {
-    if (onSyncEdit) {
-      onSyncEdit([{ type: 'deck_settings', settings: partial }]);
-    } else {
-      persistDatabase();
-    }
-  }, [onSyncEdit]);
-
-  /** Save all learning-related settings at once. */
-  const saveLearningSettings = useCallback((
-    newSteps: number[],
-    grad: number,
-    easy: number,
-  ) => {
-    if (!db || newSteps.length === 0) return;
-    const result = setDeckLearningSteps(db, deckId, newSteps, grad, easy);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, againSteps: newSteps, graduatingInterval: grad, easyInterval: easy } : prev);
-      persistSettingsChange({ againSteps: newSteps, graduatingInterval: grad, easyInterval: easy });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
-  const handleSaveLimit = useCallback((val: number) => {
-    if (!db) return;
-    setLimit(val);
-    const result = setNewCardsPerDay(db, deckId, val);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, newCardsPerDay: val } : prev);
-      persistSettingsChange({ newCardsPerDay: val });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
-  const handleSaveMaxReviews = useCallback((val: number) => {
-    if (!db) return;
-    setMaxReviews(val);
-    const result = setDeckSetting(db, deckId, 'max_reviews_per_day', val);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, maxReviewsPerDay: val } : prev);
-      persistSettingsChange({ maxReviewsPerDay: val });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
-  const handleSaveMaxInterval = useCallback((val: number) => {
-    if (!db) return;
-    setMaxInterval(val);
-    const result = setDeckSetting(db, deckId, 'max_interval', val);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, maxInterval: val } : prev);
-      persistSettingsChange({ maxInterval: val });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
-  const handleSaveLeechThreshold = useCallback((val: number) => {
-    if (!db) return;
-    setLeechThreshold(val);
-    const result = setDeckSetting(db, deckId, 'leech_threshold', val);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, leechThreshold: val } : prev);
-      persistSettingsChange({ leechThreshold: val });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
-  const handleSaveRetention = useCallback((val: number) => {
-    if (!db) return;
-    setDesiredRetention(val);
-    const result = saveDesiredRetention(db, deckId, val);
-    if (result.success) {
-      setSettings(prev => prev ? { ...prev, desiredRetention: val } : prev);
-      persistSettingsChange({ desiredRetention: val });
-    }
-  }, [db, deckId, persistSettingsChange]);
-
+export default function DeckSettings({ db, deckId, deckName, onBack, manager }: DeckSettingsProps) {
+  const controller = useDeckSettingsDraft(db, deckId, manager);
+  const [discard, setDiscard] = useState(false);
+  const settings = controller.original;
+  const draft = controller.draft;
+  const limit = draft?.newCardsPerDay ?? 20, maxReviews = draft?.maxReviewsPerDay ?? 200;
+  const gradInt = draft?.graduatingInterval ?? 1, easyInt = draft?.easyInterval ?? 4;
+  const maxInterval = draft?.maxInterval ?? 365, leechThreshold = draft?.leechThreshold ?? 8;
+  const desiredRetention = draft?.desiredRetention ?? .9, steps = draft?.againSteps ?? [1,10];
+  const handleSaveLimit = (newCardsPerDay: number) => controller.change({ newCardsPerDay });
+  const handleSaveMaxReviews = (maxReviewsPerDay: number) => controller.change({ maxReviewsPerDay });
+  const handleSaveMaxInterval = (maxInterval: number) => controller.change({ maxInterval });
+  const handleSaveLeechThreshold = (leechThreshold: number) => controller.change({ leechThreshold });
+  const handleSaveRetention = (desiredRetention: number) => controller.change({ desiredRetention });
+  const back = () => { if (controller.busy) return; if (controller.dirty) setDiscard(true); else onBack(); };
   if (!settings) {
     return (
-      <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+      <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
         <header
           className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
           style={{
@@ -375,18 +282,19 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             paddingRight: 'max(1rem, env(safe-area-inset-right))',
           }}
         >
-          <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
+          <button onClick={() => { hapticTap(); back(); }} disabled={controller.busy} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
           <DeckName name={deckName} className="text-base font-bold" />
         </header>
         <div className="flex items-center justify-center py-12">
-          <p className="text-sm text-[#C4C4C4]">Loading…</p>
+          <p className="text-sm text-[#C4C4C4]" role={controller.error ? "alert" : "status"}>{controller.error || "Loading…"}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+      {controller.error && <p className="editor-error px-6" role="alert">{controller.error}</p>}
       {/* Header */}
       <header
         className="flex items-center pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
@@ -396,8 +304,8 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
-        <button onClick={() => { hapticTap(); onBack(); }} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
-        <div className="min-w-0"><DeckName name={deckName} className="text-sm font-semibold" /><span className="text-xs text-[#999]">Study settings</span></div>
+        <button onClick={() => { hapticTap(); back(); }} disabled={controller.busy} className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 mr-1" aria-label="Back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg></button>
+        <div className="min-w-0"><DeckName name={deckName} className="text-sm font-semibold" /><span className="text-xs text-[#999]">Scheduling</span></div>
       </header>
 
       <div
@@ -408,6 +316,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
+        <fieldset disabled={controller.busy || discard} className="contents">
         {/* Daily Limits */}
         <div className="pt-4" />
         <Section
@@ -444,7 +353,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             <p className="text-xs text-[#999]">Minutes between attempts</p>
             <StepsEditor
               steps={steps}
-              onChange={(s) => { setSteps(s); saveLearningSettings(s, gradInt, easyInt); }}
+              onChange={againSteps => controller.change({ againSteps })}
             />
           </div>
 
@@ -455,7 +364,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             <WheelPicker
               value={gradInt}
               options={INTERVAL_OPTIONS}
-              onChange={(v) => { setGradInt(v); saveLearningSettings(steps, v, easyInt); }}
+              onChange={graduatingInterval => controller.change({ graduatingInterval })}
             />
           </SettingRow>
 
@@ -466,7 +375,7 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             <WheelPicker
               value={easyInt}
               options={INTERVAL_OPTIONS}
-              onChange={(v) => { setEasyInt(v); saveLearningSettings(steps, gradInt, v); }}
+              onChange={easyInterval => controller.change({ easyInterval })}
             />
           </SettingRow>
         </Section>
@@ -528,7 +437,12 @@ export default function DeckSettings({ db, deckId, deckName, onBack, onSyncEdit 
             />
           </SettingRow>
         </Section>
+        </fieldset>
       </div>
+      <footer className="focused-editor-footer">
+        {discard ? <InlineConfirmation title="Discard changes?" detail="Your saved scheduling settings will stay as they were." cancelLabel="Keep editing" confirmLabel="Discard" onCancel={() => setDiscard(false)} onConfirm={onBack} />
+          : <button type="button" className="creation-next-button" disabled={!controller.dirty || controller.busy} onClick={() => { void controller.save().then(saved => { if (saved) onBack(); }); }}>{controller.busy ? 'Saving…' : 'Save'}</button>}
+      </footer>
     </div>
   );
 }

@@ -1,0 +1,6 @@
+.kit-wordmark { position:relative; display:inline-flex; align-items:baseline; font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; font-size:12px; font-style:normal; font-weight:600; line-height:12px; letter-spacing:normal; width:7px; color:inherit; }
+/* KI participates in baseline alignment, but overflows left of the centred cross. */
+.kit-wordmark-letters { flex:0 0 0; width:0; font-size:1em; line-height:1; letter-spacing:.1em; white-space:nowrap; }
+.kit-wordmark-letters > span { display:inline-block; transform:translateX(calc(-100% - .04em)); }
+.kit-wordmark-t { display:block; flex:0 0 7px; width:7px; height:10px; }
+.kit-wordmark--quiet .kit-wordmark-letters { opacity:.18; }

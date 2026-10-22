@@ -1,5 +1,5 @@
 /**
- * useCardEditor — business logic for the card editor overlay.
+ * useCardEditor — draft and save logic for the focused card editor.
  *
  * Responsibilities:
  *  - Manage draft state for tags.
@@ -10,6 +10,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { Database } from 'sql.js';
+import type { CardFace } from '../types/editorUi';
+import { hapticTap } from '../lib/platform/haptics';
 import type { Card, Result } from '../types';
 import type { EditOp } from '../lib/sync/types';
 import { deleteCard, insertCard, updateCard, addTagToDeck } from '../lib/db/queries';
@@ -24,6 +26,8 @@ import { hasMeaningfulCardContent } from '../lib/cardContent';
 export interface UseCardEditorReturn {
   /** The card being edited (original values). */
   card: Card;
+  face: CardFace;
+  setFace: (face: CardFace) => void;
   /** Draft tags array. */
   tags: string[];
   /** Whether there are unsaved changes. */
@@ -65,7 +69,10 @@ export function useCardEditor(
   card: Card,
   isNew = false,
   onSyncEdit?: (ops: EditOp[]) => void,
+  initialFace: CardFace = 'front',
 ): UseCardEditorReturn {
+  const [face, setActiveFace] = useState<CardFace>(initialFace);
+  const setFace = useCallback((next: CardFace) => { if (next !== face) { void hapticTap(); setActiveFace(next); } }, [face]);
   const [tags, setTags] = useState<string[]>(card.tags);
   const [contentDirty, setContentDirty] = useState(false);
 
@@ -126,6 +133,7 @@ export function useCardEditor(
           persistDatabase();
           scheduleICloudBackup();
         }
+        void hapticTap();
         return { success: true, data: newCard };
       }
 
@@ -148,6 +156,7 @@ export function useCardEditor(
           scheduleICloudBackup();
         }
       }
+      if (result.success) void hapticTap();
       return result;
     },
     [db, card, tags, isNew, onSyncEdit],
@@ -170,6 +179,8 @@ export function useCardEditor(
 
   return {
     card,
+    face,
+    setFace,
     tags,
     dirty,
     markContentDirty,

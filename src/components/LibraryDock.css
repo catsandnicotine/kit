@@ -1,0 +1,18 @@
+.library-bottom-area { flex-shrink:0; background:var(--kit-bg); }
+.library-bottom-area .library-page-position { min-height:44px; padding-bottom:0; }
+.library-dock { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; max-width:272px; margin-inline:auto; padding:4px max(24px,env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left)); }
+.utility-bubble { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:48px; height:48px; padding:0; border:0; border-radius:50%; background:#e5e5e7; color:#1c1c1e; box-shadow:0 3px 10px #0000000a; touch-action:manipulation; transition:opacity 100ms ease,transform 100ms ease; }
+.dark .utility-bubble { background:#242426; color:#e9e9eb; box-shadow:0 4px 12px #00000030; }
+.utility-bubble .kit-utility-icon { width:20px; height:20px; }
+.utility-bubble:active { opacity:.75; transform:translateY(1px); }
+.utility-bubble:disabled { opacity:.35; }
+.utility-bubble:focus-visible { outline:2px solid currentColor; outline-offset:3px; }
+.utility-bubble--filtered { position:relative; }
+.utility-bubble--filtered::after { content:''; position:absolute; width:4px; height:4px; top:10px; right:9px; border-radius:50%; background:currentColor; }
+.library-bottom-area .library-search-ribbon { margin:0 max(20px,env(safe-area-inset-right)) 4px max(20px,env(safe-area-inset-left)); padding:8px 0 0; }
+.library-bottom-area .library-search-ribbon { transform-origin:calc(50% - 88px) bottom; }
+.library-search-ribbon.search-collapse { pointer-events:none; animation:library-search-close 180ms cubic-bezier(.3,0,.2,1) both; }
+@keyframes library-search-close { from { opacity:1; transform:translateY(0) scaleX(1); max-height:60px; } to { opacity:0; transform:translateY(68px) scaleX(.15); max-height:0; margin-bottom:0; padding-top:0; } }
+.library-dock--native { height:calc(64px + env(safe-area-inset-bottom)); pointer-events:none; }
+.library-dock--keyboard { height:64px; }
+@media(prefers-reduced-motion:reduce) { .utility-bubble { transition:none; }.utility-bubble:active { transform:none; }.library-search-ribbon.search-collapse { animation:none; } }

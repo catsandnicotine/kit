@@ -31,10 +31,6 @@ import {
   refreshDeckCounts,
   flushPendingSync,
   getAllGlobalTags,
-  upsertGlobalTag as upsertGlobalTagFn,
-  deleteGlobalTag as deleteGlobalTagFn,
-  renameGlobalTag as renameGlobalTagFn,
-  mergeTagsIntoGlobal as mergeTagsIntoGlobalFn,
   removeDeck as removeDeckFn,
   removeDeckLocalOnly,
   isDeckFailed,
@@ -47,9 +43,12 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { atomicReadText, atomicWriteText } from '../lib/platform/atomicWrite';
 import type { DeckRegistryEntry, EditOp, GlobalTag } from '../lib/sync/types';
 import { needsMigration, migrateMonolithicDb } from '../lib/sync/migration';
-import { getDeviceId, getAllDeckEntries } from '../lib/sync/deckRegistry';
+import { getDeviceId, getAllDeckEntries, getRegistry } from '../lib/sync/deckRegistry';
+import { createGlobalTagMutations } from '../lib/globalTagMutations';
 import { evictOrphanedMedia } from '../lib/platform/mediaFiles';
 import { isNativePlatform } from '../lib/platform/platformDetect';
+import { initializeCardSeen, removeCardSeenDeck } from '../lib/cardSeen';
+import { createCardSeenLocalStorage } from '../lib/platform/cardSeenFiles';
 
 // ---------------------------------------------------------------------------
 // Local snapshot persistence (on-device backup, not iCloud)
@@ -152,6 +151,20 @@ async function saveRegistryJson(json: string): Promise<void> {
 async function persistRegistry(): Promise<void> {
   await saveRegistryJson(getRegistryJson());
 }
+
+const globalTagMutations = createGlobalTagMutations({
+  deckIds:() => getAllDeckEntries().map(entry => entry.deckId),
+  openDeck,
+  writeEdit:applyAndSync,
+  getCatalog:getAllGlobalTags,
+  async saveCatalog(tags) {
+    const registry = getRegistry();
+    if (!registry) throw new Error('The tag catalogue is not ready.');
+    const globalTags = Object.fromEntries(tags.map(tag => [tag.name, { ...tag }]));
+    await saveRegistryJson(JSON.stringify({ ...registry, globalTags }));
+    registry.globalTags = globalTags;
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Migration backup cleanup
@@ -324,6 +337,14 @@ export function useDeckManager(): UseDeckManagerReturn {
             }
           : {};
         initDeckManager({ SQL, storage, registryJson, ...localSnapshotConfig });
+        // Viewing counts have their own files and recovery path. A count failure
+        // must never prevent cards or scheduling history from opening.
+        void initializeCardSeen({
+          deviceId:getDeviceId(),
+          local:createCardSeenLocalStorage(),
+          ...(isNativePlatform() ? { remote:storage } : {}),
+          onBackgroundError:error => console.warn('[cardSeen] Count mirror remains queued:', error),
+        }).catch(error => console.warn('[cardSeen] Local counts are unavailable:', error));
 
         // 5. Check if migration from monolithic DB is needed.
         // If the registry already exists, migration already happened — skip the
@@ -483,30 +504,25 @@ export function useDeckManager(): UseDeckManagerReturn {
   }, []);
 
   const upsertTag = useCallback(async (name: string, color: string): Promise<void> => {
-    upsertGlobalTagFn(name, color);
-    await persistRegistry();
+    await globalTagMutations.upsert(name, color);
   }, []);
 
   const deleteTagFn = useCallback(async (name: string): Promise<void> => {
-    deleteGlobalTagFn(name);
-    await persistRegistry();
+    await globalTagMutations.remove(name);
   }, []);
 
   const renameTagFn = useCallback(async (oldName: string, newName: string): Promise<void> => {
-    renameGlobalTagFn(oldName, newName);
-    await persistRegistry();
+    await globalTagMutations.rename(oldName, newName);
   }, []);
 
-  const mergeImportedTags = useCallback(async (
-    tags: Array<{ tag: string; color: string }>,
-  ): Promise<void> => {
-    mergeTagsIntoGlobalFn(tags);
-    await persistRegistry();
+  const mergeImportedTags = useCallback(async (tags: Array<{ tag: string; color: string }>): Promise<void> => {
+    await globalTagMutations.mergeImported(tags);
   }, []);
 
   const removeDeckFnCb = useCallback(async (deckId: string): Promise<void> => {
     await removeDeckFn(deckId);
     await persistRegistry();
+    await removeCardSeenDeck(deckId).catch(error => console.warn('[cardSeen] Deleted-deck count cleanup remains incomplete:', error));
     // Flag that media eviction is needed on the next cold start.
     try { localStorage.setItem(LS_EVICT_MEDIA_KEY, '1'); } catch { /* best effort */ }
   }, []);

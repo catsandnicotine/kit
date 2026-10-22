@@ -3,11 +3,12 @@ import { ThemeProvider } from './components/ThemeProvider';
 import { useDeckManager } from './hooks/useDeckManager';
 import { useSync } from './hooks/useSync';
 import { useConnectivity } from './hooks/useConnectivity';
+import { useInputModality } from './hooks/useInputModality';
 import { useConnectionNotice } from './hooks/useConnectionNotice';
 import { SyncNotice } from './components/SyncNotice';
 import { useICloudAvailability } from './hooks/useICloudAvailability';
 import { Onboarding } from './components/Onboarding';
-import type { OnboardingAction } from './components/Onboarding';
+import type { OnboardingAction } from './types/deckCreation';
 import Home from './pages/Home';
 import { App as CapApp } from '@capacitor/app';
 import { isApkgFileUrl, readFileFromUrl } from './lib/platform/fileOpener';
@@ -17,6 +18,8 @@ import { createEmptyDeckSnapshot } from './lib/db/deckFactory';
 import { createWelcomeDeckSnapshot, WELCOME_DECK_ID } from './lib/db/welcomeDeck';
 import { pickApkgFile } from './lib/platform/filePicker';
 import { hapticNavigate, hapticSuccess, hapticTap } from './lib/platform/haptics';
+import { prepareDeckMediaBootstrap } from './lib/platform/deckMediaBootstrap';
+import type { DeckMediaBootstrap } from './types/deckMedia';
 
 // Lazy-loaded pages — keeps KaTeX, Konva, and other heavy deps out of the
 // initial chunk so the WKWebView doesn't OOM during database init.
@@ -30,8 +33,6 @@ const loadDeckStats = () => import('./pages/DeckStats');
 const DeckStats = lazy(loadDeckStats);
 const loadDeckSettings = () => import('./pages/DeckSettings');
 const DeckSettings = lazy(loadDeckSettings);
-const loadTagBrowser = () => import('./pages/TagBrowser');
-const TagBrowser = lazy(loadTagBrowser);
 const loadReviewStudy = () => import('./pages/ReviewStudy');
 const ReviewStudy = lazy(loadReviewStudy);
 
@@ -43,11 +44,10 @@ type Route =
   | { page: 'home' }
   | { page: 'study'; deckId: string; deckName: string }
   | { page: 'review-study'; deckId: string; deckName: string }
-  | { page: 'browse'; deckId: string; deckName: string; guideFirstCard?: boolean }
+  | { page: 'manage'; deckId: string; deckName: string; guideFirstCard?: boolean; details?: boolean }
   | { page: 'stats'; deckId: string; deckName: string }
   | { page: 'deck-settings'; deckId: string; deckName: string }
-  | { page: 'settings'; scrollTo?: string | undefined }
-  | { page: 'tags' };
+  | { page: 'settings'; scrollTo?: string | undefined };
 
 export type AppMode = 'learn' | 'review';
 
@@ -62,6 +62,7 @@ const LS_ONBOARDED_KEY = 'kit_onboarded';
 // ---------------------------------------------------------------------------
 
 function AppInner() {
+  useInputModality();
   const deckManager = useDeckManager();
   const { loading, error, deckEntries } = deckManager;
 
@@ -81,6 +82,7 @@ function AppInner() {
   // Per-deck database for the currently active deck-scoped page.
   // Opened when navigating to a deck page, closed when returning home.
   const [activeDeckDb, setActiveDeckDb] = useState<Database | null>(null);
+  const [activeDeckMedia, setActiveDeckMedia] = useState<DeckMediaBootstrap | null>(null);
 
   const currentDeckId = 'deckId' in route ? route.deckId : undefined;
 
@@ -118,6 +120,11 @@ function AppInner() {
     }
   }, []);
 
+  // An Anki file opened from Files is already a first-run choice.
+  useEffect(() => {
+    if (showOnboarding && pendingFile) markOnboarded();
+  }, [showOnboarding, pendingFile, markOnboarded]);
+
   const dismissOnboarding = useCallback(() => {
     hapticTap();
     markOnboarded();
@@ -135,27 +142,36 @@ function AppInner() {
       finalizeDeck(currentDeckId);
     }
     setActiveDeckDb(null);
+    setActiveDeckMedia(null);
     setRoute({ page: 'home' });
     deckManager.refreshDecks();
   }, [currentDeckId, deckManager, finalizeDeck]);
 
   const navigateToDeck = useCallback(
-    (page: Route['page'], deckId: string, deckName: string, guideFirstCard = false) => {
+    (page: Route['page'], deckId: string, deckName: string, guideFirstCard = false, details = false) => {
       const seq = ++navSeqRef.current;
 
-      // Keep the current screen until both its replacement and database are ready.
-      const loaders = { study: loadStudy, 'review-study': loadReviewStudy, browse: loadBrowse, stats: loadDeckStats, 'deck-settings': loadDeckSettings };
+      // Keep the library while the page, database and native media locations prepare together.
+      const loaders = { study: loadStudy, 'review-study': loadReviewStudy, manage: loadBrowse, stats: loadDeckStats, 'deck-settings': loadDeckSettings };
       const loadPage = loaders[page as keyof typeof loaders];
-      Promise.all([deckManager.openDeckDb(deckId), loadPage?.()]).then(([db]) => {
-        if (seq !== navSeqRef.current || !db) return;
+      const media = page === 'study' || page === 'review-study'
+        ? prepareDeckMediaBootstrap(deckId).catch(error => {
+          console.warn('[deckEntry] Media preparation will retry in the session:', error);
+          return null;
+        }) : Promise.resolve(null);
+      return Promise.all([deckManager.openDeckDb(deckId), loadPage?.(), media]).then(([db, , preparedMedia]) => {
+        if (seq !== navSeqRef.current || !db) return false;
         startTransition(() => {
           setActiveDeckDb(db);
-          if (page === 'browse') setRoute({ page, deckId, deckName, guideFirstCard });
+          setActiveDeckMedia(preparedMedia);
+          if (page === 'manage') setRoute({ page, deckId, deckName, guideFirstCard, details });
           else setRoute({ page, deckId, deckName } as Route);
         });
+        return true;
       }).catch(() => {
         // DeckManager marks failed decks so Home can offer recovery.
         deckManager.refreshDecks();
+        return false;
       });
     },
     [deckManager],
@@ -173,7 +189,7 @@ function AppInner() {
 
   const goBrowse = useCallback(
     (deckId: string, deckName: string, guideFirstCard = false) => (
-      navigateToDeck('browse', deckId, deckName, guideFirstCard)
+      navigateToDeck('manage', deckId, deckName, guideFirstCard)
     ),
     [navigateToDeck],
   );
@@ -184,7 +200,6 @@ function AppInner() {
   );
 
   const goSettings = useCallback((scrollTo?: string) => { void loadSettings().then(() => startTransition(() => setRoute({ page: 'settings', scrollTo }))); }, []);
-  const goTags = useCallback(() => { void loadTagBrowser().then(() => startTransition(() => setRoute({ page: 'tags' }))); }, []);
 
   const goDeckSettings = useCallback(
     (deckId: string, deckName: string) => navigateToDeck('deck-settings', deckId, deckName),
@@ -215,10 +230,14 @@ function AppInner() {
       deckManager.refreshDecks();
       hapticSuccess();
       setMode('learn');
-      await loadStudy();
+      const [, preparedMedia] = await Promise.all([loadStudy(), prepareDeckMediaBootstrap(snapshot.deckId).catch(error => {
+        console.warn('[deckEntry] Sample media preparation will retry in the session:', error);
+        return null;
+      })]);
       startTransition(() => {
         markOnboarded();
         setActiveDeckDb(db);
+        setActiveDeckMedia(preparedMedia);
         setRoute({ page: 'study', deckId: snapshot.deckId, deckName: snapshot.deck.name });
       });
     } catch (cause) {
@@ -245,7 +264,7 @@ function AppInner() {
         markOnboarded();
         setActiveDeckDb(db);
         setRoute({
-        page: 'browse',
+        page: 'manage',
         deckId: snapshot.deckId,
         deckName: snapshot.deck.name,
         guideFirstCard: true,
@@ -299,9 +318,11 @@ function AppInner() {
   if (route.page === 'study') {
     return withStatus(
         <Study
+          key={route.deckId}
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
+          mediaBootstrap={activeDeckMedia}
           onExit={goHome}
           onSyncEdit={handleSyncEdit}
           onSessionComplete={handleSessionComplete}
@@ -312,15 +333,18 @@ function AppInner() {
   if (route.page === 'review-study') {
     return withStatus(
         <ReviewStudy
+          key={route.deckId}
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
+          mediaBootstrap={activeDeckMedia}
           onExit={goHome}
+          onSyncEdit={handleSyncEdit}
         />
     );
   }
 
-  if (route.page === 'browse') {
+  if (route.page === 'manage') {
     return withStatus(
         <Browse
           db={activeDeckDb}
@@ -328,6 +352,11 @@ function AppInner() {
           deckName={route.deckName}
           onBack={goHome}
           guideFirstCard={route.guideFirstCard ?? false}
+          initialDetails={route.details ?? false}
+          manager={deckManager}
+          onStats={name => { void goStats(route.deckId, name); }}
+          onSettings={name => { void goDeckSettings(route.deckId, name); }}
+          onDeleted={() => { navSeqRef.current++; setActiveDeckDb(null); setRoute({ page:'home' }); void deckManager.refreshDecks(); }}
           onStartStudy={() => goStudy(route.deckId, route.deckName)}
           onSyncEdit={handleSyncEdit}
         />
@@ -340,7 +369,7 @@ function AppInner() {
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
-          onBack={goHome}
+          onBack={() => { void navigateToDeck('manage', route.deckId, route.deckName, false, true); }}
         />
     );
   }
@@ -351,8 +380,8 @@ function AppInner() {
           db={activeDeckDb}
           deckId={route.deckId}
           deckName={route.deckName}
-          onBack={goHome}
-          onSyncEdit={handleSyncEdit}
+          onBack={() => { void navigateToDeck('manage', route.deckId, route.deckName, false, true); }}
+          manager={deckManager}
         />
     );
   }
@@ -371,15 +400,6 @@ function AppInner() {
     );
   }
 
-  if (route.page === 'tags') {
-    return withStatus(
-        <TagBrowser
-          deckManager={deckManager}
-          onBack={goHome}
-        />
-    );
-  }
-
   return withStatus(
     <Home
       connectionNotice={<SyncNotice visible={connectionNotice.visible} kind={connectionNotice.kind} progress={syncProgress} onDismiss={connectionNotice.dismiss} />}
@@ -392,11 +412,8 @@ function AppInner() {
       onModeChange={setMode}
       onStudy={goStudy}
       onReviewStudy={goReviewStudy}
-      onBrowse={goBrowse}
-      onStats={goStats}
+      onManage={goBrowse}
       onSettings={goSettings}
-      onTags={goTags}
-      onDeckSettings={goDeckSettings}
       pendingFile={pendingFile}
       onPendingFileConsumed={clearPendingFile}
     />

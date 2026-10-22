@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Kit — page marker</title></head>
+<body><div id="library-marker-study"></div><script type="module">
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { LibraryMarkerStudy } from './library-marker.tsx';
+document.documentElement.dataset.theme = 'black';
+document.documentElement.classList.add('dark');
+createRoot(document.getElementById('library-marker-study')).render(createElement(LibraryMarkerStudy));
+</script></body></html>

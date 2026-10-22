@@ -72,6 +72,7 @@ export function useExport(source: Database | UseDeckManagerReturn | null): UseEx
         if (!response.ok) throw new Error('A bundled painting could not be read. Please reopen Kit and try again.');
         data = new Uint8Array(await response.arrayBuffer());
       }
+      if (!data) throw new Error('An attachment could not be read. Restore this deck’s media before exporting.');
       if (data) {
         // Infer a basic mime type from the extension.
         const ext = filename.split('.').pop()?.toLowerCase() ?? '';
@@ -96,28 +97,29 @@ export function useExport(source: Database | UseDeckManagerReturn | null): UseEx
       setPhase('exporting');
       setErrorMessage('');
 
-      let deckDb: Database | null = null;
-      if (isDeckManager(source)) {
-        deckDb = source.getCachedDeckDb(deckId) ?? await source.openDeckDb(deckId);
-      } else {
-        deckDb = source;
-      }
-
-      if (!deckDb) {
-        setPhase('error');
-        setErrorMessage('Could not open this deck. Please try again in a moment.');
-        return;
-      }
-
-      const mediaLoader: LoadMediaFn = async id => {
-        const files = await nativeMediaLoader(id);
-        const legacy = getMediaByDeck(deckDb, id);
-        const byName = new Map((legacy.success ? legacy.data : []).map(media => [media.filename, media]));
-        for (const file of files) byName.set(file.filename, file);
-        return [...byName.values()];
-      };
-
       try {
+        let deckDb: Database | null = null;
+        if (isDeckManager(source)) {
+          deckDb = source.getCachedDeckDb(deckId) ?? await source.openDeckDb(deckId);
+        } else {
+          deckDb = source;
+        }
+
+        if (!deckDb) {
+          setPhase('error');
+          setErrorMessage('Could not open this deck. Please try again in a moment.');
+          return;
+        }
+
+        const mediaLoader: LoadMediaFn = async id => {
+          const files = await nativeMediaLoader(id);
+          const legacy = getMediaByDeck(deckDb, id);
+          if (!legacy.success) throw new Error(legacy.error);
+          const byName = new Map(legacy.data.map(media => [media.filename, media]));
+          for (const file of files) byName.set(file.filename, file);
+          return [...byName.values()];
+        };
+
         const result = await exporter(deckDb, deckId, mediaLoader);
         if (!result.success) {
           setPhase('error');

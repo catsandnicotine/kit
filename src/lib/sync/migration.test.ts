@@ -3,14 +3,32 @@ import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../db';
 import { runMigrations } from '../db/migrations';
-import { insertDeck } from '../db/queries';
-import { getAllDeckEntries, initRegistry } from './deckRegistry';
+import { getCardsByDeck, getCardStatesByDeck, getReviewLogsByDeck, insertCard, insertDeck, insertReviewLog, setCardState } from '../db/queries';
+import { closeDeck, initDeckManager, openDeck } from '../db/deckManager';
+import { getAllDeckEntries, initRegistry, serializeRegistry } from './deckRegistry';
 import { migrateMonolithicDb } from './migration';
 import type { SyncStorage } from './syncStorage';
+import type { Card, CardState, ReviewLog } from '../../types';
 
 const WASM_DIR = path.join(process.cwd(), 'node_modules/sql.js/dist');
 
 let SQL: SqlJsStatic;
+
+const savedCard: Card = {
+  id: 'existing-reviewed-card', deckId: 'deck-a', noteId: null,
+  front: '<p>Existing question</p><img src="original-diagram.png">',
+  back: '<p>Edited answer</p>[sound:original-audio.mp3]',
+  tags: ['biology'], createdAt: 10, updatedAt: 30,
+};
+const savedState: CardState = {
+  cardId: savedCard.id, due: 2_000_000_000, stability: 44.25, difficulty: 5.75,
+  elapsedDays: 12, scheduledDays: 45, reps: 22, lapses: 2, state: 'review',
+  lastReview: 1_999_000_000, learningStepIndex: 0, suspended: true,
+};
+const savedLog: ReviewLog = {
+  id: 'existing-review-log', cardId: savedCard.id, rating: 'hard',
+  reviewedAt: 1_999_000_000, elapsed: 12, scheduledDays: 45,
+};
 
 beforeAll(async () => {
   SQL = await initSqlJs({ locateFile: file => path.join(WASM_DIR, file) });
@@ -41,6 +59,9 @@ function legacyDatabaseBytes(): Uint8Array {
     updatedAt: 2,
   });
   if (!first.success || !second.success) throw new Error('Could not build migration fixture.');
+  for (const result of [insertCard(db, savedCard), setCardState(db, savedState), insertReviewLog(db, savedLog)]) {
+    if (!result.success) throw new Error(result.error);
+  }
 
   const bytes = db.export();
   db.close();
@@ -67,6 +88,33 @@ function storageWithWrite(
 }
 
 describe('migrateMonolithicDb durability', () => {
+  it('preserves existing card edits, media references, scheduling and history after migration and reopening offline', async () => {
+    const original = legacyDatabaseBytes();
+    const originalCopy = original.slice();
+    const snapshots = new Map<string, string>();
+    const storage = storageWithWrite(async () => { throw new Error('offline'); });
+    await migrateMonolithicDb(SQL, original, storage, 'device-12345678', async (deckId, data) => {
+      snapshots.set(deckId, data);
+    });
+
+    initDeckManager({
+      SQL, storage, registryJson: serializeRegistry(),
+      readLocalSnapshot: async deckId => snapshots.get(deckId) ?? null,
+    });
+    try {
+      const reopened = await openDeck('deck-a');
+      expect(reopened).not.toBeNull();
+      if (!reopened) throw new Error('Existing deck failed to reopen.');
+      expect(getCardsByDeck(reopened, 'deck-a')).toEqual({ success: true, data: [savedCard] });
+      expect(getCardStatesByDeck(reopened, 'deck-a')).toEqual({ success: true, data: [savedState] });
+      expect(getReviewLogsByDeck(reopened, 'deck-a')).toEqual({ success: true, data: [savedLog] });
+      expect(original).toEqual(originalCopy);
+      expect(getAllDeckEntries().find(entry => entry.deckId === 'deck-a')?.cardCount).toBe(1);
+    } finally {
+      closeDeck('deck-a');
+    }
+  });
+
   it('completes offline when every deck has a durable local snapshot', async () => {
     const localSnapshots = new Map<string, string>();
     const syncWrite = vi.fn(async () => {

@@ -1,4 +1,6 @@
 import { TagColourPicker } from '../components/TagColourPicker';
+import { TagLabel } from '../components/TagLabel';
+import { UiIcon } from '../components/UiIcon';
 /**
  * TagBrowser — "All Tags" screen.
  *
@@ -15,7 +17,6 @@ import type { TagCount } from '../lib/db/queries';
 import { addTagToDeck, removeTagFromDeck, getDecksByTag, upsertTagColor } from '../lib/db/queries';
 import type { DeckAssociation } from '../hooks/useTagSheet';
 import { hapticTap } from '../lib/platform/haptics';
-import { pillTextColor } from '../lib/tagColors';
 import { sortTagsByColor, groupTagsByFamily } from '../lib/tagSort';
 import { TagBottomSheet } from '../components/TagBottomSheet';
 
@@ -55,6 +56,10 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
   const [showCreateTag, setShowCreateTag] = useState(false);
   const [newTagDraft, setNewTagDraft] = useState('');
   const [newTagColor, setNewTagColor] = useState('');
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
+  const [error, setError] = useState<string | null>(null);
+  const associationSeq = useRef(0);
   const newTagInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (showCreateTag) newTagInputRef.current?.focus(); }, [showCreateTag]);
 
@@ -79,11 +84,13 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
   const handleCreateTag = useCallback(async () => {
     const tag = newTagDraft.trim();
     if (!tag) return;
-    await deckManager.upsertTag(tag, newTagColor);
-    loadTags();
-    setShowCreateTag(false);
-    setNewTagDraft('');
-    setNewTagColor('');
+    if (creatingRef.current) return;
+    creatingRef.current = true; setCreating(true); setError(null);
+    try {
+      await deckManager.upsertTag(tag, newTagColor);
+      loadTags(); setShowCreateTag(false); setNewTagDraft(''); setNewTagColor('');
+    } catch (cause) { console.warn('Could not create tag:', cause); setError('Couldn’t create this tag. Please try again.'); }
+    finally { creatingRef.current = false; setCreating(false); }
   }, [deckManager, newTagDraft, newTagColor, loadTags]);
 
   // ── Rename ──────────────────────────────────────────────────────────────
@@ -117,89 +124,85 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
 
   const [deckAssociations, setDeckAssociations] = useState<DeckAssociation[]>([]);
 
-  const loadAssociations = useCallback(async (tagName: string) => {
-    // Check each deck's DB to find which decks have this tag
+  const loadAssociations = useCallback(async (tagName: string, active: () => boolean) => {
+    const seq = ++associationSeq.current;
     const assocs: DeckAssociation[] = [];
-    for (const entry of deckManager.deckEntries) {
-      const db = await deckManager.openDeckDb(entry.deckId);
-      if (!db) continue;
-      const result = getDecksByTag(db, tagName);
-      if (result.success && result.data.some(a => a.deckId === entry.deckId)) {
-        assocs.push({ deckId: entry.deckId, deckName: entry.name });
+    try {
+      for (const entry of deckManager.deckEntries) {
+        const db = await deckManager.openDeckDb(entry.deckId);
+        if (!db) throw new Error('A deck is unavailable.');
+        const result = getDecksByTag(db, tagName);
+        if (!result.success) throw new Error(result.error);
+        if (result.data.some(a => a.deckId === entry.deckId)) assocs.push({ deckId:entry.deckId, deckName:entry.name });
       }
+      if (active() && seq === associationSeq.current) setDeckAssociations(assocs);
+    } catch (cause) {
+      console.warn('Could not load tag associations:', cause);
+      if (active() && seq === associationSeq.current) setError('Some decks could not be checked. Please try again.');
     }
-    setDeckAssociations(assocs);
   }, [deckManager]);
 
-  // Load associations when a tag is selected
+  const selectedTagName = selectedTag?.tag ?? null;
   useEffect(() => {
-    if (selectedTag) loadAssociations(selectedTag.tag);
-    else setDeckAssociations([]);
-  }, [selectedTag, loadAssociations]);
+    let active = true;
+    setDeckAssociations([]);
+    if (selectedTagName) void loadAssociations(selectedTagName, () => active);
+    return () => { active = false; };
+  }, [selectedTagName, loadAssociations]);
 
   const handleAddToDeck = useCallback(async (tag: string, deckId: string) => {
+    associationSeq.current++;
     const db = await deckManager.openDeckDb(deckId);
-    if (!db) return;
+    if (!db) throw new Error('This deck could not be opened.');
+    const color = deckManager.getGlobalTags().find(t => t.name === tag)?.color ?? '';
+    if (!await deckManager.writeEdit(deckId, [{ type:'deck_tag_add', tag }, { type:'tag_add', tag, color }])) throw new Error('The tag could not be saved.');
     const now = Math.floor(Date.now() / 1000);
-    addTagToDeck(db, deckId, tag, now);
-    // Also write the tag color into the deck's tag_colors table so Browse can read it
-    const globalTag = deckManager.getGlobalTags().find(t => t.name === tag);
-    if (globalTag?.color) upsertTagColor(db, tag, globalTag.color, now);
-    await deckManager.writeEdit(deckId, [{ type: 'deck_tag_add', tag }]);
-    // Snapshot immediately so the tag survives app restarts — TagBrowser
-    // doesn't go through the normal finalizeDeck path on navigate-away.
-    deckManager.compact(deckId).catch(() => {});
+    for (const result of [addTagToDeck(db, deckId, tag, now), upsertTagColor(db, tag, color, now)]) if (!result.success) throw new Error(result.error);
     hapticTap();
     const entry = deckManager.deckEntries.find(e => e.deckId === deckId);
-    if (entry) {
-      setDeckAssociations(prev => [...prev, { deckId, deckName: entry.name }]);
-    }
+    if (entry) setDeckAssociations(prev => prev.some(a => a.deckId === deckId) ? prev : [...prev, { deckId, deckName:entry.name }]);
   }, [deckManager]);
 
   const handleRemoveFromDeck = useCallback(async (tag: string, deckId: string) => {
+    associationSeq.current++;
     const db = await deckManager.openDeckDb(deckId);
-    if (!db) return;
-    removeTagFromDeck(db, deckId, tag);
-    await deckManager.writeEdit(deckId, [{ type: 'deck_tag_remove', tag }]);
-    deckManager.compact(deckId).catch(() => {});
+    if (!db) throw new Error('This deck could not be opened.');
+    if (!await deckManager.writeEdit(deckId, [{ type:'deck_tag_remove', tag }])) throw new Error('The tag could not be saved.');
+    const result = removeTagFromDeck(db, deckId, tag);
+    if (!result.success) throw new Error(result.error);
     hapticTap();
     setDeckAssociations(prev => prev.filter(a => a.deckId !== deckId));
   }, [deckManager]);
 
-  const totalTags = tags.length;
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] page-enter">
       {/* Header */}
       <header
-        className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
+        className="flex items-center gap-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
         style={{
-          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
+          minHeight: 'calc(64px + env(safe-area-inset-top))',
+          paddingTop: 'env(safe-area-inset-top)',
           paddingLeft: 'max(1rem, env(safe-area-inset-left))',
           paddingRight: 'max(1rem, env(safe-area-inset-right))',
         }}
       >
         <button
           onClick={() => { hapticTap(); onBack(); }}
-          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+          className="kit-icon-button text-[#C4C4C4] shrink-0"
           aria-label="Back"
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
+          <UiIcon name="back" />
         </button>
         <span className="text-base font-bold truncate flex-1">
           Tags
         </span>
         <button
           onClick={() => { hapticTap(); setShowCreateTag(true); }}
-          className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
+          className="kit-icon-button text-[#C4C4C4] shrink-0"
           aria-label="New tag"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="4" x2="12" y2="20" />
-            <line x1="4" y1="12" x2="20" y2="12" />
-          </svg>
+          <UiIcon name="plus" />
         </button>
       </header>
 
@@ -219,6 +222,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
         />
       </div>
 
+      {error && !showCreateTag && <p role="alert" className="px-4 py-2 text-sm text-red-500">{error}</p>}
       {/* Tag pills grouped by color family */}
       <div
         className="flex-1 overflow-auto"
@@ -226,7 +230,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
           paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
         }}
       >
-        {totalTags === 0 && (
+        {grouped.size === 0 && (
           <div className="px-4 py-12 text-center">
             <p className="text-sm text-[#C4C4C4]">
               {search.trim() ? 'No tags match your search' : 'No tags yet'}
@@ -259,8 +263,6 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
               }}
             >
               {familyTags.map(tc => {
-                const bg = tc.color || '#9E9E9E';
-                const textColor = tc.color ? pillTextColor(tc.color) : '#ffffff';
                 const isActive = selectedTag?.tag === tc.tag;
 
                 return (
@@ -270,16 +272,10 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
                       hapticTap();
                       setSelectedTag(tc);
                     }}
-                    className="px-3 py-1.5 rounded-full text-sm font-medium active:scale-95 transition-transform"
-                    style={{
-                      background: bg,
-                      color: textColor,
-                      boxShadow: isActive
-                        ? `0 0 0 3px var(--kit-bg), 0 0 0 5px ${bg}`
-                        : 'none',
-                    }}
+                    className="tag-control"
+                    style={{ opacity:selectedTag && !isActive ? .5 : 1 }}
                   >
-                    {tc.tag}
+                    <TagLabel name={tc.tag} color={tc.color} />
                   </button>
                 );
               })}
@@ -291,6 +287,7 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
       {/* Bottom sheet */}
       {selectedTag && (
         <TagBottomSheet
+          key={selectedTag.tag}
           tag={selectedTag}
           allDecks={allDecks}
           deckAssociations={deckAssociations}
@@ -319,18 +316,19 @@ export default function TagBrowser({ deckManager, onBack }: TagBrowserProps) {
                 placeholder="Tag name"
                 className="w-full px-4 py-2.5 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
               />
+              {error && <p role="alert" className="mt-3 text-sm text-red-500">{error}</p>}
               <div className="mt-3"><TagColourPicker value={newTagColor} onChange={setNewTagColor} /></div>
             </div>
             <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
               <button
-                onClick={() => { setShowCreateTag(false); setNewTagDraft(''); setNewTagColor(''); }}
+                disabled={creating} onClick={() => { setShowCreateTag(false); setNewTagDraft(''); setNewTagColor(''); }}
                 className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateTag}
-                disabled={!newTagDraft.trim()}
+                disabled={creating || !newTagDraft.trim()}
                 className="flex-1 py-3.5 text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] disabled:opacity-40"
               >
                 Create

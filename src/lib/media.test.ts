@@ -15,4 +15,12 @@ describe('Anki media references', () => {
     const name = 'Screenshot at 5.22.02\u202fPM.png';
     expect(rewriteMediaUrls(`<img src="${name}">`,new Map([[name,'blob:picture']]))).toBe('<img src="blob:picture">');
   });
+  it('routes and resolves video, poster and subtitle files without touching remote media', () => {
+    const html = '<video poster="cover.png"><source src="clip.mov"><track src="captions.vtt"></video>';
+    expect([...getMediaReferences(html)]).toEqual(['cover.png', 'clip.mov', 'captions.vtt']);
+    expect(rewriteMediaUrls(html, new Map([['cover.png', 'blob:cover'], ['clip.mov', 'blob:clip'], ['captions.vtt', 'blob:captions']])))
+      .toBe('<video poster="blob:cover"><source src="blob:clip"><track src="blob:captions"></video>');
+    expect(rewriteMediaUrls('<video src="https://example.com/clip.mov" poster="https://example.com/cover.png">', new Map([['cover.png', 'blob:cover']])))
+      .toBe('<video src="https://example.com/clip.mov" poster="https://example.com/cover.png">');
+  });
 });

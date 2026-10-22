@@ -4,6 +4,7 @@ import {
 } from '../lib/platform/icloudSync';
 import { deckIdsFromChanges } from '../lib/sync/fileChanges';
 import type { UseDeckManagerReturn } from './useDeckManager';
+import { flushCardSeen, handleCardSeenFileChanges, refreshCardSeen } from '../lib/cardSeen';
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
@@ -60,6 +61,9 @@ export function useSync(deckManager: UseDeckManagerReturn | null, activeDeckId?:
       setSyncError(null);
       try {
         await manager.flushPending();
+        // Count files have a separate dirty queue; never put their cloud IO
+        // ahead of reviews or read historical sessions during a retry.
+        void flushCardSeen().catch(error => console.warn('[cardSeen] Count mirror remains queued:', error));
         const ids = manager.deckEntries.map(entry => entry.deckId);
         const active = activeRef.current;
         if (active && ids.includes(active)) {
@@ -100,6 +104,7 @@ export function useSync(deckManager: UseDeckManagerReturn | null, activeDeckId?:
           for (const id of deckIdsFromChanges(changes)) {
             syncDeck(id).catch(() => setSyncError('Sync unavailable'));
           }
+          void handleCardSeenFileChanges(changes, activeRef.current).catch(error => console.warn('[cardSeen] Count refresh unavailable:', error));
         });
         if (cancelled) { await listener?.remove(); return; }
         removeListener = listener ? () => listener.remove() : undefined;
@@ -111,23 +116,35 @@ export function useSync(deckManager: UseDeckManagerReturn | null, activeDeckId?:
     void setup();
     void syncAll();
     const retry = () => { if (document.visibilityState === 'visible') void syncAll(); };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') retry();
-      else if (activeRef.current) managerRef.current?.compact(activeRef.current).catch(() => {});
+    const refreshActiveCounts = () => {
+      const active = activeRef.current;
+      if (active) void refreshCardSeen(active).catch(error => console.warn('[cardSeen] Count refresh unavailable:', error));
     };
-    window.addEventListener('online', retry);
+    const onOnline = () => { retry(); refreshActiveCounts(); };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') { retry(); refreshActiveCounts(); }
+      else {
+        if (activeRef.current) managerRef.current?.compact(activeRef.current).catch(() => {});
+        void flushCardSeen().catch(error => console.warn('[cardSeen] Count mirror remains queued:', error));
+      }
+    };
+    window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisibility);
     // iCloud errors and connectivity events are not always delivered immediately.
     const timer = setInterval(retry, 30000);
     return () => {
       cancelled = true;
       clearInterval(timer);
-      window.removeEventListener('online', retry);
+      window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibility);
       void removeListener?.();
       void stopICloudWatching().catch(() => {});
     };
   }, [ready, syncAll, syncDeck]);
+
+  useEffect(() => {
+    if (ready && activeDeckId) void refreshCardSeen(activeDeckId).catch(error => console.warn('[cardSeen] Count refresh unavailable:', error));
+  }, [ready, activeDeckId]);
 
   return { status, lastSyncCount, syncError, lastSyncedAt, progress, syncDeck, syncAll };
 }

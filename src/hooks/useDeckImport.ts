@@ -17,7 +17,9 @@ import { getIncomingDeckNames, resolveLeafNames } from '../lib/apkg/importDeckNa
 import { useCallback, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Database } from 'sql.js';
-import type { Card, CardState, Deck, Note, NoteType, Result, ReviewLog } from '../types';
+import type { Card, Deck, Note, NoteType, Result } from '../types';
+import type { KitProgressData } from '../types/apkgProgress';
+import { getKitCardProgress, parseKitProgress } from '../lib/apkg/kitProgress';
 import { parseApkgLazy, extractMediaBatch } from '../lib/apkg';
 import { renderTemplate } from '../lib/apkg/templateRenderer';
 import type {
@@ -54,8 +56,8 @@ import {
   getCardsByDeck as getCardsByDeckQ,
   getCardStatesByDeck,
   getReviewLogsByDeck,
-  getNoteTypesByDeck,
-  getNotesByDeck,
+  getNoteTypesForDeckSnapshot,
+  getNotesForDeckSnapshot,
   getDeckSettings,
   getTagsForDeck,
 } from '../lib/db/queries';
@@ -128,16 +130,6 @@ export async function createImportedSnapshots(
 
 /** Number of media blobs to extract and insert per batch. */
 const MEDIA_BATCH_SIZE = 50;
-
-// ---------------------------------------------------------------------------
-// kit_progress.json shape
-// ---------------------------------------------------------------------------
-
-interface KitProgressData {
-  version: number;
-  statesByContent: Record<string, CardState>;
-  logsByContent: Record<string, ReviewLog[]>;
-}
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -269,15 +261,11 @@ export function useDeckImport(
 
         // Check for embedded Kit progress data
         let progressData: KitProgressData | undefined;
-        try {
-          const progressFile = parsed.zip.file('kit_progress.json');
-          if (progressFile) {
-            const json = await progressFile.async('string');
-            const parsed2 = JSON.parse(json) as KitProgressData;
-            if (parsed2.version === 1) progressData = parsed2;
-          }
-        } catch {
-          // Not a Kit-exported deck — silently ignore.
+        const progressFile = parsed.zip.file('kit_progress.json');
+        if (progressFile) {
+          const progress = parseKitProgress(await progressFile.async('string'));
+          if (!progress.success) throw new Error(progress.error);
+          progressData = progress.data;
         }
 
         const storeResult = storeEntities(workDb, parsed, progressData);
@@ -440,15 +428,30 @@ function resolveTagNames(importedTags: string[], existing: Set<string>): Map<str
   return resolved;
 }
 
-function storeEntities(
+/**
+ * Stage parsed Anki cards, their source notes/models, and optional Kit history atomically.
+ * @param db - Import database; shared notes may belong to its primary deck.
+ * @param parsed - Parsed source collection, never modified by staging.
+ * @param progressData - Optional Kit-exported states and review logs.
+ * @returns The primary staged deck ID, or a storage error.
+ */
+export function storeEntities(
   db: Database,
   parsed: ParsedApkgLazy,
   progressData?: KitProgressData,
 ): Result<string> {
   // Collect unique tags from all imported notes before starting the transaction.
   const rawTags = new Set<string>();
-  for (const pn of parsed.notes) {
-    for (const t of pn.tags) rawTags.add(t);
+  if (parsed.kitCardMetadata) {
+    for (const card of parsed.cards) {
+      const metadata = Object.hasOwn(parsed.kitCardMetadata.cardsById, card.id) ? parsed.kitCardMetadata.cardsById[card.id] : undefined;
+      if (!metadata) return { success:false, error:'This file’s Kit card details do not match its cards.' };
+      for (const tag of metadata.tags) rawTags.add(tag);
+    }
+  } else {
+    for (const pn of parsed.notes) {
+      for (const t of pn.tags) rawTags.add(t);
+    }
   }
   const existingTagNames = getExistingTagNames(db);
   const tagRenameMap = resolveTagNames([...rawTags], existingTagNames);
@@ -619,7 +622,7 @@ function storeEntities(
         noteId: kitNoteId,
         front,
         back,
-        tags: parsedNote.tags.map(t => tagRenameMap.get(t) ?? t),
+        tags: (parsed.kitCardMetadata?.cardsById[pc.id]?.tags ?? parsedNote.tags).map(t => tagRenameMap.get(t) ?? t),
         createdAt: parsedNote.createdAt || now,
         updatedAt: now,
       };
@@ -631,9 +634,9 @@ function storeEntities(
 
       // Restore FSRS state if this deck was exported from Kit with progress.
       if (progressData) {
-        const contentKey = `${card.front}\x1f${card.back}`;
-
-        const savedState = progressData.statesByContent[contentKey];
+        const restored = getKitCardProgress(progressData, pc.id, card.front, card.back);
+        if (!restored.success) { rollbackTransaction(db); return restored; }
+        const savedState = restored.data.state;
         if (savedState) {
           const stateResult = setCardState(db, { ...savedState, cardId: card.id });
           if (!stateResult.success) {
@@ -642,7 +645,7 @@ function storeEntities(
           }
         }
 
-        const savedLogs = progressData.logsByContent[contentKey];
+        const savedLogs = restored.data.logs;
         if (savedLogs) {
           for (const log of savedLogs) {
             const logResult = insertReviewLog(db, { ...log, id: uuidv4(), cardId: card.id });
@@ -750,6 +753,9 @@ async function storeMediaBatched(
  * @returns User-friendly error message.
  */
 function friendlyParseError(raw: string): string {
+  if (raw.includes('Pictures or audio in this package could not be read')) {
+    return 'Pictures or audio in this package could not be read. Export it from Anki again with media included.';
+  }
   if (raw.includes('newer Anki') || raw.includes('protobuf') || raw.includes('compatibility')) {
     return raw; // Already user-friendly from the parser
   }
@@ -773,7 +779,7 @@ function friendlyParseError(raw: string): string {
  * @param deckId - The Kit deck UUID to extract.
  * @returns A DeckSnapshot, or null on failure.
  */
-function buildSnapshotFromTempDb(
+export function buildSnapshotFromTempDb(
   db: Database,
   deckId: string,
 ): DeckSnapshot | null {
@@ -786,16 +792,27 @@ function buildSnapshotFromTempDb(
   if (!cardsResult.success) return null;
 
   const statesResult = getCardStatesByDeck(db, deckId);
-  const cardStates = statesResult.success ? statesResult.data : [];
+  if (!statesResult.success) return null;
+  const cardStates = statesResult.data;
 
   const logsResult = getReviewLogsByDeck(db, deckId);
-  const reviewLogs = logsResult.success ? logsResult.data : [];
+  if (!logsResult.success) return null;
+  const reviewLogs = logsResult.data;
 
-  const notesResult = getNotesByDeck(db, deckId);
-  const notes = notesResult.success ? notesResult.data : [];
+  // Anki notes and models are shared across decks. Staging keeps them under
+  // the primary deck, but each independent database needs its full dependency
+  // closure. Keep IDs/references intact and rehome only ownership metadata.
+  const notesResult = getNotesForDeckSnapshot(db, deckId);
+  if (!notesResult.success) return null;
+  const notes = notesResult.data.map(note => ({ ...note, deckId }));
 
-  const noteTypesResult = getNoteTypesByDeck(db, deckId);
-  const noteTypes = noteTypesResult.success ? noteTypesResult.data : [];
+  const noteTypesResult = getNoteTypesForDeckSnapshot(db, deckId);
+  if (!noteTypesResult.success) return null;
+  const noteTypes = noteTypesResult.data.map(noteType => ({ ...noteType, deckId }));
+  const noteIds = new Set(notes.map(note => note.id));
+  const noteTypeIds = new Set(noteTypes.map(noteType => noteType.id));
+  if (cardsResult.data.some(card => card.noteId !== null && !noteIds.has(card.noteId))
+    || notes.some(note => !noteTypeIds.has(note.noteTypeId))) return null;
 
   const settingsResult = getDeckSettings(db, deckId);
   const settings: SyncDeckSettings = settingsResult.success

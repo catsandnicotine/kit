@@ -20,6 +20,34 @@ export async function saveBrowserMedia(deckId: string, filename: string, data: U
   catch (error) { await writer.abort().catch(() => {}); throw error; }
 }
 
+/** Stream one new attachment into OPFS without reading its entire contents into JS.
+ * @param deckId - Owner deck.
+ * @param filename - New unique filename; existing files are never replaced.
+ * @param data - File-backed photo or video Blob.
+ * @returns Completion after close; a failed newly created file is removed.
+ */
+export async function saveBrowserMediaBlob(deckId: string, filename: string, data: Blob): Promise<void> {
+  const dir = await directory(deckId, true);
+  const name = encodeURIComponent(filename);
+  try {
+    await dir.getFileHandle(name);
+    throw new Error('Media already exists');
+  } catch (error) {
+    if (!(error instanceof DOMException) || error.name !== 'NotFoundError') throw error;
+  }
+  const file = await dir.getFileHandle(name, { create:true });
+  let writer: FileSystemWritableFileStream | null = null;
+  try {
+    writer = await file.createWritable();
+    await writer.write(data);
+    await writer.close();
+  } catch (error) {
+    await writer?.abort().catch(() => {});
+    await dir.removeEntry(name).catch(() => {});
+    throw error;
+  }
+}
+
 /** Read a file-backed Blob without loading the whole deck's bytes into memory.
  * @param deckId - Owner deck.
  * @param filename - Original filename.

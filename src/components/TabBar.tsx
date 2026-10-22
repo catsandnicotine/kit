@@ -1,132 +1,24 @@
-/**
- * TabBar — bottom bar with generous Study / Practice controls
- * and a chevron FAB in the bottom-left corner.
- *
- * The chevron expands upward into Tags / Settings pills.
- * Study / Practice use solid fills and text contrast to show selection.
+import type { CSSProperties } from 'react';
+import './TabBar.css';
+import type { LibraryPagePositionProps } from '../types/libraryTools';
+import { LIBRARY_SWIPE_SETTLE_MS } from '../lib/librarySwipe';
+
+/** Identify swipeable library pages without a segmented switch.
+ * @param props - Current mode and accessible direct navigation callback.
+ * @returns Two accessible dots with a restrained traveller following the active drag; no idle motion.
  */
-
-import { useState } from 'react';
-import type { AppMode } from '../App';
-import { hapticTap, hapticNavigate } from '../lib/platform/haptics';
-
-/** Total height reserved for the bar (used for bottom padding on scroll areas). */
-export const TAB_BAR_TOTAL_HEIGHT = 'calc(82px + env(safe-area-inset-bottom))';
-
-interface TabBarProps {
-  mode: AppMode;
-  onChange: (mode: AppMode) => void;
-  onTags: () => void;
-  onSettings: (scrollTo?: string) => void;
-}
-
-export function TabBar({ mode, onChange, onTags, onSettings }: TabBarProps) {
-  const [fabOpen, setFabOpen] = useState(false);
-  const closeFab = () => setFabOpen(false);
-
-  const handleMode = (next: AppMode) => {
-    if (next === mode) return;
-    hapticTap();
-    onChange(next);
-  };
-
-  return (
-    <>
-      {/* Backdrop */}
-      {fabOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 backdrop-enter"
-          onClick={closeFab}
-        />
-      )}
-
-      {/* FAB expansion — Tags + Settings pills */}
-      {fabOpen && (
-        <div
-          className="fixed z-50 flex flex-col items-start gap-2.5"
-          style={{
-            bottom: 'calc(82px + env(safe-area-inset-bottom) + 0.25rem)',
-            left: 'max(1.25rem, env(safe-area-inset-left))',
-          }}
-        >
-          <button
-            onClick={() => { closeFab(); hapticNavigate(); onTags(); }}
-            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter"
-            style={{ animationDelay: '0.04s' }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
-              <line x1="7" y1="7" x2="7.01" y2="7" />
-            </svg>
-            Tags
-          </button>
-          <button
-            onClick={() => { closeFab(); hapticNavigate(); onSettings(); }}
-            className="flex items-center gap-2 px-5 py-3 rounded-full text-[var(--kit-pill-text)] text-sm font-medium shadow-lg active:opacity-80 transition-opacity kit-pill fab-item-enter"
-            style={{ animationDelay: '0s' }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            Settings
-          </button>
-        </div>
-      )}
-
-      {/* Chevron — bottom-left corner */}
-      <button
-        onClick={() => { hapticTap(); setFabOpen(v => !v); }}
-        className="fixed z-50 w-12 h-12 rounded-full text-[var(--kit-pill-text)] shadow-lg flex items-center justify-center active:scale-95 transition-transform kit-pill"
-        style={{
-          bottom: 'calc(env(safe-area-inset-bottom) + 0.875rem)',
-          left: 'max(1.25rem, env(safe-area-inset-left))',
-        }}
-        aria-label="More"
-      >
-        <svg
-          width="22" height="22" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" strokeWidth="2.5"
-          strokeLinecap="round" strokeLinejoin="round"
-          style={{ transform: fabOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-        >
-          <polyline points="5 15 12 8 19 15" />
-        </svg>
-      </button>
-
-      {/* Study / Practice controls */}
-      <div
-        className="kit-mode-switch fixed z-30"
-        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 0.875rem)' }}
-      >
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => handleMode('learn')}
-            className={`kit-mode-button rounded-full font-semibold transition-colors ${
-              mode === 'learn'
-                ? 'text-[var(--kit-pill-text)] kit-pill'
-                : 'bg-[var(--kit-bg)] text-[#777] dark:text-[#aaa]'
-            }`}
-            aria-label="Study" title="Scheduled cards"
-            aria-pressed={mode === 'learn'}
-          >
-            Study
-          </button>
-
-          <button
-            onClick={() => handleMode('review')}
-            className={`kit-mode-button rounded-full font-semibold transition-colors ${
-              mode === 'review'
-                ? 'text-[var(--kit-pill-text)] kit-pill'
-                : 'bg-[var(--kit-bg)] text-[#777] dark:text-[#aaa]'
-            }`}
-            aria-label="Practice" title="Practice without changing review dates"
-            aria-pressed={mode === 'review'}
-          >
-            Practice
-          </button>
-        </div>
-      </div>
-    </>
-  );
+export function TabBar({ mode, onChange, pageProgress, returning = false }: LibraryPagePositionProps) {
+  const controlledPosition = mode === 'learn' ? 0 : 1;
+  const position = pageProgress !== undefined && Number.isFinite(pageProgress) ? Math.max(0, Math.min(1, pageProgress)) : controlledPosition;
+  const travellerOpacity = Math.min(1, position * 8, (1 - position) * 8);
+  // Retire the moving paint layer after its fade, rather than retaining an
+  // invisible transformed pixel beside the two permanent anchors.
+  const showTraveller = returning || (position > 0 && position < 1);
+  return <nav className="library-page-position" aria-label={`Library pages, ${mode === 'learn' ? 'Study' : 'Practice'}`}>
+    <div className="library-page-dots" data-returning={returning} style={{ '--library-page-progress': position, '--library-traveller-opacity': travellerOpacity, '--library-page-settle-duration': `${LIBRARY_SWIPE_SETTLE_MS}ms` } as CSSProperties}>
+      {showTraveller && <span className="library-page-traveller" aria-hidden="true" />}
+      <button type="button" aria-label="Study decks" aria-current={mode === 'learn' ? 'page' : undefined} onClick={() => onChange('learn')}><span /></button>
+      <button type="button" aria-label="Practice decks" aria-current={mode === 'review' ? 'page' : undefined} onClick={() => onChange('review')}><span /></button>
+    </div>
+  </nav>;
 }

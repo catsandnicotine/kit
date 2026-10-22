@@ -17,12 +17,12 @@
 import type { Database } from 'sql.js';
 import type { EditFile, EditOp } from './types';
 import {
-  insertCard,
+  insertReplayCard,
   updateCard,
   deleteCard,
   setCardState,
   setCardSuspended,
-  insertReviewLog,
+  insertReplayReview,
   renameDeck,
   upsertTagColor,
   renameTagInCards,
@@ -33,7 +33,13 @@ import {
   commitTransaction,
   rollbackTransaction,
 } from '../db/queries';
-import type { CardState } from '../../types';
+import type { CardState, Result } from '../../types';
+import { parseHLC } from './hlc';
+
+function must<T>(result: Result<T>): T {
+  if (!result.success) throw new Error(result.error);
+  return result.data;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -64,11 +70,12 @@ export function replayEdits(
   }
 
   let lastHLC: string | null = null;
+  const nextDeleted = new Set(deletedCardIds);
 
   try {
     for (const edit of edits) {
       for (const op of edit.ops) {
-        replayOp(db, op, edit.deckId, deletedCardIds);
+        replayOp(db, op, edit.deckId, nextDeleted, Math.floor((parseHLC(edit.hlc)?.wallMs ?? 0) / 1000));
       }
       lastHLC = edit.hlc;
     }
@@ -80,6 +87,8 @@ export function replayEdits(
       return null;
     }
 
+    deletedCardIds.clear();
+    nextDeleted.forEach(id => deletedCardIds.add(id));
     return lastHLC;
   } catch (e) {
     console.warn('[replay] Error during replay, rolling back:', e);
@@ -105,6 +114,7 @@ function replayOp(
   op: EditOp,
   deckId: string,
   deletedCardIds: Set<string>,
+  at: number,
 ): void {
   switch (op.type) {
     case 'review':
@@ -123,22 +133,22 @@ function replayOp(
       replayCardSuspend(db, op, deletedCardIds);
       break;
     case 'deck_rename':
-      replayDeckRename(db, op, deckId);
+      replayDeckRename(db, op, deckId, at);
       break;
     case 'deck_settings':
       replayDeckSettings(db, op, deckId);
       break;
     case 'tag_add':
-      replayTagAdd(db, op);
+      replayTagAdd(db, op, at);
       break;
     case 'tag_rename':
-      replayTagRename(db, op, deckId);
+      replayTagRename(db, op, deckId, at);
       break;
     case 'tag_delete':
-      replayTagDelete(db, op, deckId);
+      replayTagDelete(db, op, deckId, at);
       break;
     case 'deck_tag_add':
-      replayDeckTagAdd(db, op, deckId);
+      replayDeckTagAdd(db, op, deckId, at);
       break;
     case 'deck_tag_remove':
       replayDeckTagRemove(db, op, deckId);
@@ -146,6 +156,7 @@ function replayOp(
     case 'note_edit':
       replayNoteEdit(db, op);
       break;
+    default: throw new Error('Unknown sync operation');
   }
 }
 
@@ -160,19 +171,10 @@ function replayReview(
 ): void {
   if (deletedCardIds.has(op.cardId)) return;
 
-  // Always insert the review log (idempotent via unique logId)
-  try {
-    insertReviewLog(db, {
-      id: op.logId,
-      cardId: op.cardId,
-      rating: op.rating,
-      reviewedAt: op.reviewedAt,
-      elapsed: op.elapsed,
-      scheduledDays: op.scheduledDays,
-    });
-  } catch {
-    // Duplicate logId — already replayed, skip
-  }
+  must(insertReplayReview(db, {
+    id:op.logId, cardId:op.cardId, rating:op.rating, reviewedAt:op.reviewedAt,
+    elapsed:op.elapsed, scheduledDays:op.scheduledDays,
+  }));
 
   // Set card state only if this review is newer than current
   setCardStateIfNewer(db, op.newState);
@@ -186,16 +188,8 @@ function replayCardAdd(
   // Don't resurrect deleted cards
   if (deletedCardIds.has(op.card.id)) return;
 
-  // INSERT OR IGNORE — if card already exists, skip
-  try {
-    insertCard(db, op.card);
-  } catch {
-    // Already exists
-  }
-
-  if (op.state) {
-    setCardState(db, op.state);
-  }
+  if (!must(insertReplayCard(db, op.card))) return;
+  if (op.state) must(setCardState(db, op.state));
 }
 
 function replayCardEdit(
@@ -205,7 +199,6 @@ function replayCardEdit(
 ): void {
   if (deletedCardIds.has(op.cardId)) return;
 
-  try {
     const rows = db.exec(
       'SELECT updated_at, front, back, tags FROM cards WHERE id = ?',
       [op.cardId],
@@ -214,7 +207,7 @@ function replayCardEdit(
     const row = rows[0]!.values[0]!;
     const currentUpdatedAt = Number(row[0]);
 
-    if (op.updatedAt > currentUpdatedAt) {
+    if (op.updatedAt >= currentUpdatedAt) {
       const front = op.fields.front;
       const back = op.fields.back;
       const tags = op.fields.tags;
@@ -228,19 +221,16 @@ function replayCardEdit(
           try { curTags = JSON.parse(String(row[3])); } catch { /* keep empty */ }
         }
 
-        updateCard(
+        must(updateCard(
           db,
           op.cardId,
           front ?? curFront,
           back ?? curBack,
           tags ?? curTags,
           op.updatedAt,
-        );
+        ));
       }
     }
-  } catch (e) {
-    console.warn('[replay] card_edit failed:', e);
-  }
 }
 
 function replayCardDelete(
@@ -248,12 +238,8 @@ function replayCardDelete(
   op: Extract<EditOp, { type: 'card_delete' }>,
   deletedCardIds: Set<string>,
 ): void {
+  must(deleteCard(db, op.cardId));
   deletedCardIds.add(op.cardId);
-  try {
-    deleteCard(db, op.cardId);
-  } catch {
-    // Already deleted
-  }
 }
 
 function replayCardSuspend(
@@ -262,16 +248,16 @@ function replayCardSuspend(
   deletedCardIds: Set<string>,
 ): void {
   if (deletedCardIds.has(op.cardId)) return;
-  setCardSuspended(db, op.cardId, op.suspended);
+  must(setCardSuspended(db, op.cardId, op.suspended));
 }
 
 function replayDeckRename(
   db: Database,
   op: Extract<EditOp, { type: 'deck_rename' }>,
   deckId: string,
+  at: number,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
-  renameDeck(db, deckId, op.name, now);
+  must(renameDeck(db, deckId, op.name, at));
 }
 
 function replayDeckSettings(
@@ -282,7 +268,6 @@ function replayDeckSettings(
   const s = op.settings;
 
   // Upsert each setting that is present
-  try {
     // Ensure a row exists
     db.run(
       `INSERT OR IGNORE INTO deck_settings (deck_id) VALUES (?)`,
@@ -305,44 +290,48 @@ function replayDeckSettings(
       vals.push(deckId);
       db.run(`UPDATE deck_settings SET ${sets.join(', ')} WHERE deck_id = ?`, vals);
     }
-  } catch (e) {
-    console.warn('[replay] deck_settings failed:', e);
-  }
 }
 
 function replayTagAdd(
   db: Database,
   op: Extract<EditOp, { type: 'tag_add' }>,
+  at: number,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
-  upsertTagColor(db, op.tag, op.color ?? '', now);
+  const now = at;
+  const result = upsertTagColor(db, op.tag, op.color ?? '', now);
+  if (!result.success) throw new Error(result.error);
 }
 
 function replayTagRename(
   db: Database,
   op: Extract<EditOp, { type: 'tag_rename' }>,
   deckId: string,
+  at: number,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
-  renameTagInCards(db, op.oldTag, op.newTag, now, deckId);
+  const now = at;
+  const result = renameTagInCards(db, op.oldTag, op.newTag, now, deckId);
+  if (!result.success) throw new Error(result.error);
 }
 
 function replayTagDelete(
   db: Database,
   op: Extract<EditOp, { type: 'tag_delete' }>,
   deckId: string,
+  at: number,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
-  deleteTagFromCards(db, op.tag, now, deckId);
+  const now = at;
+  const result = deleteTagFromCards(db, op.tag, now, deckId);
+  if (!result.success) throw new Error(result.error);
 }
 
 function replayDeckTagAdd(
   db: Database,
   op: Extract<EditOp, { type: 'deck_tag_add' }>,
   deckId: string,
+  at: number,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
-  addTagToDeck(db, deckId, op.tag, now);
+  const now = at;
+  must(addTagToDeck(db, deckId, op.tag, now));
 }
 
 function replayDeckTagRemove(
@@ -350,27 +339,23 @@ function replayDeckTagRemove(
   op: Extract<EditOp, { type: 'deck_tag_remove' }>,
   deckId: string,
 ): void {
-  removeTagFromDeck(db, deckId, op.tag);
+  must(removeTagFromDeck(db, deckId, op.tag));
 }
 
 function replayNoteEdit(
   db: Database,
   op: Extract<EditOp, { type: 'note_edit' }>,
 ): void {
-  try {
     const rows = db.exec('SELECT updated_at FROM notes WHERE id = ?', [op.noteId]);
     if (!rows.length || !rows[0]!.values.length) return;
     const currentUpdatedAt = Number(rows[0]!.values[0]![0]);
 
-    if (op.updatedAt > currentUpdatedAt) {
+    if (op.updatedAt >= currentUpdatedAt) {
       db.run(
         'UPDATE notes SET fields = ?, updated_at = ? WHERE id = ?',
         [JSON.stringify(op.fields), op.updatedAt, op.noteId],
       );
     }
-  } catch (e) {
-    console.warn('[replay] note_edit failed:', e);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -385,21 +370,10 @@ function replayNoteEdit(
  * @param state - The incoming CardState.
  */
 function setCardStateIfNewer(db: Database, state: CardState): void {
-  try {
-    const rows = db.exec(
-      'SELECT last_review FROM card_states WHERE card_id = ?',
-      [state.cardId],
-    );
-
-    if (rows.length && rows[0]!.values.length) {
-      const currentLastReview = Number(rows[0]!.values[0]![0]) || 0;
-      const incomingLastReview = state.lastReview ?? 0;
-      if (incomingLastReview < currentLastReview) return;
-    }
-
-    setCardState(db, state);
-  } catch {
-    // Card state row may not exist yet — insert it
-    setCardState(db, state);
+  const rows = db.exec('SELECT last_review FROM card_states WHERE card_id = ?', [state.cardId]);
+  if (rows.length && rows[0]!.values.length) {
+    const currentLastReview = Number(rows[0]!.values[0]![0]) || 0;
+    if ((state.lastReview ?? 0) < currentLastReview) return;
   }
+  must(setCardState(db, state));
 }

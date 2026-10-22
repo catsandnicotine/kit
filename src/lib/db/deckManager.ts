@@ -18,11 +18,13 @@ import type { Database, SqlJsStatic } from 'sql.js';
 import { ALL_TABLES, ENABLE_FOREIGN_KEYS } from '../db';
 import { runMigrations } from '../db/migrations';
 import type { SyncStorage } from '../sync/syncStorage';
-import type { DeckSnapshot, EditOp } from '../sync/types';
+import type { DeckSnapshot, EditOp, EditFile } from '../sync/types';
 import { createHLC, type HLCClock } from '../sync/hlc';
 import { writeEdit, flushPendingEdits } from '../sync/editWriter';
 import { readEditsAfter, readSnapshot } from '../sync/editReader';
 import { replayEdits } from '../sync/replay';
+import { mergeJournalEdits, sameJournalBase, snapshotJournal } from '../sync/journal';
+import { compareHLC } from '../sync/hlc';
 import { compactDeck, snapshotCurrentState } from '../sync/compact';
 import {
   initRegistry,
@@ -52,6 +54,7 @@ import {
   commitTransaction,
   getAllDecks,
   getAllDeckCardCounts,
+  replaceDeckForReplay,
 } from '../db/queries';
 
 // ---------------------------------------------------------------------------
@@ -94,6 +97,15 @@ const deletedCards = new Map<string, Set<string>>();
 
 /** HLC of the last replayed edit per deck. */
 const watermarks = new Map<string, string>();
+
+interface JournalState { base: DeckSnapshot; edits: EditFile[]; needsReplay?: boolean }
+interface ReconciledJournal { count: number; snapshot: DeckSnapshot | null }
+const journals = new Map<string, JournalState>();
+const revisions = new Map<string, number>();
+const localWrites = new Map<string, Set<Promise<unknown>>>();
+const reconciliation = new Map<string, Promise<ReconciledJournal>>();
+function changed(deckId: string): void { revisions.set(deckId, (revisions.get(deckId) ?? 0) + 1); }
+
 
 /**
  * Decks whose most recent openDeck attempt could not produce a usable
@@ -243,12 +255,24 @@ export async function openDeck(deckId: string): Promise<Database | null> {
 
     markDeckHealthy(deckId);
 
-    // Replay any edits newer than the snapshot
-    const deleted = new Set(snapshot.deletedCardIds ?? []);
-    const edits = await readEditsAfter(_storage, deckId, snapshot.compactedThrough);
-    if (edits.length > 0) {
-      replayEdits(db, edits, deleted);
+    // A legacy snapshot is a fixed migration baseline. Never advance its
+    // coverage just because our own or a later remote edit arrived first.
+    const checkpoint = snapshotJournal(snapshot);
+    const observed = await readEditsAfter(_storage, deckId, '');
+    const edits = mergeJournalEdits(deckId, checkpoint.edits,
+      observed.filter(edit => compareHLC(edit.hlc, checkpoint.base.compactedThrough) > 0));
+    const state = { base:checkpoint.base, edits };
+    let deleted = new Set(snapshot.deletedCardIds ?? []);
+    if (edits.length !== checkpoint.edits.length) {
+      const prepared = await prepareJournal(state);
+      if (_writeLocalSnapshot) await _writeLocalSnapshot(deckId, JSON.stringify(prepared.snapshot));
+      db.close();
+      db = prepared.db;
+      snapshot = prepared.snapshot;
+      deleted = prepared.deleted;
     }
+    journals.set(deckId, state);
+    _clock?.observe(edits.at(-1)?.hlc ?? state.base.compactedThrough);
 
     // Track state
     openDbs.set(deckId, db);
@@ -345,6 +369,8 @@ export function closeDeck(deckId: string): void {
   if (db) {
     try { db.close(); } catch { /* already closed */ }
     openDbs.delete(deckId);
+    journals.delete(deckId);
+    changed(deckId);
     deletedCards.delete(deckId);
     watermarks.delete(deckId);
   }
@@ -404,72 +430,116 @@ export async function applyAndSync(
   ops: EditOp[],
 ): Promise<string | null> {
   if (!_storage || !_clock || ops.length === 0) return null;
-
-  // Write edit file to persistent storage
-  const hlc = await writeEdit(_storage, _clock, deckId, ops);
-
-  // Update watermark
-  if (hlc) {
-    watermarks.set(deckId, hlc);
-  }
-
-  return hlc;
+  const storage = _storage;
+  const clock = _clock;
+  const recordedOps = JSON.parse(JSON.stringify(ops)) as EditOp[];
+  changed(deckId);
+  const pending = localWrites.get(deckId) ?? new Set<Promise<unknown>>();
+  localWrites.set(deckId, pending);
+  const task = (async () => {
+    const hlc = await writeEdit(storage, clock, deckId, recordedOps);
+    const journal = journals.get(deckId);
+    if (hlc && journal) {
+      journal.edits = mergeJournalEdits(deckId, journal.edits,
+        [{ v:1, hlc, deviceId:clock.deviceId, deckId, ops:recordedOps }]);
+      journal.needsReplay = true;
+      watermarks.set(deckId, journal.edits.at(-1)?.hlc ?? journal.base.compactedThrough);
+    }
+    return hlc;
+  })();
+  pending.add(task);
+  try { return await task; }
+  finally { pending.delete(task); changed(deckId); }
 }
 
-/**
- * Sync a deck by replaying any new edits from iCloud.
- *
- * @param deckId - UUID of the deck.
- * @returns Number of new edits replayed.
+async function prepareJournal(state: JournalState): Promise<{ db: Database; snapshot: DeckSnapshot; deleted: Set<string> }> {
+  if (!_SQL) throw new Error('The deck database is not ready.');
+  const db = await buildDbFromSnapshot(_SQL, state.base);
+  if (!db) throw new Error('The saved sync baseline could not be opened.');
+  try {
+    const deleted = new Set(state.base.deletedCardIds ?? []);
+    if (state.edits.length && !replayEdits(db, state.edits, deleted)) throw new Error('A sync edit could not be applied. Its journal has been kept.');
+    const snapshot = snapshotCurrentState(db, state.base.deckId, state.edits.at(-1)?.hlc ?? state.base.compactedThrough, deleted);
+    if (!snapshot) throw new Error('The reconciled deck could not be read completely.');
+    snapshot.replay = { v:1, base:state.base, edits:state.edits };
+    return { db, snapshot, deleted };
+  } catch (error) { db.close(); throw error; }
+}
+
+async function reconcileJournal(deckId: string, force: boolean): Promise<ReconciledJournal> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await Promise.allSettled([...(localWrites.get(deckId) ?? [])]);
+    const db = openDbs.get(deckId);
+    const state = journals.get(deckId);
+    const storage = _storage;
+    if (!db || !state || !storage) return { count:0, snapshot:null };
+    const revision = revisions.get(deckId) ?? 0;
+    const [observed, peer] = await Promise.all([readEditsAfter(storage, deckId, ''), readSnapshot(storage, deckId)]);
+    let peerEdits: EditFile[] = [];
+    if (peer?.replay) {
+      const checkpoint = snapshotJournal(peer);
+      if (!sameJournalBase(state.base, checkpoint.base)) throw new Error('This deck has different saved sync baselines. Local study has been kept; recovery is needed before merging.');
+      peerEdits = checkpoint.edits;
+    }
+    const edits = mergeJournalEdits(deckId, state.edits, peerEdits,
+      observed.filter(edit => compareHLC(edit.hlc, state.base.compactedThrough) > 0));
+    const count = edits.length - state.edits.length;
+    if (!force && count === 0 && !state.needsReplay) return { count:0, snapshot:null };
+    const prepared = await prepareJournal({ base:state.base, edits });
+    try {
+      if (openDbs.get(deckId) !== db) return { count:0, snapshot:null };
+      if ((revisions.get(deckId) ?? 0) !== revision || localWrites.get(deckId)?.size) continue;
+      const data = JSON.stringify(prepared.snapshot);
+      // A checkpoint is durable before its canonical state replaces the live
+      // cache. New writes during this await stay in their independent journal.
+      if (_writeLocalSnapshot) await _writeLocalSnapshot(deckId, data);
+      else await storage.writeFile(`${deckId}/snapshot.json`, data);
+      if ((revisions.get(deckId) ?? 0) !== revision || localWrites.get(deckId)?.size) continue;
+      if (openDbs.get(deckId) !== db) return { count:0, snapshot:null };
+      const replaced = replaceDeckForReplay(db, prepared.snapshot);
+      if (!replaced.success) throw new Error(replaced.error);
+      journals.set(deckId, { base:state.base, edits });
+      _clock?.observe(edits.at(-1)?.hlc ?? state.base.compactedThrough);
+      deletedCards.set(deckId, prepared.deleted);
+      watermarks.set(deckId, prepared.snapshot.compactedThrough);
+      changed(deckId);
+      return { count, snapshot:prepared.snapshot };
+    } finally { prepared.db.close(); }
+  }
+  // Continuous local work takes precedence. The existing foreground retry can
+  // reconcile later; never publish a checkpoint with unobserved local writes.
+  throw new Error('Sync is waiting for the current card changes to finish.');
+}
+
+function queueReconciliation(deckId: string, force: boolean): Promise<ReconciledJournal> {
+  const previous = reconciliation.get(deckId);
+  if (previous && !force) return previous;
+  const task = (async () => {
+    if (previous) await previous;
+    return reconcileJournal(deckId, force);
+  })();
+  reconciliation.set(deckId, task);
+  void task.finally(() => { if (reconciliation.get(deckId) === task) reconciliation.delete(deckId); }).catch(() => {});
+  return task;
+}
+
+/** Replay late or out-of-order remote edits from the retained, canonical journal.
+ * @param deckId - Deck to reconcile without replacing its active connection.
+ * @returns Number of newly observed identities; duplicate delivery is harmless.
  */
 export async function syncDeck(deckId: string): Promise<number> {
-  const db = openDbs.get(deckId);
-  if (!db || !_storage) return 0;
-
-  const watermark = watermarks.get(deckId) ?? '';
-  const edits = await readEditsAfter(_storage, deckId, watermark);
-  if (edits.length === 0) return 0;
-
-  const deleted = deletedCards.get(deckId) ?? new Set<string>();
-  const lastHLC = replayEdits(db, edits, deleted);
-  if (lastHLC) {
-    watermarks.set(deckId, lastHLC);
-  }
-
-  return edits.length;
+  return (await queueReconciliation(deckId, false)).count;
 }
 
-/**
- * Compact a deck's edit files into a snapshot.
- * Call this after a study session ends.
- *
- * @param deckId - UUID of the deck.
- * @returns True if compaction succeeded.
+/** Save a verified local checkpoint and mirror it without deleting any journals.
+ * @param deckId - Deck to checkpoint after all observed edits were actually replayed.
+ * @returns True only after the precise checkpoint was mirrored; local data remains durable on failure.
  */
 export async function compactDeckEdits(deckId: string): Promise<boolean> {
-  const db = openDbs.get(deckId);
-  if (!db || !_storage) return false;
-
-  const deleted = deletedCards.get(deckId) ?? new Set<string>();
-
-  // Always snapshot the current in-memory DB state so edits from this
-  // session survive app restarts — even if individual edit files are lost
-  // or iCloud was unavailable during the session.
-  const snap = snapshotCurrentState(db, deckId, watermarks.get(deckId) ?? '', deleted);
-  if (snap) {
-    const snapJson = JSON.stringify(snap);
-    // Write to native local storage (iOS) — awaited so the snapshot is
-    // reliably on disk before the function returns. This is the primary
-    // persistence path; iCloud is secondary (best-effort).
-    if (_writeLocalSnapshot) {
-      try { await _writeLocalSnapshot(deckId, snapJson); } catch { /* best effort */ }
-    }
-    // Write to sync storage (iCloud on native, localStorage in browser)
-    // so the snapshot is available on next openDeck regardless of platform
-    _storage.writeFile(`${deckId}/snapshot.json`, snapJson).catch(() => {});
-  }
-
-  return compactDeck(_storage, db, deckId, deleted);
+  if (!_storage) return false;
+  const result = await queueReconciliation(deckId, true);
+  if (!result.snapshot) return false;
+  return compactDeck(_storage, result.snapshot);
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +563,9 @@ export async function createDeckFromSnapshot(
     db = await buildDbFromSnapshot(_SQL, snapshot);
     if (!db) return null;
 
-    const snapshotJson = JSON.stringify(snapshot);
+    const initialJournal = snapshotJournal(snapshot);
+    const checkpoint = { ...snapshot, replay:{ v:1 as const, base:initialJournal.base, edits:initialJournal.edits } };
+    const snapshotJson = JSON.stringify(checkpoint);
 
     // A newly-created deck must have one durable copy before it is placed in
     // the in-memory cache or registry. Native callers configure the local
@@ -518,6 +590,9 @@ export async function createDeckFromSnapshot(
     // Persistence succeeded. It is now safe to expose the database and update
     // the registry so the deck appears in the UI.
     openDbs.set(snapshot.deckId, db);
+    journals.set(snapshot.deckId, initialJournal);
+    _clock.observe(initialJournal.edits.at(-1)?.hlc ?? initialJournal.base.compactedThrough);
+    changed(snapshot.deckId);
     deletedCards.set(snapshot.deckId, new Set(snapshot.deletedCardIds ?? []));
     watermarks.set(snapshot.deckId, snapshot.compactedThrough);
 

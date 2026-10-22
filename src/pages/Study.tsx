@@ -1,4 +1,16 @@
-import { CardFaceIndicator } from '../components/CardFaceIndicator';
+import { HoldEditAction } from '../components/HoldEditAction';
+import { useHoldToEdit } from '../hooks/useHoldToEdit';
+import { HoldEditFeedback } from '../components/HoldEditFeedback';
+import { CardTagRow } from '../components/CardTagRow';
+import { CardScrollFrame } from '../components/CardScrollFrame';
+import { CardTurnFrame } from '../components/CardTurnFrame';
+import { useCardTurn } from '../hooks/useCardTurn';
+import { useCardSeen } from '../hooks/useCardSeen';
+import { CardSeenNotice } from '../components/CardSeenNotice';
+import { useStudyVideoMedia } from '../hooks/useStudyVideoMedia';
+import type { CardFace } from '../types/editorUi';
+import { ModeAtmosphere } from '../components/ModeAtmosphere';
+import { StudyFooter } from '../components/StudyFooter';
 import { UiIcon } from '../components/UiIcon';
 import { SessionFinish } from '../components/SessionFinish';
 import { usePracticeDeck } from '../hooks/usePracticeDeck';
@@ -21,7 +33,7 @@ import { StudyProgressBar } from '../components/StudyProgressBar';
  */
 
 import { ShowAnswerButton } from '../components/ShowAnswerButton';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Database } from 'sql.js';
 import { RatingGlyph } from '../components/RatingGlyph';
 import type { Card, Rating } from '../types';
@@ -30,11 +42,15 @@ import { useChoiceFeedback } from '../hooks/useChoiceFeedback';
 import { ReviewPassView } from '../components/ReviewPassView';
 import { useDeckMedia } from '../hooks/useDeckMedia';
 import { useTheme } from '../hooks/useTheme';
-import { hapticLongPress, hapticTap } from '../lib/platform/haptics';
+import { hapticTap } from '../lib/platform/haptics';
 import { getDeckStats, getTagsForDeck, type TagCount } from '../lib/db/queries';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { renderMath } from '../lib/renderMath';
 import { CardEditor } from '../components/CardEditor';
+import { renderLegacyCardHints } from '../lib/cardHints';
+import { useSessionEntrance } from '../hooks/useSessionEntrance';
+import type { DeckMediaBootstrap } from '../types/deckMedia';
+import '../components/SessionEntrance.css';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -44,6 +60,7 @@ interface StudyProps {
   db: Database | null;
   deckId: string;
   deckName?: string;
+  mediaBootstrap?: DeckMediaBootstrap | null;
   onExit?: () => void;
   /** Callback to emit sync edit operations (new per-deck architecture). */
   onSyncEdit?: ((ops: import('../lib/sync/types').EditOp[]) => void) | undefined;
@@ -179,7 +196,7 @@ function playAudioSequentially(audios: HTMLAudioElement[]): () => void {
  *
  * This lets deck CSS rules like `.night_mode .card { ... }` work naturally.
  */
-function CardContent({ html, visible, bodyClass }: { html: string; visible: boolean; bodyClass: string }) {
+function CardContent({ html, visible, bodyClass, tagLabels }: { html: string; visible: boolean; bodyClass: string; tagLabels?: ReactNode }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const currentHtmlRef = useRef('');
   const stopPlaybackRef = useRef<(() => void) | null>(null);
@@ -213,7 +230,7 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
 
     const outerOpen = bodyClass ? `<div class="${bodyClass}">` : '';
     const outerClose = bodyClass ? '</div>' : '';
-    const fullHtml = `${outerOpen}<div class="card">${html}</div>${outerClose}`;
+    const fullHtml = `${outerOpen}<div class="card">${renderLegacyCardHints(html)}</div>${outerClose}`;
     if (currentHtmlRef.current === fullHtml) return;
     currentHtmlRef.current = fullHtml;
 
@@ -238,6 +255,8 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
     return stopCurrent;
   }, [html, visible, bodyClass, getAudios, stopCurrent]);
 
+  useStudyVideoMedia(containerRef, `${bodyClass}:${html}`, visible);
+
   // -- Visibility transitions --
   const prevVisibleRef = useRef(visible);
   useEffect(() => {
@@ -255,13 +274,9 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
   }, [visible, startPlayback, stopCurrent, getAudios]);
 
   return (
-    <div
-      className={`card-face card-content w-full h-full min-h-0 overflow-auto ${visible ? '' : 'card-face-hidden'}`}
-      style={{
-        padding: 'max(1.5rem, env(safe-area-inset-top)) max(1.5rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.5rem, env(safe-area-inset-left))',
-      }}
-    >
+    <CardScrollFrame contentKey={html} visible={visible}>
       <div ref={containerRef} />
+      {tagLabels}
       {visible && hasAudio && (
         <button
           type="button"
@@ -272,47 +287,10 @@ function CardContent({ html, visible, bodyClass }: { html: string; visible: bool
           <UiIcon name="repeat" />
         </button>
       )}
-    </div>
+    </CardScrollFrame>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Long-press hook
-// ---------------------------------------------------------------------------
-
-const LONG_PRESS_MS = 500;
-
-function useLongPress(onLongPress: () => void) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelledRef = useRef(false);
-
-  const start = useCallback(() => {
-    cancelledRef.current = false;
-    timerRef.current = setTimeout(() => {
-      if (!cancelledRef.current) {
-        hapticLongPress();
-        onLongPress();
-      }
-    }, LONG_PRESS_MS);
-  }, [onLongPress]);
-
-  const cancel = useCallback(() => {
-    cancelledRef.current = true;
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  return {
-    onPointerDown: start,
-    onPointerUp: cancel,
-    onPointerLeave: cancel,
-    onPointerMove: cancel,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
@@ -325,16 +303,21 @@ function useLongPress(onLongPress: () => void) {
  * @param onEditCard - Called when the user long-presses the card.
  * @param onExit    - Called when the user dismisses the session-complete screen.
  */
-export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSessionComplete }: StudyProps) {
+export default function Study({ db, deckId, deckName, mediaBootstrap, onExit, onSyncEdit, onSessionComplete }: StudyProps) {
+  const entranceRootRef = useRef<HTMLDivElement>(null);
+  const currentFaceRef = useRef<CardFace>('front');
+  const [editingFace, setEditingFace] = useState<CardFace>('front');
   const [editingCard, setEditingCard] = useState<Card | null>(null);
   const [nextDueLabel, setNextDueLabel] = useState<string | null>(null);
   const practice = usePracticeDeck(db, deckId);
 
   const handleEditCard = useCallback((card: Card) => {
+    setEditingFace(currentFaceRef.current);
     setEditingCard(card);
   }, []);
 
   const [deckTags, setDeckTags] = useState<TagCount[]>([]);
+  const tagColors = useMemo(() => new Map(deckTags.map(tag => [tag.tag, tag.color])), [deckTags]);
 
   useEffect(() => {
     if (!db) return;
@@ -345,11 +328,11 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
   const session = useStudySession(db, deckId, handleEditCard, 0, null, onSyncEdit);
   const {
     phase, frontHtml, backHtml, stats, errorMessage, canUndo, ratingPreviews,
-     currentCardLearningState,
     flip, rate,  undo, editCurrentCard, updateCurrentCardInQueue,
   } = session;
+  currentFaceRef.current = phase === 'back' ? 'back' : 'front';
   const choiceFeedback = useChoiceFeedback<Rating>(rating => { void rate(rating); });
-  const { rewriteHtml, addMediaFile, loading: mediaLoading } = useDeckMedia(db, deckId);
+  const { rewriteHtml, addMediaFile, loading: mediaLoading } = useDeckMedia(db, deckId, mediaBootstrap);
   const { theme } = useTheme();
 
   // Build class strings for the Anki-compatible card wrapper.
@@ -421,7 +404,16 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
     [rewriteHtml, backHtml, mediaLoading],
   );
 
-  const longPressProps = useLongPress(editCurrentCard);
+  const entranceReady = useSessionEntrance({ identity:deckId, ready:!mediaLoading && (phase === 'front' || phase === 'back'), contentKey:resolvedFront, rootRef:entranceRootRef });
+  const hold = useHoldToEdit({ onEdit:editCurrentCard, identity:`${session.currentCard?.id}:${phase}`, disabled:!entranceReady || Boolean(editingCard) || choiceFeedback.pending || mediaLoading || (phase !== 'front' && phase !== 'back') });
+  const seen = useCardSeen({ deckId:session.currentCard?.deckId ?? null, cardId:session.currentCard?.id ?? null,
+    sessionKey:session.seenSessionKey, occurrenceId:session.seenOccurrenceId, mode:'study', face:phase === 'back' ? 'back' : 'front',
+    enabled:entranceReady && (phase === 'front' || phase === 'back'), onFlip:flip });
+  const turn = useCardTurn({
+    face:phase === 'back' ? 'back' : 'front', identity:session.currentCard?.id ?? 'loading',
+    disabled:!entranceReady || Boolean(editingCard) || choiceFeedback.pending || mediaLoading || hold.activated || hold.offered || (phase !== 'front' && phase !== 'back'),
+    locked:hold.locked, onFlip:seen.flip, onGestureStart:hold.dismiss,
+  });
 
   // -------------------------------------------------------------------------
   // Render
@@ -434,36 +426,12 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
         cards={practice.cards}
         {...(deckName !== undefined ? { contextLabel: deckName } : {})}
         rewriteHtml={rewriteHtml}
+        db={db}
+        onSyncEdit={onSyncEdit}
+        onMediaAdded={addMediaFile}
         onDone={onExit ?? practice.close}
         onBack={practice.close}
       />
-    );
-  }
-
-  if (phase === 'loading' || mediaLoading) {
-    return (
-      <div className="flex flex-col min-h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark">
-        <header
-          className="flex items-center gap-3 shrink-0"
-          style={{
-            paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
-            paddingBottom: '0.5rem',
-            paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-            paddingRight: 'max(1rem, env(safe-area-inset-right))',
-          }}
-        >
-          <button
-            onClick={() => { hapticTap(); onExit?.(); }}
-            className="p-2 -ml-2 text-[#6B6B6B] dark:text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
-            aria-label="Back"
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
-          </button>
-        </header>
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-[#6B6B6B] dark:text-[#C4C4C4] text-sm" role="status">Loading…</p>
-        </div>
-      </div>
     );
   }
 
@@ -525,7 +493,8 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
 
 
   return (
-    <div className={`study-session ${phase === 'front' ? 'study-session--question' : ''} flex flex-col h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark select-none`}>
+    <div ref={entranceRootRef} className={`study-session session-entrance ${turn.layoutFace === 'front' ? 'study-session--question' : ''} flex flex-col h-[100dvh] bg-[var(--kit-bg)] text-text-light dark:text-text-dark select-none`} data-entry-ready={entranceReady} aria-busy={!entranceReady} role="region" aria-label="Study session">
+      <ModeAtmosphere mode="study" />
       {/* ── Header ── */}
       <header
         className="flex items-center gap-3 shrink-0 border-b border-border-light dark:border-border-dark"
@@ -544,120 +513,56 @@ export default function Study({ db, deckId, deckName, onExit, onSyncEdit, onSess
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
         </button>
         <span className="text-sm font-medium text-[#6B6B6B] dark:text-[#C4C4C4] truncate flex-1 text-center">
-          <DeckName name={deckName ?? 'Study'} /> <span className="study-mode-label">Study</span>
+          <span className="deck-context-label"><DeckName name={deckName ?? 'Cards'} /></span>
         </span>
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 text-sm font-semibold tabular-nums">
-            <span
-              className={`kit-count--new px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && currentCardLearningState === 'new' ? 'bg-blue-500/15' : ''}`}
-              aria-label={`${stats.newCount} new cards`}
-            >
-              {stats.newCount}
-            </span>
-            <span
-              className={`kit-count--learning px-1.5 py-0.5 rounded ${(phase === 'front' || phase === 'back') && (currentCardLearningState === 'learning' || currentCardLearningState === 'relearning') ? 'bg-red-500/15' : ''}`}
-              aria-label={`${stats.learningCount} learning cards`}
-            >
-              {stats.learningCount}
-            </span>
-            <span className={`kit-count--review px-1.5 py-0.5 rounded ${currentCardLearningState === 'review' ? 'bg-green-500/15' : ''}`} aria-label={`${stats.reviewCount} review cards`}>{stats.reviewCount}</span>
-          </div>
-        </div>
+        <span className="study-edit-slot"><button type="button" onClick={hold.edit} disabled={!entranceReady || choiceFeedback.pending} className="study-edit-access" aria-label="Edit current face">Edit</button></span>
       </header>
 
+      <CardSeenNotice error={seen.error} onDismiss={seen.dismissError} />
       {/* ── Progress bar ── */}
       <StudyProgressBar progress={session.progress} />
 
-      <CardFaceIndicator face={phase === 'front' ? 'front' : 'back'} />
 
       {/* ── Card area ── */}
-      <div
-        className={`flex-1 min-h-0 relative overflow-hidden flex flex-col study-card-area ${phase === 'front' ? 'study-card-area--question cursor-pointer' : ''}`}
-        onClick={event => {
-          if (phase !== 'front') return;
-          const target = event.target;
-          if (
-            target instanceof Element
-            && target.closest('button, a, input, select, textarea, audio, video, [contenteditable="true"]')
-          ) return;
-          flip();
-        }}
-        {...longPressProps}
+      <CardTurnFrame
+        controller={turn}
+        locked={!entranceReady || hold.locked}
+        holdBindings={hold.bindings}
+        onEdit={hold.edit}
+        className={`flex-1 min-h-0 relative overflow-hidden flex flex-col study-card-area ${turn.layoutFace === 'front' ? 'study-card-area--question' : ''} ${phase === 'front' ? 'cursor-pointer' : ''}`}
+        front={<CardContent html={resolvedFront} visible={entranceReady && phase === 'front'} bodyClass={bodyClass} />}
+        back={<CardContent html={resolvedBack} visible={entranceReady && phase === 'back'} bodyClass={bodyClass} tagLabels={<CardTagRow tags={session.currentCard?.tags ?? []} colors={tagColors} />} />}
       >
+        {(hold.holding || hold.activated) && <HoldEditFeedback holding={hold.holding} activated={hold.activated} point={hold.point} />}
+        {hold.offered && <HoldEditAction onEdit={hold.edit} onDismiss={hold.dismiss} face={phase === 'back' ? 'back' : 'front'} />}
         <p className="sr-only" aria-live="polite">
           {phase === 'back' ? 'Answer shown. Review it, then rate how well you remembered.' : ''}
         </p>
-
-        {/* Front */}
-        <div
-          className={`absolute inset-0 flex items-center justify-center card-face study-question-content bg-[var(--kit-bg)] ${
-            phase === 'front' ? '' : 'card-face-hidden'
-          }`}
-          role="region"
-          aria-label="Question"
-          aria-hidden={phase !== 'front'}
-        >
-          <CardContent html={resolvedFront} visible={phase === 'front'} bodyClass={bodyClass} />
-        </div>
-
-        {/* Back */}
-        <div
-          className={`absolute inset-0 flex items-center justify-center card-face bg-[var(--kit-bg)] ${
-            phase === 'back' ? '' : 'card-face-hidden'
-          }`}
-          role="region"
-          aria-label="Answer"
-          aria-hidden={phase !== 'back'}
-        >
-          <CardContent html={resolvedBack} visible={phase === 'back'} bodyClass={bodyClass} />
-        </div>
-
-        {/* Tag pills — shown on back */}
-        {phase === 'back' && session.currentCard && session.currentCard.tags.length > 0 && (
-          <div className="absolute bottom-4 left-0 right-0 flex flex-wrap justify-center gap-1.5 px-4 pointer-events-none">
-            {session.currentCard.tags.map(tag => (
-              <span
-                key={tag}
-                className="px-2 py-0.5 text-xs text-[#6B6B6B] dark:text-[#C4C4C4] bg-[var(--kit-surface)] rounded-full"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+      </CardTurnFrame>
 
       {/* ── Bottom bar (rating buttons) ── */}
-      <div className={`study-footer ${phase === 'front' ? 'study-footer--question' : ''}`}>
-        <div className="study-controls">
-          {phase === 'front' && <div className="study-controls-main"><ShowAnswerButton onReveal={flip} /></div>}
-          <div className="study-tools">
-            <button type="button" onClick={() => { hapticTap(); editCurrentCard(); }} className="kit-icon-button text-[#777] dark:text-[#aaa]" aria-label="Edit this card">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="m15 4 5 5M4 20l5-1L21 7l-5-5L4 14v6Z" /></svg>
-            </button>
-
-            <button type="button" onClick={() => void undo()} disabled={!canUndo} className="kit-icon-button text-[#777] disabled:invisible dark:text-[#aaa]" aria-label="Undo last rating">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12" /></svg>
-            </button>
-          </div>
-          {phase === 'back' && <div className="study-controls-main">
-            <div className="rating-choices" role="group" aria-label="Rate your recall">
+      {!entranceReady && <div className="session-entrance-status" role="status"><span className="sr-only">Opening deck…</span><span className="session-entrance-track" aria-hidden="true" /></div>}
+      <StudyFooter face={phase === 'back' ? 'back' : 'front'} layoutFace={turn.layoutFace} seenCount={seen.count} onFlip={turn.flip} disabled={!entranceReady || choiceFeedback.pending} inert={!entranceReady}
+        leading={<button type="button" onClick={() => void undo()} disabled={!canUndo} className="kit-icon-button study-previous-control text-[#777] disabled:invisible dark:text-[#aaa]" aria-label="Undo last rating">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12" /></svg>
+        </button>}
+        frontActions={<ShowAnswerButton onReveal={turn.flip} />}
+        backActions={<div className="rating-choices" role="group" aria-label="Rate your recall">
               {(['again', 'hard', 'good', 'easy'] as Rating[]).map(rating => <RatingButton
                 key={rating} rating={rating} onClick={() => choiceFeedback.choose(rating)}
                 selected={choiceFeedback.selected === rating} disabled={choiceFeedback.pending}
                 interval={ratingPreviews ? formatInterval(ratingPreviews[rating].scheduledDays) : undefined}
                 intervalLabel={ratingPreviews ? formatIntervalForSpeech(ratingPreviews[rating].scheduledDays) : undefined}
               />)}
-            </div>
-          </div>}
-        </div>
-      </div>
+            </div>}
+      />
 
       {/* ── Card Editor overlay ── */}
       {editingCard && (
         <CardEditor
           db={db}
           card={editingCard}
+          initialFace={editingFace}
           rewriteHtml={rewriteHtml}
           deckTags={deckTags}
           onSave={handleEditorSave}

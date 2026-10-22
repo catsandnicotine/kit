@@ -23,6 +23,7 @@ import type {
   ReviewLog,
 } from '../../types';
 import type { ResolvedCardSchedule } from '../srs/scheduleWithLearningSteps';
+import type { DeckSnapshot } from '../sync/types';
 
 // ---------------------------------------------------------------------------
 // Internal row type
@@ -747,6 +748,29 @@ export function getNotesByDeck(db: Database, deckId: string): Result<Note[]> {
 }
 
 /**
+ * Fetch owned notes plus notes referenced by a deck's cards, including shared Anki notes.
+ * @param db - sql.js Database instance.
+ * @param deckId - Deck UUID whose snapshot must be self-contained.
+ * @returns Unique note rows needed by the deck, or an error.
+ */
+export function getNotesForDeckSnapshot(db: Database, deckId: string): Result<Note[]> {
+  try {
+    const stmt = db.prepare(`
+      SELECT * FROM notes
+      WHERE deck_id = ? OR id IN (SELECT note_id FROM cards WHERE deck_id = ?)
+      ORDER BY created_at ASC, id ASC
+    `);
+    stmt.bind([deckId, deckId]);
+    const notes: Note[] = [];
+    while (stmt.step()) notes.push(toNote(stmt.getAsObject() as Row));
+    stmt.free();
+    return { success: true, data: notes };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
  * Fetch a single note by its ID.
  * @param db - sql.js Database instance.
  * @param id - Note UUID.
@@ -806,6 +830,32 @@ export function getNoteTypesByDeck(db: Database, deckId: string): Result<NoteTyp
   try {
     const stmt = db.prepare('SELECT * FROM note_types WHERE deck_id = ? ORDER BY name ASC');
     stmt.bind([deckId]);
+    const noteTypes: NoteType[] = [];
+    while (stmt.step()) noteTypes.push(toNoteType(stmt.getAsObject() as Row));
+    stmt.free();
+    return { success: true, data: noteTypes };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Fetch owned models and the models needed by all notes in a deck's snapshot.
+ * @param db - sql.js Database instance.
+ * @param deckId - Deck UUID whose snapshot must be self-contained.
+ * @returns Unique model rows, including models shared across imported decks.
+ */
+export function getNoteTypesForDeckSnapshot(db: Database, deckId: string): Result<NoteType[]> {
+  try {
+    const stmt = db.prepare(`
+      SELECT * FROM note_types
+      WHERE deck_id = ? OR id IN (
+        SELECT note_type_id FROM notes
+        WHERE deck_id = ? OR id IN (SELECT note_id FROM cards WHERE deck_id = ?)
+      )
+      ORDER BY name ASC, id ASC
+    `);
+    stmt.bind([deckId, deckId, deckId]);
     const noteTypes: NoteType[] = [];
     while (stmt.step()) noteTypes.push(toNoteType(stmt.getAsObject() as Row));
     stmt.free();
@@ -1254,6 +1304,29 @@ export interface DeckSettings {
   leechThreshold: number;
   /** Target retention rate (0–1). Drives FSRS interval calculation. Default 0.9. */
   desiredRetention: number;
+}
+
+/** Save one complete scheduling draft without changing existing card states/history.
+ * @param db - Active deck database.
+ * @param settings - Complete validated settings for this deck.
+ * @returns Success or a validation/storage error; one SQL statement commits the draft.
+ */
+export function saveDeckSettingsDraft(db: Database, settings: DeckSettings): Result<void> {
+  const integers = [settings.newCardsPerDay, settings.maxReviewsPerDay, settings.graduatingInterval, settings.easyInterval, settings.maxInterval, settings.leechThreshold];
+  if (integers.some(value => !Number.isFinite(value) || !Number.isInteger(value) || value < 0)
+    || settings.againSteps.length === 0 || settings.againSteps.some(value => !Number.isFinite(value) || value <= 0)
+    || !Number.isFinite(settings.desiredRetention) || settings.desiredRetention <= 0 || settings.desiredRetention >= 1) {
+    return { success:false, error:'Check the learning intervals and limits before saving.' };
+  }
+  try {
+    db.run(`INSERT INTO deck_settings (deck_id,new_cards_per_day,max_reviews_per_day,again_steps,graduating_interval,easy_interval,max_interval,leech_threshold,desired_retention)
+      VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(deck_id) DO UPDATE SET
+      new_cards_per_day=excluded.new_cards_per_day,max_reviews_per_day=excluded.max_reviews_per_day,again_steps=excluded.again_steps,
+      graduating_interval=excluded.graduating_interval,easy_interval=excluded.easy_interval,max_interval=excluded.max_interval,
+      leech_threshold=excluded.leech_threshold,desired_retention=excluded.desired_retention`,
+      [settings.deckId,settings.newCardsPerDay,settings.maxReviewsPerDay,JSON.stringify(settings.againSteps),settings.graduatingInterval,settings.easyInterval,settings.maxInterval,settings.leechThreshold,settings.desiredRetention]);
+    return { success:true, data:undefined };
+  } catch (failure) { return { success:false, error:String(failure) }; }
 }
 
 /**
@@ -1884,7 +1957,7 @@ export function getAllTagsWithCounts(
       const row = stmt.getAsObject() as Row;
       const raw = str(row, 'tags');
       const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
-      for (const tag of tags) {
+      for (const tag of new Set(tags)) {
         if (tag) counts.set(tag, (counts.get(tag) ?? 0) + 1);
       }
     }
@@ -1966,113 +2039,123 @@ export function createStandaloneTag(
   }
 }
 
-/**
- * Rename a tag across all cards, optionally scoped to a deck.
- *
- * @param db     - sql.js Database instance.
- * @param oldTag - Tag string to replace.
- * @param newTag - Replacement tag string (trimmed, non-empty).
- * @param now    - Current Unix timestamp in seconds.
- * @param deckId - Optional deck UUID to scope the update.
- * @returns Number of cards affected.
+/** Check exact-name tag use in cards, notes, deck associations or saved colours.
+ * @param db - Current database.
+ * @param tag - Exact tag name; hierarchy separators are ordinary name characters.
+ * @returns Whether this database contains any use of that tag.
  */
-export function renameTagInCards(
-  db: Database,
-  oldTag: string,
-  newTag: string,
-  now: number,
-  deckId?: string,
-): Result<{ affected: number }> {
+export function hasTagUsage(db: Database, tag: string): Result<boolean> {
   try {
-    const stmt = deckId
-      ? db.prepare('SELECT id, tags FROM cards WHERE deck_id = ?')
-      : db.prepare('SELECT id, tags FROM cards');
-    if (deckId) stmt.bind([deckId]);
+    if (tagStillUsed(db, tag)) return { success:true, data:true };
+    const colors = db.exec('SELECT 1 FROM tag_colors WHERE tag = ? LIMIT 1', [tag]);
+    return { success:true, data:!!colors[0]?.values.length };
+  } catch (error) { return { success:false, error:String(error) }; }
+}
 
-    const toUpdate: { id: string; tags: string[] }[] = [];
-    while (stmt.step()) {
-      const row = stmt.getAsObject() as Row;
-      const raw = str(row, 'tags');
-      const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
-      if (tags.includes(oldTag)) {
-        toUpdate.push({ id: str(row, 'id'), tags: tags.map(t => (t === oldTag ? newTag : t)) });
+function tagStillUsed(db: Database, tag: string): boolean {
+  const associations = db.exec('SELECT 1 FROM deck_tags WHERE tag = ? LIMIT 1', [tag]);
+  if (associations[0]?.values.length) return true;
+  for (const rows of [db.exec('SELECT tags FROM cards'), db.exec('SELECT tags FROM notes')]) {
+    for (const row of rows[0]?.values ?? []) {
+      const tags: unknown = JSON.parse(String(row[0] ?? '[]'));
+      if (!Array.isArray(tags) || tags.some(value => typeof value !== 'string')) throw new Error('Saved tags could not be read.');
+      if (tags.includes(tag)) return true;
+    }
+  }
+  return false;
+}
+
+function changeStoredTag(db: Database, oldTag: string, newTag: string | null, now: number, deckId?: string): Result<{ affected: number }> {
+  let saving = false;
+  try {
+    if (!oldTag || (newTag !== null && !newTag.trim())) throw new Error('Enter a tag name.');
+    if (newTag === oldTag) return { success:true, data:{ affected:0 } };
+    db.run('SAVEPOINT kit_tag_change');
+    saving = true;
+    let affected = 0;
+    const groups = [
+      { rows:deckId ? db.exec('SELECT id, tags FROM cards WHERE deck_id = ?', [deckId]) : db.exec('SELECT id, tags FROM cards'), card:true },
+      { rows:deckId ? db.exec('SELECT id, tags FROM notes WHERE deck_id = ? OR id IN (SELECT note_id FROM cards WHERE deck_id = ?)', [deckId, deckId]) : db.exec('SELECT id, tags FROM notes'), card:false },
+    ];
+    for (const group of groups) {
+      for (const row of group.rows[0]?.values ?? []) {
+        const tags: unknown = JSON.parse(String(row[1] ?? '[]'));
+        if (!Array.isArray(tags) || tags.some(value => typeof value !== 'string')) throw new Error('Saved tags could not be read.');
+        if (!tags.includes(oldTag)) continue;
+        const updated = [...new Set(tags.flatMap(tag => tag === oldTag ? newTag === null ? [] : [newTag] : [tag]))];
+        if (group.card) {
+          db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [JSON.stringify(updated), now, String(row[0])]);
+          affected++;
+        } else db.run('UPDATE notes SET tags = ?, updated_at = ? WHERE id = ?', [JSON.stringify(updated), now, String(row[0])]);
       }
     }
-    stmt.free();
-
-    for (const { id, tags } of toUpdate) {
-      db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [
-        JSON.stringify(tags), now, id,
-      ]);
+    if (newTag !== null) {
+      if (deckId) db.run('INSERT OR IGNORE INTO deck_tags (deck_id, tag, created_at) SELECT deck_id, ?, created_at FROM deck_tags WHERE deck_id = ? AND tag = ?', [newTag, deckId, oldTag]);
+      else db.run('INSERT OR IGNORE INTO deck_tags (deck_id, tag, created_at) SELECT deck_id, ?, created_at FROM deck_tags WHERE tag = ?', [newTag, oldTag]);
+      db.run('INSERT OR IGNORE INTO tag_colors (tag, color, created_at) SELECT ?, color, created_at FROM tag_colors WHERE tag = ?', [newTag, oldTag]);
     }
-
-    // Keep deck_tags and tag_colors in sync
-    try {
-      db.run(`UPDATE deck_tags SET tag = ? WHERE tag = ?`, [newTag, oldTag]);
-      db.run(
-        `INSERT INTO tag_colors (tag, color, created_at)
-         SELECT ?, color, created_at FROM tag_colors WHERE tag = ?
-         ON CONFLICT(tag) DO NOTHING`,
-        [newTag, oldTag],
-      );
-      db.run(`DELETE FROM tag_colors WHERE tag = ?`, [oldTag]);
-    } catch { /* tables may not exist on very old installs */ }
-
-    return { success: true, data: { affected: toUpdate.length } };
-  } catch (e) {
-    return { success: false, error: String(e) };
+    if (deckId) db.run('DELETE FROM deck_tags WHERE deck_id = ? AND tag = ?', [deckId, oldTag]);
+    else db.run('DELETE FROM deck_tags WHERE tag = ?', [oldTag]);
+    if (!tagStillUsed(db, oldTag)) db.run('DELETE FROM tag_colors WHERE tag = ?', [oldTag]);
+    db.run('RELEASE SAVEPOINT kit_tag_change');
+    return { success:true, data:{ affected } };
+  } catch (error) {
+    if (saving) {
+      try { db.run('ROLLBACK TO SAVEPOINT kit_tag_change'); db.run('RELEASE SAVEPOINT kit_tag_change'); }
+      catch (rollbackError) { return { success:false, error:`${String(error)}; tag rollback failed: ${String(rollbackError)}` }; }
+    }
+    return { success:false, error:String(error) };
   }
 }
 
-/**
- * Remove a tag from all cards, optionally scoped to a deck.
- *
- * @param db     - sql.js Database instance.
- * @param tag    - Tag string to remove.
- * @param now    - Current Unix timestamp in seconds.
- * @param deckId - Optional deck UUID to scope the update.
- * @returns Number of cards affected.
+/** Rename one exact tag consistently across cards, export notes, associations and colours.
+ * Existing destination associations are merged; its chosen colour is preserved.
+ * @param db - Current database.
+ * @param oldTag - Exact tag to rename; descendants such as oldTag::child remain unchanged.
+ * @param newTag - Nonempty replacement name.
+ * @param now - Current Unix timestamp in seconds.
+ * @param deckId - Optional deck scope.
+ * @returns Card count changed, or a failure with the entire mutation rolled back.
  */
-export function deleteTagFromCards(
-  db: Database,
-  tag: string,
-  now: number,
-  deckId?: string,
-): Result<{ affected: number }> {
+export function renameTagInCards(db: Database, oldTag: string, newTag: string, now: number, deckId?: string): Result<{ affected: number }> {
+  return changeStoredTag(db, oldTag, newTag.trim(), now, deckId);
+}
+
+/** Delete one exact tag without deleting any cards, notes, schedules or review history.
+ * @param db - Current database.
+ * @param tag - Exact tag to remove; hierarchical descendants are preserved.
+ * @param now - Current Unix timestamp in seconds.
+ * @param deckId - Optional deck scope.
+ * @returns Card count changed, or a failure with the entire mutation rolled back.
+ */
+export function deleteTagFromCards(db: Database, tag: string, now: number, deckId?: string): Result<{ affected: number }> {
+  return changeStoredTag(db, tag, null, now, deckId);
+}
+
+/** Apply a persisted tag operation batch atomically to one deck's local cache.
+ * @param db - Open local database.
+ * @param deckId - Owner of the persisted edit.
+ * @param ops - Scheduling-free tag operations, in their durable order.
+ * @param now - Current Unix timestamp in seconds.
+ * @returns Completion, or a failure with this entire local batch rolled back.
+ */
+export function applyTagMutations(db: Database, deckId: string, ops: readonly import('../../types/tagMutations').TagMutationOp[], now: number): Result<void> {
+  let saving = false;
   try {
-    const stmt = deckId
-      ? db.prepare('SELECT id, tags FROM cards WHERE deck_id = ?')
-      : db.prepare('SELECT id, tags FROM cards');
-    if (deckId) stmt.bind([deckId]);
-
-    const toUpdate: { id: string; tags: string[] }[] = [];
-    while (stmt.step()) {
-      const row = stmt.getAsObject() as Row;
-      const raw = str(row, 'tags');
-      const tags: string[] = raw ? (JSON.parse(raw) as string[]) : [];
-      if (tags.includes(tag)) {
-        toUpdate.push({ id: str(row, 'id'), tags: tags.filter(t => t !== tag) });
-      }
+    db.run('SAVEPOINT kit_tag_batch'); saving = true;
+    for (const op of ops) {
+      const result = op.type === 'tag_rename' ? renameTagInCards(db, op.oldTag, op.newTag, now, deckId)
+        : op.type === 'tag_delete' ? deleteTagFromCards(db, op.tag, now, deckId) : upsertTagColor(db, op.tag, op.color ?? '', now);
+      if (!result.success) throw new Error(result.error);
     }
-    stmt.free();
-
-    for (const { id, tags } of toUpdate) {
-      db.run('UPDATE cards SET tags = ?, updated_at = ? WHERE id = ?', [
-        JSON.stringify(tags), now, id,
-      ]);
+    db.run('RELEASE SAVEPOINT kit_tag_batch');
+    return { success:true, data:undefined };
+  } catch (error) {
+    if (saving) {
+      try { db.run('ROLLBACK TO SAVEPOINT kit_tag_batch'); db.run('RELEASE SAVEPOINT kit_tag_batch'); }
+      catch (rollbackError) { return { success:false, error:`${String(error)}; tag rollback failed: ${String(rollbackError)}` }; }
     }
-
-    // Remove from deck_tags and tag_colors (global delete only — not deck-scoped)
-    if (!deckId) {
-      try {
-        db.run(`DELETE FROM deck_tags WHERE tag = ?`, [tag]);
-        db.run(`DELETE FROM tag_colors WHERE tag = ?`, [tag]);
-      } catch { /* tables may not exist on very old installs */ }
-    }
-
-    return { success: true, data: { affected: toUpdate.length } };
-  } catch (e) {
-    return { success: false, error: String(e) };
+    return { success:false, error:String(error) };
   }
 }
 
@@ -2319,4 +2402,76 @@ export function getExistingTagNames(db: Database): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+/** Atomically replace one per-deck cache with a verified canonical replay result.
+ * Preserve the connection, app preferences and any legacy binary media.
+ * @param db - Existing per-deck connection retained by active screens.
+ * @param snapshot - Fully prepared canonical deck state.
+ * @returns Success after the whole replacement commits; failures restore every row.
+ */
+export function replaceDeckForReplay(db: Database, snapshot: DeckSnapshot): Result<void> {
+  const checked = <T>(result: Result<T>): T => {
+    if (!result.success) throw new Error(result.error);
+    return result.data;
+  };
+  try {
+    const decks = checked(getAllDecks(db));
+    if (decks.length !== 1 || decks[0]?.id !== snapshot.deckId) throw new Error('Replay requires an isolated per-deck database');
+    db.run('SAVEPOINT sync_rebase');
+    try {
+      db.run('DELETE FROM cards WHERE deck_id = ?', [snapshot.deckId]);
+      db.run('DELETE FROM notes WHERE deck_id = ?', [snapshot.deckId]);
+      db.run('DELETE FROM note_types WHERE deck_id = ?', [snapshot.deckId]);
+      db.run('DELETE FROM deck_tags WHERE deck_id = ?', [snapshot.deckId]);
+      db.run('DELETE FROM tag_colors');
+      db.run('UPDATE decks SET name = ?, description = ?, created_at = ?, updated_at = ? WHERE id = ?',
+        [snapshot.deck.name, snapshot.deck.description, snapshot.deck.createdAt, snapshot.deck.updatedAt, snapshot.deckId]);
+      for (const type of snapshot.noteTypes) checked(insertNoteType(db, type));
+      for (const note of snapshot.notes) checked(insertNote(db, note));
+      for (const card of snapshot.cards) checked(insertCard(db, card));
+      for (const state of snapshot.cardStates) checked(setCardState(db, state));
+      for (const log of snapshot.reviewLogs) checked(insertReviewLog(db, log));
+      const settings = snapshot.settings;
+      db.run(`INSERT OR REPLACE INTO deck_settings
+        (deck_id,new_cards_per_day,max_reviews_per_day,again_steps,graduating_interval,easy_interval,max_interval,leech_threshold,desired_retention)
+        VALUES (?,?,?,?,?,?,?,?,?)`, [snapshot.deckId, settings.newCardsPerDay, settings.maxReviewsPerDay,
+        JSON.stringify(settings.againSteps), settings.graduatingInterval, settings.easyInterval, settings.maxInterval,
+        settings.leechThreshold, settings.desiredRetention]);
+      for (const tag of snapshot.tags) checked(upsertTagColor(db, tag.tag, tag.color, snapshot.deck.updatedAt));
+      for (const tag of snapshot.deckTags) checked(addTagToDeck(db, snapshot.deckId, tag, snapshot.deck.updatedAt));
+      db.run('RELEASE SAVEPOINT sync_rebase');
+      return { success:true, data:undefined };
+    } catch (error) {
+      db.run('ROLLBACK TO SAVEPOINT sync_rebase');
+      db.run('RELEASE SAVEPOINT sync_rebase');
+      throw error;
+    }
+  } catch (error) { return { success:false, error:String(error) }; }
+}
+
+/** Insert a journal review once while surfacing all non-duplicate SQL failures.
+ * @param db - Per-deck connection.
+ * @param log - Immutable review identity and payload.
+ * @returns Successful insertion or idempotent duplicate acknowledgement.
+ */
+export function insertReplayReview(db: Database, log: ReviewLog): Result<void> {
+  try {
+    db.run('INSERT OR IGNORE INTO review_logs (id,card_id,rating,reviewed_at,elapsed,scheduled_days) VALUES (?,?,?,?,?,?)',
+      [log.id,log.cardId,log.rating,log.reviewedAt,log.elapsed,log.scheduledDays]);
+    return { success:true, data:undefined };
+  } catch (error) { return { success:false, error:String(error) }; }
+}
+
+/** Insert a journal card once without overwriting a later scheduling state.
+ * @param db - Per-deck connection.
+ * @param card - New immutable card identity.
+ * @returns Whether this call inserted a new card.
+ */
+export function insertReplayCard(db: Database, card: Card): Result<boolean> {
+  try {
+    db.run('INSERT OR IGNORE INTO cards (id,deck_id,note_id,front,back,tags,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+      [card.id,card.deckId,card.noteId,card.front,card.back,JSON.stringify(card.tags),card.createdAt,card.updatedAt]);
+    return { success:true, data:db.getRowsModified()>0 };
+  } catch (error) { return { success:false, error:String(error) }; }
 }

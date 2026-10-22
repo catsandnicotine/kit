@@ -10,6 +10,7 @@
 import type { EditFile } from './types';
 import type { SyncStorage } from './syncStorage';
 import { compareHLC } from './hlc';
+import { mergeJournalEdits, validateJournalEdit } from './journal';
 
 /**
  * Read and parse edit files that are queued locally for this device,
@@ -25,23 +26,15 @@ async function readLocalPendingEdits(
   storage: SyncStorage,
   deckId: string,
 ): Promise<EditFile[]> {
-  let pending;
-  try {
-    pending = await storage.listPendingEdits();
-  } catch {
-    return [];
-  }
+  const pending = await storage.listPendingEdits();
 
   const edits: EditFile[] = [];
   for (const entry of pending) {
     if (entry.deckId !== deckId) continue;
     try {
-      const parsed = JSON.parse(entry.data) as EditFile;
-      if (parsed.v === 1 && parsed.ops && Array.isArray(parsed.ops)) {
-        edits.push(parsed);
-      }
-    } catch {
-      // Skip malformed pending entry
+      edits.push(validateJournalEdit(JSON.parse(entry.data), deckId));
+    } catch (error) {
+      throw new Error('A pending sync edit could not be verified. Its file has been kept.', { cause:error });
     }
   }
   return edits;
@@ -75,18 +68,18 @@ export async function readAllEdits(
   const edits: EditFile[] = [];
 
   for (const filename of jsonFiles) {
+    if (!/^\d{13}_[A-Za-z0-9-]{1,160}_\d{4,}\.json$/.test(filename)) throw new Error('An edit filename could not be verified. Its file has been kept.');
     const path = `${dirPath}/${filename}`;
     try {
       const data = await storage.readFile(path);
       if (!data) continue;
 
-      const parsed = JSON.parse(data) as EditFile;
-      if (parsed.v === 1 && parsed.ops && Array.isArray(parsed.ops)) {
-        edits.push(parsed);
-      }
+      const parsed = validateJournalEdit(JSON.parse(data), deckId);
+      if (filename !== `${parsed.hlc}.json`) throw new Error('Sync filename does not match its edit identity');
+      edits.push(parsed);
     } catch (e) {
       console.warn('[editReader] Failed to parse edit file:', path, e);
-      // Skip corrupted files
+      throw e;
     }
   }
 
@@ -111,16 +104,17 @@ export async function readEditsAfter(
   deckId: string,
   afterHLC: string,
 ): Promise<EditFile[]> {
-  const [icloud, local] = await Promise.all([
+  const [icloud, local, archived] = await Promise.all([
     readAllEdits(storage, deckId),
     readLocalPendingEdits(storage, deckId),
+    storage.listArchivedEdits?.() ?? Promise.resolve([]),
   ]);
-
-  const byHlc = new Map<string, EditFile>();
-  for (const edit of icloud) byHlc.set(edit.hlc, edit);
-  for (const edit of local) byHlc.set(edit.hlc, edit);
-
-  const all = Array.from(byHlc.values()).sort((a, b) => compareHLC(a.hlc, b.hlc));
+  const retained = archived.filter(entry => entry.deckId === deckId).map(entry => validateJournalEdit(JSON.parse(entry.data), deckId));
+  const all = mergeJournalEdits(deckId, retained, icloud, local);
+  const retainedIds = new Set(retained.map(edit => edit.hlc));
+  for (const edit of all) if (!retainedIds.has(edit.hlc)) {
+    await storage.archiveEdit?.(deckId, `${edit.hlc}.json`, JSON.stringify(edit));
+  }
 
   if (!afterHLC) return all;
   return all.filter(edit => compareHLC(edit.hlc, afterHLC) > 0);

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Kit — Turn a card</title>
+  <style>
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    :root { font-family:-apple-system,BlinkMacSystemFont,system-ui,sans-serif; color:#ebe9e3; background:#121212; font-synthesis:none; }
+    body { margin:0; padding:28px 20px 32px; }
+    button { font:inherit; color:inherit; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+    button:focus-visible, .turn-stage:focus-visible { outline:2px solid #e9e6df; outline-offset:5px; }
+    .intro, .notes { max-width:440px; margin-inline:auto; }
+    .intro { margin-bottom:20px; }
+    h1 { margin:0; font-size:22px; font-weight:600; letter-spacing:-.035em; }
+    .metadata, .notes { color:#969593; font-size:13px; line-height:1.6; }
+    .metadata { margin:6px 0 0; }
+    .preview { display:flex; flex-direction:column; width:min(100%,440px); height:min(760px,calc(100svh - 176px)); min-height:510px; margin:auto; overflow:hidden; border-radius:28px; background:#000; }
+    .context { display:flex; align-items:center; justify-content:center; min-height:70px; padding:15px 24px; }
+    .context p { margin:0; color:#a7a6a2; font-size:14px; font-weight:500; }
+    .turn-stage { position:relative; flex:1; min-height:0; display:flex; align-items:center; justify-content:center; margin:0 30px; perspective:1100px; touch-action:pan-y; isolation:isolate; -webkit-tap-highlight-color:transparent; }
+    .turn-card { position:relative; width:100%; height:min(430px,100% - 24px); min-height:295px; transform-style:preserve-3d; transform:rotateY(0deg); user-select:none; -webkit-user-select:none; }
+    .turn-card.is-moving { will-change:transform; }
+    .face { position:absolute; inset:0; display:flex; flex-direction:column; border-radius:13px; overflow:hidden; backface-visibility:hidden; -webkit-backface-visibility:hidden; background:#1b1b1a; color:#eeece5; box-shadow:inset 0 0 0 1px #ffffff10,0 18px 45px #0007; }
+    .face::before { content:""; position:absolute; inset:0; pointer-events:none; z-index:2; border-radius:inherit; background:linear-gradient(105deg,#ffffff0a,transparent 35%,#0000000a); }
+    .face::after { content:""; position:absolute; inset:0; z-index:3; pointer-events:none; background:#000; opacity:var(--shade,0); }
+    .face--front { transform:rotateY(0deg) translateZ(.6px); }
+    .face--back { transform:rotateY(180deg) translateZ(.6px); background:#e4e1d7; color:#242521; }
+    .face--back::before { background:linear-gradient(105deg,#ffffff20,transparent 35%,#00000005); }
+    .face-content { position:relative; z-index:1; min-height:0; flex:1; overflow:auto; overscroll-behavior:contain; touch-action:pan-y; padding:40px 28px 24px; scrollbar-width:thin; scrollbar-color:#9a9a922b transparent; }
+    .face--front .face-content { display:flex; flex-direction:column; justify-content:center; }
+    .face--front.is-long .face-content { display:block; }
+    .face h2 { margin:0; font-size:clamp(25px,6.4vw,30px); line-height:1.32; font-weight:500; letter-spacing:-.035em; }
+    .face--back .face-content { display:flex; flex-direction:column; justify-content:center; gap:23px; }
+    .face--back h2 { max-width:220px; font-family:Georgia,"Times New Roman",serif; font-size:35px; font-weight:400; line-height:1.2; letter-spacing:-.03em; }
+    .face p { margin:22px 0 0; color:#aaa9a3; font-size:16px; line-height:1.7; letter-spacing:-.01em; }
+    .face--back p { margin:0; color:#5e6058; }
+    .face-mark { display:flex; align-items:center; justify-content:center; gap:4px; min-height:39px; padding:0 20px 15px; }
+    .face-mark i { display:block; width:14px; height:3px; border-radius:2px; background:currentColor; opacity:.13; }
+    .face-mark i.is-current { opacity:.65; }
+    .light-study { position:relative; width:102px; height:102px; border-radius:50%; background:radial-gradient(circle at 29% 23%,#fffdf3 0,#d9d6c9 21%,#777d70 51%,#232720 79%); box-shadow:17px 12px 16px -6px #23272024; }
+    .light-study::after { content:""; position:absolute; left:-9px; right:-16px; bottom:-8px; height:14px; border-radius:50%; background:#353b301d; filter:blur(5px); z-index:-1; }
+    .controls { display:flex; align-items:center; justify-content:center; gap:14px; padding:24px 20px 12px; }
+    .side-select { display:flex; align-items:center; justify-content:center; gap:6px; }
+    .side-select button { display:grid; place-items:center; width:44px; height:44px; border:0; background:none; color:#96958f; }
+    .side-select button svg { width:17px; height:21px; opacity:.4; transition:opacity 120ms; }
+    .side-select button[aria-pressed="true"] svg { opacity:1; }
+    .side-select button[aria-pressed="true"] { color:#dedbd2; }
+    .turn-action { min-width:100px; min-height:44px; padding:8px 12px; border:0; background:none; color:#d2cec3; font-family:Georgia,"Times New Roman",serif; font-size:17px; font-style:italic; }
+    .instruction { min-height:32px; margin:0; padding:0 20px 19px; text-align:center; color:#777772; font-size:12px; line-height:1.4; }
+    .notes { margin-top:18px; }
+    .notes p { margin:0; }
+    .sample-control { display:flex; flex-wrap:wrap; align-items:center; column-gap:15px; row-gap:3px; margin-top:13px; }
+    .sample-control button { min-height:36px; padding:4px 0; border:0; background:none; color:#c1beb6; font-size:13px; text-decoration:underline; text-decoration-color:#ffffff25; text-underline-offset:4px; }
+    .sample-control span { font-size:12px; color:#73736f; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+    .is-reduced-motion .turn-stage { perspective:none; }
+    .is-reduced-motion .turn-card { transform:none !important; transform-style:flat; }
+    .is-reduced-motion .face { transform:none; }
+    @media(max-width:520px) { body { padding:18px 12px 24px; } .intro { margin-inline:8px; } h1 { font-size:20px; } .preview { border-radius:20px; } .turn-stage { margin-inline:25px; } .notes { margin-inline:8px; } }
+    @media(max-height:650px) and (min-width:600px) { .preview { height:470px; min-height:470px; } .context { min-height:48px; } .turn-stage { margin-inline:auto; width:280px; } .turn-card { height:300px; min-height:280px; } .face-content { padding:25px; } .controls { padding-top:10px; } }
+    @media(prefers-reduced-motion:reduce) { .side-select button svg { transition:none; } }
+  </style>
+</head>
+<body>
+  <header class="intro">
+    <h1>Turn a card.</h1>
+    <p class="metadata">Interaction preview · sample data · nothing is saved</p>
+  </header>
+  <main class="preview" aria-label="Kit card-turn preview">
+    <header class="context"><p>Art &amp; symbols</p></header>
+    <div class="turn-stage" tabindex="0" role="group" aria-label="Flashcard. Drag horizontally or use the arrow keys to turn it.">
+      <div class="turn-card">
+        <article class="face face--front" aria-label="Question">
+          <div class="face-content">
+            <h2>What does chiaroscuro describe?</h2>
+            <div class="long-question" hidden>
+              <p>Imagine a face lit by one small window. The forehead catches the light; the opposite cheek disappears into shadow.</p>
+              <p>The light and dark areas give the face weight, depth and a sense of space.</p>
+              <p>This contrast appears throughout painting, drawing and photography. It can be gentle, or almost theatrical.</p>
+              <p>What is the relationship between those light and dark areas called?</p>
+            </div>
+          </div>
+          <div class="face-mark" aria-hidden="true"><i class="is-current"></i><i></i></div>
+        </article>
+        <article class="face face--back" aria-label="Answer" aria-hidden="true" inert>
+          <div class="face-content">
+            <div class="light-study" role="img" aria-label="A sphere with a light side and a shadow side"></div>
+            <div><h2>Light and shadow.</h2><p>Their contrast creates depth and form.</p></div>
+          </div>
+          <div class="face-mark" aria-hidden="true"><i></i><i class="is-current"></i></div>
+        </article>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="side-select" role="group" aria-label="Card side">
+        <button type="button" id="show-question" aria-label="Show question" aria-pressed="true">
+          <svg viewBox="0 0 17 21" fill="none" aria-hidden="true"><path d="M2 1h9l4 4v15H2Z" stroke="currentColor" stroke-width="1.4"/><path d="M11 1v4h4M5 9h7M5 12h7M5 15h4" stroke="currentColor" stroke-width="1.3"/></svg>
+        </button>
+        <button type="button" id="show-answer" aria-label="Show answer" aria-pressed="false">
+          <svg viewBox="0 0 17 21" fill="none" aria-hidden="true"><path d="M2 1h9l4 4v15H2Z" stroke="currentColor" stroke-width="1.4"/><path d="M11 1v4h4M4.5 12s1.5-2.8 4-2.8 4 2.8 4 2.8-1.5 2.8-4 2.8-4-2.8-4-2.8Z" stroke="currentColor" stroke-width="1.2"/><circle cx="8.5" cy="12" r="1.1" fill="currentColor"/></svg>
+        </button>
+      </div>
+      <button type="button" class="turn-action">turn it</button>
+    </div>
+    <p class="instruction">Drag either way. Let go before halfway to return.</p>
+    <p class="sr-only" id="side-status" role="status" aria-live="polite">Question shown.</p>
+  </main>
+  <aside class="notes" aria-label="Preview notes">
+    <p>Both sides stay attached to the same card. No ratings, schedules or edits are recorded.</p>
+    <div class="sample-control"><button type="button" id="long-sample" aria-pressed="false">Try a long question</button><button type="button" id="preview-motion" aria-pressed="false" hidden>Preview motion</button><span id="motion-note"></span></div>
+  </aside>
+  <script type="module" src="./card-turn.js"></script>
+</body>
+</html>

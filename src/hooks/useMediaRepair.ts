@@ -7,6 +7,7 @@ import { getCardsByDeck } from '../lib/db/queries';
 import { getMediaReferences } from '../lib/media';
 import { hapticSuccess, hapticTap } from '../lib/platform/haptics';
 import type { UseDeckManagerReturn } from './useDeckManager';
+import type { LibraryOperationPhase } from '../types/libraryNotice';
 
 /** Restore media from an original Anki package, keeping all study data.
  * @param db - Legacy database, if used.
@@ -15,7 +16,7 @@ import type { UseDeckManagerReturn } from './useDeckManager';
  */
 export function useMediaRepair(db: Database | null, manager?: UseDeckManagerReturn) {
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [phase, setPhase] = useState<LibraryOperationPhase>('idle');
   const locked = useRef(false);
   const restore = useCallback(async (deckId: string) => {
     if (locked.current) return;
@@ -24,7 +25,7 @@ export function useMediaRepair(db: Database | null, manager?: UseDeckManagerRetu
       void hapticTap();
       const file = await pickApkgFile();
       if (!file) return;
-      setBusy(true);
+      setPhase('working');
       setMessage('Restoring pictures and audio…');
       const target = manager ? manager.getCachedDeckDb(deckId) ?? await manager.openDeckDb(deckId) : db;
       if (!target) throw new Error('Could not open this deck.');
@@ -42,9 +43,10 @@ export function useMediaRepair(db: Database | null, manager?: UseDeckManagerRetu
       }
       if (count !== matching.length) throw new Error(`Restored ${count} of ${matching.length} files. Some files in this package could not be read.`);
       setMessage(`Restored ${count} media files. Your cards and study progress are unchanged.`);
+      setPhase('done');
       void hapticSuccess();
-    } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not restore this deck’s media.'); }
-    finally { locked.current = false; setBusy(false); }
+    } catch (error) { setPhase('error'); setMessage(error instanceof Error ? error.message : 'Could not restore this deck’s media.'); }
+    finally { locked.current = false; }
   }, [db, manager]);
-  return { restore, message, busy, dismiss: () => setMessage(null) };
+  return { restore, message, busy: phase === 'working', phase, dismiss: () => { setMessage(null); setPhase('idle'); } };
 }

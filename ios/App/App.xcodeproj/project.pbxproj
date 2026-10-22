@@ -19,6 +19,8 @@
 		A1B2C3D40000000000000001 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000002 /* ViewController.swift */; };
 		B6F326FF2F961266009DCA40 /* ICloudSyncPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F326FD2F961266009DCA40 /* ICloudSyncPlugin.swift */; };
 		B6F327002F961266009DCA40 /* ICloudPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6F326FC2F961266009DCA40 /* ICloudPlugin.swift */; };
+		C028D5302FE0000000000001 /* LibraryControlsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C028D5302FE0000000000002 /* LibraryControlsPlugin.swift */; };
+		C028D5302FE0000000000003 /* MediaClipboardPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = C028D5302FE0000000000004 /* MediaClipboardPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +39,8 @@
 		A1B2C3D40000000000000003 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		B6F326FC2F961266009DCA40 /* ICloudPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudPlugin.swift; sourceTree = "<group>"; };
 		B6F326FD2F961266009DCA40 /* ICloudSyncPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ICloudSyncPlugin.swift; sourceTree = "<group>"; };
+		C028D5302FE0000000000002 /* LibraryControlsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryControlsPlugin.swift; sourceTree = "<group>"; };
+		C028D5302FE0000000000004 /* MediaClipboardPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaClipboardPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,6 +96,8 @@
 			children = (
 				B6F326FC2F961266009DCA40 /* ICloudPlugin.swift */,
 				B6F326FD2F961266009DCA40 /* ICloudSyncPlugin.swift */,
+				C028D5302FE0000000000002 /* LibraryControlsPlugin.swift */,
+				C028D5302FE0000000000004 /* MediaClipboardPlugin.swift */,
 			);
 			path = Plugins;
 			sourceTree = "<group>";
@@ -181,6 +187,8 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				B6F326FF2F961266009DCA40 /* ICloudSyncPlugin.swift in Sources */,
 				B6F327002F961266009DCA40 /* ICloudPlugin.swift in Sources */,
+				C028D5302FE0000000000001 /* LibraryControlsPlugin.swift in Sources */,
+				C028D5302FE0000000000003 /* MediaClipboardPlugin.swift in Sources */,
 				A1B2C3D40000000000000001 /* ViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -256,7 +264,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -307,7 +315,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -323,10 +331,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = V9QB5Z3JN8;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -347,10 +355,10 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 9;
 				DEVELOPMENT_TEAM = V9QB5Z3JN8;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.4;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

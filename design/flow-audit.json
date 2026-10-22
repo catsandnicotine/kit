@@ -1,45 +1,63 @@
 [
   {
     "area": "First launch",
-    "path": "Try Kit",
-    "decision": "Opens a working sample deck. Kept: useful before importing or creating.",
-    "verification": "Source + earlier browser check"
+    "path": "Try one card → optional Quick start",
+    "decision": "A hands-on reveal/rate demonstration precedes creation/import. Quick start is optional. Existing welcome decks and history are preserved.",
+    "verification": "First-run browser demo checked in the prior onboarding pass; existing installs are not overwritten."
   },
   {
     "area": "First launch",
-    "path": "Create deck → first card",
-    "decision": "One name field, then the editor. Removed repeated instructions.",
-    "verification": "Browser checked"
+    "path": "Make cards → name → first card",
+    "decision": "The same full-screen name step leads directly to a full-screen first card. Focus starts in the name field, then Front. Keep creation visible until the editor and database are ready; render the initial blank draft before first paint.",
+    "verification": "Fresh first-run browser walkthrough: name focus, Back, creation, full 390×844 editor, clean close. Required fields and guarded dirty dismissal checked in library creation."
   },
   {
     "area": "First launch",
-    "path": "Import Anki deck",
-    "decision": "Kept a short explicit label; an import icon alone does not explain compatibility.",
-    "verification": "Source + earlier browser check"
+    "path": "Import Anki → file → library",
+    "decision": "Short compatibility label retained. Cancelling leaves onboarding in place; an invalid chosen file reaches a visible error with creation/import choices still available.",
+    "verification": "Invalid first-run import and valid retry browser checked; native Files permissions not exercised."
   },
   {
     "area": "First launch",
-    "path": "Skip → empty library",
-    "decision": "Kept an escape route. Empty library still offers creation and import.",
-    "verification": "Source reviewed"
+    "path": "Open library → empty library",
+    "decision": "Make cards / Import Anki remain primary. Search, Settings and Add use three bottom utility controls. Imported tags and contextual tagging are preserved; no global Tags catalogue entry. Bottom mode dots appear only with decks.",
+    "verification": "Source reviewed; empty-library import recovery was checked earlier."
   },
   {
     "area": "Library",
-    "path": "Study / Practice",
-    "decision": "Renamed the two modes to distinguish scheduled study from free practice.",
-    "verification": "Browser checked"
+    "path": "+ → Make cards / Import Anki",
+    "decision": "A full-screen creation page uses ivory/green paper drawings and serif italics. No boxed blue/green options. Back from the name returns to choices with the draft intact; Back from choices returns to the library.",
+    "verification": "Browser checked at 390px: full viewport, name preserved across Back, Escape steps back, cancellation creates no deck. Import picker and failure notice exercised."
   },
   {
     "area": "Library",
-    "path": "Tap deck / edit pencil",
-    "decision": "Deck opens study or practice; pencil opens card management. Empty decks open their editor.",
-    "verification": "Browser checked"
+    "path": "Reopen → saved library",
+    "decision": "Deck rows and counts derive directly from the registry. Removed the extra copied state that could briefly show an empty library.",
+    "verification": "Saved manual deck and photo survived browser reload; imported image rendered in Study."
+  },
+  {
+    "area": "iOS",
+    "path": "Open Anki file before onboarding is complete",
+    "decision": "A file arriving from Files already expresses the user’s choice. Bypass first-run choices and wait for database readiness before consuming it.",
+    "verification": "Source reviewed; native Open in handoff still requires a physical-device test. A file arriving during an existing study route remains queued until the library opens."
+  },
+  {
+    "area": "Library",
+    "path": "Swipe / bottom dots",
+    "decision": "Retain the two existing library modes and bottom dots, with no visible mode switch/names. A swipe needs sufficient distance, brisk pace and a clearly horizontal direction. Tiny flicks, slow long drags and outer-edge gestures return. The gesture still translates one list rather than showing a second page halfway.",
+    "verification": "21 pure intent tests cover valid directions, tiny/slow/diagonal movement, invalid input and screen widths. Click guard resets on a fresh press. Physical gesture feel needs owner confirmation. The separate deck-row navigation study remains unshipped."
+  },
+  {
+    "area": "Library",
+    "path": "Tap deck / Manage deck",
+    "decision": "Tap studies the deck; a single ellipsis opens Manage deck. Empty decks open their first card. Removed the decorative folio beside names in the library and deck headers; optional real cover images remain.",
+    "verification": "Browser checked on the saved demo deck."
   },
   {
     "area": "Library",
     "path": "Search / clear / no results",
-    "decision": "Kept search, result feedback, and a way back to the full list.",
-    "verification": "Source reviewed"
+    "decision": "iPhone uses native UISearchBar. An active-only transparent UIKit control above WebKit owns the first outside press, closes field and keyboard, and consumes that press; focus-end cleanup is a guarded fallback. Native Search submits without clearing results. Outside collapse retains the query, with a quiet dot and accessible Filter active marker on Search; X explicitly clears/closes. Browser has matching query retention and 180ms collapse; native collapse 220ms. Add/Settings and blocking imports clear search state. Explicit native open/closed events include the current query.",
+    "verification": "Owner confirmed repaired native outside dismissal on iPhone. Browser checked retained filter, reopen with the same query, explicit clear and creation first-tap behavior. Native source review covered layering and submit/end-editing cleanup; UIKit retains query ownership even after collapse to reject stale web echoes. Final updated build installed in place; rapid typing/reopen retention still needs physical confirmation."
   },
   {
     "area": "Library",
@@ -49,39 +67,39 @@
   },
   {
     "area": "Deck actions",
-    "path": "Edit deck → Rename / Cover / Restore media",
-    "decision": "Kept secondary maintenance together, outside the normal study path.",
-    "verification": "Source + earlier browser check"
+    "path": "Manage deck → Details",
+    "decision": "One route contains cards and deck details. Name changes use explicit Save; Back protects an unsaved name. Cover and Restore media stay here.",
+    "verification": "Management entry and unsaved-name protection browser checked. Name persistence/rollback has database regression coverage."
   },
   {
     "area": "Deck actions",
-    "path": "Statistics",
-    "decision": "Kept as optional information, outside study controls.",
-    "verification": "Source reviewed"
+    "path": "Manage deck → Activity → Back",
+    "decision": "Activity returns to Manage deck Details rather than losing context in the library.",
+    "verification": "Route reviewed; earlier statistics calculations remain covered by regression tests."
   },
   {
     "area": "Deck actions",
-    "path": "Study settings",
-    "decision": "Daily limits lead. Learning and scheduling are collapsed; help opens on request.",
-    "verification": "Browser checked"
+    "path": "Manage deck → Scheduling → Save / Back",
+    "decision": "Controls edit a draft. Save commits one complete update; Back offers Keep editing / Discard. Existing card schedules/history are not rewritten.",
+    "verification": "Browser change → discard → reopen retained the original value. SQL regressions cover validation, failed persistence rollback and preserved state/history."
   },
   {
     "area": "Deck actions",
-    "path": "Share → cards / with progress",
-    "decision": "Both options are meaningful: sharing a deck and keeping a personal backup.",
-    "verification": "Source reviewed; native share sheet not exercised"
+    "path": "Manage deck → Export",
+    "decision": "Cards only and Cards & study history live in one collapsed Export section.",
+    "verification": "Callbacks preserved; final native share-sheet handoff remains a phone check."
   },
   {
     "area": "Deck actions",
-    "path": "Delete → confirmation / cancel",
-    "decision": "Kept explicit words and the permanent-loss consequence. No deletion executed.",
-    "verification": "Source reviewed"
+    "path": "Manage deck → Delete → Cancel / Delete deck",
+    "decision": "An inline confirmation names cards, study history, media and synced-copy consequences. Cancel is focused first. Original Anki files stay unchanged.",
+    "verification": "Source reviewed. No user deck deletion was performed."
   },
   {
     "area": "Import",
     "path": "Duplicate → keep both / replace / cancel",
-    "decision": "Checks actual non-empty imported deck names. Replacing explicitly mentions study history; multi-deck replacement is not offered.",
-    "verification": "Source + regression tests"
+    "decision": "Keep both leads. Replacement remains explicit about cards and study history. Native modal focuses the safe action and Escape cancels; multi-deck replacement remains unavailable.",
+    "verification": "Browser cancellation preserved the existing deck; parser/rollback tests pass. Replacement not executed."
   },
   {
     "area": "Import",
@@ -91,21 +109,21 @@
   },
   {
     "area": "Editor",
-    "path": "Front / Back → image and formatting",
-    "decision": "Small image icons beside each field; full touch targets. Attachment filenames are collapsed.",
-    "verification": "Browser checked; camera permission not exercised"
+    "path": "Current face → text / photos / arrange",
+    "decision": "One visible face, one working area and one tool strip. Other-face drafts stay mounted. Tags/audio/deletion are secondary.",
+    "verification": "Both side drafts, existing photo, ordering and Save retained through the browser walkthrough."
   },
   {
     "area": "Editor",
-    "path": "Save → card list → Study",
-    "decision": "Removed the first-card modal. A small optional Study action stays in the list.",
-    "verification": "Browser checked"
+    "path": "Save card → previous context",
+    "decision": "One explicit Save action for both new and existing cards. Study returns to the same face without rating or advancing.",
+    "verification": "Browser saved an answer during Study; answer controls and 0 session progress remained visible. Earlier creation/reload checks cover new cards."
   },
   {
     "area": "Editor",
-    "path": "Close dirty editor → keep / discard",
-    "decision": "Unsaved edits require an explicit choice. The confirmation receives keyboard focus.",
-    "verification": "Browser checked"
+    "path": "Back / Escape → Keep editing / Discard",
+    "decision": "Inline shared confirmation replaces the extra discard popup. Keep editing restores the working area; destructive section/card/deck decisions use the same safe-first pattern.",
+    "verification": "Dirty Back and Keep editing/Save browser checked. Native keyboard behaviour remains open."
   },
   {
     "area": "Card browser",
@@ -115,15 +133,21 @@
   },
   {
     "area": "Study",
-    "path": "Reveal → Again / Hard / Good / Easy",
-    "decision": "Kept short rating labels and interval hints: icons alone do not teach honest recall ratings.",
-    "verification": "Source + browser checks"
+    "path": "Question ↔ answer → Again / Hard / Good / Easy",
+    "decision": "Small written-card and eye faces replace the numbered caption. Either side can be revisited without rating or advancing. Side controls pause during committed rating feedback. Recall labels now use .72 opacity and return-time estimates .9, keeping the art visually primary.",
+    "verification": "Browser checked: repeated flips preserve the question and queue progress; Enter/Space; 44px targets; long-question portrait/landscape layout. Native VoiceOver not exercised."
   },
   {
     "area": "Study",
-    "path": "Edit / Undo",
-    "decision": "Kept in context. Removed the overlapping unscored-repeat shortcut and hidden review-count picker.",
-    "verification": "Source + earlier browser checks"
+    "path": "Long card → scroll → remaining content",
+    "decision": "A static lower-edge fade and small downward cue appear only when more content remains below. No idle animation or live blur. Both faces retain their own scrolling across flips; new content starts at the top. Recall art and touch areas are slightly larger, bounded by each button's width. Latest refinement: the fade covers the last 28px; a smaller, lower eye leaves more room for the question. Card tags follow the answer content rather than overlaying pictures.",
+    "verification": "Browser checked long imported image → scroll to bottom → cue disappears; short Practice card has no cue. Choice layout checked at 320×568, 390/440px portrait and 812×375 landscape. No physical battery measurement."
+  },
+  {
+    "area": "Study",
+    "path": "Hold current face / Undo",
+    "decision": "450ms stationary hold plus 90ms pixel feedback offers Edit this side. Tapping it opens that face without focusing text. Direct Edit/F2 remains an explicit alternative. Opening does not change the card; Save remains required.",
+    "verification": "Browser holds verified on question and answer. Tapping away dismisses without flipping; the editor opens with Back focused and Save disabled. Updated iPhone build installed; physical hold/keyboard confirmation remains."
   },
   {
     "area": "Study",
@@ -133,9 +157,9 @@
   },
   {
     "area": "Practice",
-    "path": "Reveal → Again / Put aside",
-    "decision": "Kept two physical-card decisions. No scheduling writes.",
-    "verification": "Browser checked"
+    "path": "Question ↔ answer → Again / Put aside",
+    "decision": "The same reversible face control works in library Practice and post-study Practice. Only Again or Put aside changes the session queue. Feedback is owned by the session, so changing face cannot cancel a committed choice. Both routes share the quieter .72-opacity action captions used in Study and onboarding.",
+    "verification": "Browser checked in both Practice routes: return to the same question, repeat resets to front, Put aside advances and completion still works."
   },
   {
     "area": "Practice",
@@ -146,8 +170,8 @@
   {
     "area": "Settings",
     "path": "Appearance / timer",
-    "decision": "Kept simple personal preferences.",
-    "verification": "Source + earlier browser checks"
+    "decision": "One compact labelled Appearance row with three 44px choices and a 48px timer row. No large preview tiles or outlined groups. Settings uses a short labelled list with 12px group gaps; advanced settings remain collapsed.",
+    "verification": "Browser verified at390×844 and320×568: no horizontal overflow, ≥44px targets, default content ends near y476. No preferences were changed during QA."
   },
   {
     "area": "Settings",
@@ -170,8 +194,8 @@
   {
     "area": "Tags",
     "path": "Search / create / edit / assign / remove",
-    "decision": "Kept secondary organisation under More. Colour choices are reduced from 40 to eight, preserving existing custom colours. Destructive consequences retain labels.",
-    "verification": "Source reviewed"
+    "decision": "No global tag catalogue route in the app or main dock. Retain imported/card/deck metadata and contextual tagging for people organising large decks. No migration or tag deletion. Catalogue source is retained for future repair but is not in the app navigation.",
+    "verification": "Known unresolved code-review findings: catalogue rename/delete/recolour do not fully propagate to per-deck uses; async rename success and failure handling need repair. Button relocation is not a tagging reliability fix."
   },
   {
     "area": "Recovery",
@@ -196,5 +220,191 @@
     "path": "Painting-deck integration",
     "decision": "Separate painting-catalogue additions were kept intact. Their modules and validation were completed during this review. The combined suite now passes; the catalogue content itself was not part of this flow walkthrough.",
     "verification": "Combined build and 203 tests pass; catalogue content excluded from this audit"
+  },
+  {
+    "area": "Recovery",
+    "path": "New deck saved but editor cannot open",
+    "decision": "Keep the full-screen name step visible, explain that the deck is saved, and retry opening that same deck rather than creating another. Lock its saved name until the flow is left.",
+    "verification": "Source reviewed and type checked; editor-load failure was not injected into the browser."
+  },
+  {
+    "area": "Shared controls",
+    "path": "Tap focus / keyboard focus / menu return",
+    "decision": "Pointer interactions leave no control outline, including a menu returning focus to its trigger. Keep logical focus in place and show a themed focus mark as soon as keyboard use resumes. Text editing keeps its own focus treatment.",
+    "verification": "Browser checked: tapped mode button and deck-menu outside dismissal have no outline; Tab and Escape restoration show a 2px themed keyboard focus mark. iOS hardware-keyboard and VoiceOver testing remain."
+  },
+  {
+    "area": "Library",
+    "path": "Bottom utilities → Search / Settings / Add",
+    "decision": "Three direct circular controls. UIKit glass on iOS 26+, native system fallback earlier, neutral web controls. No Tags bubble or folding tools menu.",
+    "verification": "Browser routes checked; native compile succeeded. Installed phone update will require owner confirmation of real search dismissal and gesture feel. Browser screenshots do not show native glass."
+  },
+  {
+    "area": "Still open",
+    "path": "Tag reliability",
+    "decision": "Make global rename, delete and recolour propagate safely to deck/card uses; fix asynchronous success/failure handling and improve the remaining tag-detail flow.",
+    "verification": "Reviewed in source; repairs pending."
+  },
+  {
+    "area": "Still open",
+    "path": "iCloud and desktop access",
+    "decision": "Complete binary picture/audio sync and test offline recovery, concurrent changes and interrupted writes on two devices. Define Mac/PC delivery separately.",
+    "verification": "Incomplete; needs real two-device checks."
+  },
+  {
+    "area": "Still open",
+    "path": "Anki compatibility",
+    "decision": "Check the biology packages and representative complex decks end-to-end on the phone, including restored media and update-in-place progress.",
+    "verification": "Parser regressions pass; phone compatibility checks remain."
+  },
+  {
+    "area": "Still open",
+    "path": "Direct camera entry",
+    "decision": "Photo attachment and ordered text/photo sections exist; add a deliberate camera option and verify native permissions and image handling.",
+    "verification": "Photo library attachment exists; direct camera entry remains."
+  },
+  {
+    "area": "Still open",
+    "path": "Device polish and artwork",
+    "decision": "Verify keyboard, safe areas, haptic feel, VoiceOver, swipes, flashes and performance on real devices; review text sizing and any remaining cat artwork.",
+    "verification": "Current flows have browser checks; a full real-device pass remains."
+  },
+  {
+    "area": "Still open",
+    "path": "Launch and pricing",
+    "decision": "Finalize the name, connected native App Store screenshots in the accepted studio direction, store copy, competitor positioning and fair monetization.",
+    "verification": "Drafts exist; final decisions and assets remain."
+  },
+  {
+    "area": "Still open",
+    "path": "Code simplicity",
+    "decision": "Audit the full application for duplicated responsibilities and maintainability after the current flow consolidation; do not infer this from one successful build.",
+    "verification": "Focused flow consolidation is done; a whole-codebase audit remains."
+  },
+  {
+    "area": "Parked",
+    "path": "PiP layout and complementary button shapes",
+    "decision": "Keep these as future experiments. They are not needed for the current phone update.",
+    "verification": "Deliberately deferred by the user."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Horizontal card turn / front-back controls",
+    "decision": "Real Study, Practice and review-again cards share a finger-controlled perspective plane. Choose scrolling or horizontal turning once at 12px, favouring scrolling on diagonals; full-turn travel is 80% of starting width capped at 360px. Short unrevealed turns cancel. First answer exposure registers the session reveal once before painting it; reversing/cancelling still settles to the nearest answer orientation. Separate later gestures/face buttons can return to the question. Preserve independent face scroll, original content/art, direct alternatives and one flip haptic, with ratings/schedules changed only by explicit recall choices. Respect Reduce Motion; no idle loop.",
+    "verification": "Owner confirmed iPhone drag and selection-free hold work after the capture/scroller repair. Latest sensitivity and reveal-latch tuning: 306 tests, full lint, TypeScript, web and signed native builds pass; installed and launched in place. Controller checks cover peek/reverse/release/cancel once, no long spin, permanent vertical lock, slow vertical click suppression, captured width and native capture transfer. Browser checked short cancel, vertical movement, shorter deliberate flip, question return and hold lock. Final phone feel remains an owner check; review-again completion-only route remains source checked."
+  },
+  {
+    "area": "Study / editing",
+    "path": "Hold current face → progress → Edit or X → selectable editor",
+    "decision": "Suppress study selection/callouts. A 116px sparse pixel stitch fills outside the thumb over the hold, then acknowledges once with a light haptic. Dim the locked card and offer a contrasting cut-corner paper ticket with italic Edit and a separate X. Freeze card movement and other actions until Edit or X; Back/Escape cancel. Existing-card editing opens without a keyboard. Photo/video Add, Paste and Arrange → Copy belong inside the editor, with durable storage and busy guards.",
+    "verification": "Owner confirmed the selection/hold lock repair. Browser checked the larger cue geometry, contrasting ticket in Light/black, front/back offers and correct-back editor with Back focus/Save disabled. Previous photo/video checks remain; no card/rating edits saved in this pass. 312 tests and web/native builds pass. Actual thumb visibility, clipboard permission/round-trip and haptic feel remain phone checks. Binary cross-device sync remains incomplete."
+  },
+  {
+    "area": "Library",
+    "path": "Horizontal swipe → two bottom dots",
+    "decision": "Slow deliberate swipes switch by distance with no hidden speed/deadline veto. Keep initial horizontal intent through later vertical drift; normal vertical scrolling never switches pages. Resist and cap displacement to 48px inward/12px outward. Two separate 44px dot targets stay fixed; a 3px pip travels through the gap and fades before either dot, without overlapping. Keep no visible mode names or extra switch; Reduce Motion uses static dots.",
+    "verification": "31 targeted math tests plus controller lifecycle checks cover slow drags, outer bounds, locked intent, marker/commit agreement, long vertical click suppression and fresh touches interrupting return. Browser measured separate 44px targets/4px anchors. Full 312 tests and web/native builds pass. This Mac uses Reduce Motion; continuous phone touch motion remains an owner check."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Question → reveal eye",
+    "decision": "Remove Click 2 see from the actual reveal control and onboarding. Keep an accessible Show answer name. Study retains its emerald eye and spaced outward rays; Practice uses lapis/platinum with a close broken orbit in both free-practice routes. No visible top mode names or switch.",
+    "verification": "Browser compared production art in Light/black and checked actual Practice front/back; Study control retains its original eye. 312 tests and production/native builds pass. Distinguishability and subtle motion still need owner feedback on the phone."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Bottom paper controls → front/back switching",
+    "decision": "Use one StudyFooter action area and 44px control row in all three session routes, with balanced side slots, no row margins and one shared bottom safe-area inset. Preserve Study Undo and anchor its previous-card arrow to the physical bottom-left corner, with at least 16px edge padding plus safe-area protection. Landscape reserves space below the card for that target.",
+    "verification": "Reproduced and repaired the 4px Study answer-side jump; prior checks found zero vertical drift at 393×852, 320×568, 667×375 and 400×688, with all paper targets 44×44px. Latest corner-placement check: arrow left16/bottom16 at 400×688 and left16/bottom18 at 667×375, unchanged front/back; landscape content ends before its target. No card/rating edits saved. Review-again shares the same component but its completion entry was source checked. The prior full suite passed 312 tests; this placement-only update passed lint, TypeScript and web/signed native builds. Installed and launched in place on the iPhone."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Pixel art → cached exterior contours",
+    "decision": "Preserve authored pixels, colours and animation timing while compiling the eye into nine colour paths and each icon border into only exposed boundary loops. Remove hidden interior strokes; keep the thin rounded black contour.",
+    "verification": "Five geometry tests prove production fill and boundary preservation; 15 targeted compiler/turn tests, lint, TypeScript and web/signed native builds pass. Both eye variants have zero rectangles, nine colour paths and one contour loop. Installed in place; automatic launch was denied because the phone was locked. Structural savings are verified; battery savings are not measured."
+  },
+  {
+    "area": "Still open",
+    "path": "Rapid reveal / next → native crash and energy validation",
+    "decision": "Keep the native scrolling-layer exception open until its trigger is reproducible. Reconcile the iOS15 deployment setting with newer browser assumptions, then validate older physical devices. Prioritize decoded-image sizing, bounded deck/media caches and coalesced sync work.",
+    "verification": "Retrieved a pre-outline-update SIGABRT report in UIScrollView pan/contentOffset/CALayer bounds; this report is not a memory kill. Owner's subsequent 30sec rapid-card run did not reproduce it. A short connected development trace measured WebContent footprint up to ~203MiB, but uncontrolled interaction state and no paired power trace prevent idle/battery-life or improvement claims. Geometry optimization does not close this crash."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Reveal eye ↔ recall choices",
+    "decision": "Crossfade only the action artwork over150ms; leave card turning and the bottom face tools unchanged. Retain one front/back action set, make the inactive set inert/aria-hidden/pointer-disabled immediately and pause its animations. No state delay or new idle loop; Reduce Motion swaps immediately.",
+    "verification": "Explicit sample observed both opacity transitions end at150ms in either direction. Actual Study/Practice expose only current actions; Study paper targets remain y628 on both faces at400×688. No card/rating edits saved. Review-again uses the shared footer in source. Lint, TypeScript and web/signed native builds pass. Separate native scrolling crash remains open."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Fast mixed-direction card gestures → interrupted turn",
+    "decision": "Keep the last flat card/footer geometry stable through dragging and interrupted springs; release geometry only after flat paint. Preserve immediate answer registration and control state. Cancel pending hold without focus during a pan; recover expected pointer-capture cancellation.",
+    "verification": "12,000 controller interruption trials plus layout/focus/capture-recovery checks pass. Full lint, TypeScript, 360 tests and web/signed iOS builds pass. Installed and launched in place on the iPhone. Owner repeated mixed-direction swipes and reported no freeze. Earlier native scrolling crash remains open; owner separately reported excessive elastic edge travel and a one-time reveal-control resize."
+  },
+  {
+    "area": "Study history",
+    "path": "First answer exposure → lifetime counter and session record",
+    "decision": "Count the first reveal of a stable queue occurrence in Study and Practice. Retain independent lifetime and session records, display only a small lifetime ×N by the face controls. Repeated side toggles, edits, Undo and callback retries do not inflate it. Local journal recovery is separate from scheduling; dirty-only cloud mirroring reuses existing sync events.",
+    "verification": "35 storage/merge/platform tests plus eight UI-coordinator tests cover recovery, dedupe, startup failure, offline retry and concurrent upload. Data-free footer preview checked in small portrait/landscape; no actual test-card ratings or counts saved. Installed on iPhone; owner confirmed count works and repeated front/back flipping does not inflate it. Counts start with this update, are not included in current Anki scheduling exports, and cross-device sync has no two-physical-device validation yet."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Reveal controls → delayed card-layout reconciliation",
+    "decision": "Give retained eye and rating layers independent final-size canvases anchored above the fixed face tools. Preserve frozen card geometry during a drag/spring and immediate reveal registration. Short landscape uses the same card-left/actions-right grid on both faces.",
+    "verification": "Reproduced eye174→106.5px and84px rating jump; browser now measures zero eye/rating/tool drift across both mismatch states at440×956,393×852,320×568 and667×375. Short/long/late-image samples and Practice checked without real history writes.366 tests and web/signed native builds pass; installed and launched in place on the iPhone; owner confirmed controls stay steady on reveal/return."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Scroll beyond actual content → small elastic edge",
+    "decision": "Keep native content scrolling, suppress supported local rubber-band and show only a passive bounded viewport displacement (max20px or6% height) with200ms return. Do not translate inner content, change scroll offsets, capture pointers or prevent native events. Respect Reduce Motion and preserve legacy native fallback.",
+    "verification": "Six math/intent tests and a lifecycle harness cover edge/reversal/release/cancel, zero-offset cleanup, interrupted input and interaction guards. Browser long-text reaches its real bottom and late images update the cue without moving controls. Native post-release momentum remains clamped; installed and launched on the iPhone; owner confirmed the smaller edge movement and gentle return feel right, including fast swipes."
+  },
+  {
+    "area": "Library",
+    "path": "Travelling pixel → settled page dots",
+    "decision": "Remove the traveller after its160ms return so only the two permanent anchors remain. Reset interrupted presentation when search disables swiping, the page hides, or the selected dot is tapped. Preserve existing swipe distance, bounds and44px targets.",
+    "verification": "Seven static-render regression cases plus controller lifecycle checks pass. Data-free browser fixture shows0 traveller nodes at both settled endpoints and1 midway, with two44px targets throughout. Full lint and373 tests pass. Web/TypeScript and signed iOS builds pass; installed and launched in place on the iPhone. Physical trail check pending. Button-content adjustment was already confirmed fixed and received no further change."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Card media/layout sizing → lower-edge fade",
+    "decision": "Keep the static lower-edge gradient painted on both retained faces from initial render. Only the scroll chevron waits for measured overflow. In short landscape, give the final question line22px bottom padding to match its22px fade. No added animation, filter or measurement loop.",
+    "verification": "Two initial-render tests prove active/retained gradients exist before effects, with no unmeasured chevron. Browser late-image growth422→581px keeps gradientblock/28px throughout; only the arrow changes. Long landscape ends exactly above the fade. Full lint and375 tests pass. Web/TypeScript and signed native builds pass; installed and launched in place on the iPhone. Owner subsequently reported fade still late after flips in both directions; persistent gradient alone was insufficient. See fixed per-face geometry entry."
+  },
+  {
+    "area": "Library",
+    "path": "Short natural horizontal drag → adjacent mode",
+    "decision": "Use12% width bounded44–80px and1.4× horizontal intent; keep10px initial slop, permanent axis lock, any deliberate pace, bounded edge give and one release haptic. Share120ms return for content/marker and retire traveller at rest. No visible switch or mode names.",
+    "verification": "39 focused tests plus controller/marker lifecycle harness pass, including53px natural diagonals both directions and25px tiny rejection. Independent review passed. Full lint,376 tests, web/TypeScript and signed iOS build pass. Installed and launched in place on the iPhone. Owner still finds this requires too much travel; a further distance-only tuning is in progress."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Flip either face → already-sized content fade",
+    "decision": "Keep outer frame/footer at existing final answer footprint; each native scroll surface keeps its own final height, with a static inset on front and zero inset in short landscape. Gradient turns with its surface instead of relocating after spring settlement. Preserve control positions, scroll offsets, hold lock, hit paths and existing controller.",
+    "verification": "Browser geometry invariant across front/back and both forced mismatch states at440×956,393×852,320×568,667×375. Long text reaches end; pictures preserve bounds. Actual drag and800ms hold work; edit strip anchors above front and blank extra frame does not intercept input. Mac Reduce Motion limits normal-motion timing claims.12000 interruption trials and layout/hold/capture harness pass. Full lint,376 tests, TypeScript/web/signed native build pass. Installed and launched in place on the iPhone without uninstall/reset. Owner confirmed the fade feels immediate in both directions on the iPhone."
+  },
+  {
+    "area": "Editor",
+    "path": "Card details → reset one card’s seen count",
+    "decision": "Existing cards get a compact count/reset row and explicit inline confirmation. Save count separately from content, preserve drafts, block conflicting operations only while writing, and keep errors visible in footer. Reset only display baselines in separate count-owned files; raw/session/scheduling history and occurrence dedupe remain intact.",
+    "verification": "50 store/count/presentation and10 async editor-controller cases pass. Actual editor memory-only fixture: cancel leaves3, reset gives0 preserving typed draft, discard draft/reopen retains0 and clean Save state.320px portrait/667px landscape confirmation fits,44px targets, no new dialog or horizontal overflow. No actual user count/card changed. Full lint,410 tests, TypeScript/web and signed native build pass; final targeted swipe/haptic set51 passes. Installed and launched in place on the iPhone without data reset. Unseen offline reveals may arrive after an observed reset; two physical devices not tested."
+  },
+  {
+    "area": "Library",
+    "path": "Short drag → lift, detent and settle",
+    "decision": "Shorten gate to8% width bounded32–56px; marker reaches midpoint at commit distance, then lands over existing120ms return. Sparse native selection ticks at inward lift, first threshold and committed landing; coalesce rapid ticks and cancel old feedback on interruption or unrelated actions. No idle buzz or extra timer.",
+    "verification": "51 targeted swipe/haptic tests and expanded gesture lifecycle harness pass: first-crossing latch, midpoint/shortgate,120ms landing reuse, cancellation/visibility/search/unmount/otherfeedback, both directions and Reduce Motion. Full lint,410 tests, TypeScript/web and signed native build pass. Installed and launched in place on the iPhone. Owner requested stronger lift/landing and still observed occasional residue during slow drags. See sharper-feedback repaint follow-up. Previous fade fix was owner-confirmed immediate in both directions."
+  },
+  {
+    "area": "Study / Practice",
+    "path": "Open deck → steady first-card entrance",
+    "decision": "Prepare native media locations alongside DB/page load. Retain final session shell/surfaces/footer through readiness; wait only the first visible front images with no minimum and450ms maximum. Reveal once with160ms opacity, skip motion when requested, leave Back available and gate other input/audio/counting until ready. No scheduler/data writes or global media cache.",
+    "verification": "13 image-readiness tests and9 native metadata/hook tests pass. Browser portrait440/320 andlandscape667 show identical preparing/ready geometry and correct inert footer. Picture sample ready after load/decode; scoped motion preview counts1 fade across both flips. Full lint and434 tests pass. TypeScript/web and signed native build pass; installed and launched in place on the iPhone, preserving app data. Owner confirmed picture-deck opening feels smooth on the iPhone. Real slow images can exceed450ms; no promise of universal decode completion."
+  },
+  {
+    "area": "Library",
+    "path": "Slow drag → repainted traveller and sharper end detents",
+    "decision": "Use immediate scoped Light impacts for lift/landing and retain quiet selection at midpoint. Move only the3px pip through absolute left inside88×44 paint containment, preserving bounded navigation,120mssettle, focus inset, ReduceMotion and traveller DOM retirement.",
+    "verification": "52 focused swipe/haptic tests plus controller lifecycle harness pass. Browser midpoint has left42.5px and transformnone; no traveller remains at either rest. Full lint and434 tests pass. TypeScript/web and signed native build pass; installed and launched in place on the iPhone. Owner corrected an initial repeat trail report and said the trail no longer appears on the iPhone. Keep this implementation unchanged. Revised haptic strength has no separate explicit confirmation; native paint residue remains a hypothesis."
   }
 ]

@@ -1,0 +1,13 @@
+.deck-glyph { flex-shrink:0; color:#77777b; vertical-align:middle; }
+.dark .deck-glyph { color:#a3a3a8; }
+.deck-glyph-cover { fill:var(--kit-bg); }
+.deck-glyph-pages { opacity:.55; }
+.deck-glyph-spine { opacity:.35; }
+.deck-glyph-open { opacity:0; }
+.deck-glyph-closed,.deck-glyph-open { transition:opacity 100ms ease; }
+.deck-glyph--open .deck-glyph-open,.library-deck-open:active .deck-glyph-open { opacity:1; }
+.deck-glyph--open .deck-glyph-closed,.library-deck-open:active .deck-glyph-closed { opacity:0; }
+.deck-context-label { display:inline-flex; align-items:center; justify-content:center; gap:7px; max-width:100%; min-width:0; vertical-align:middle; }
+.deck-context-label .deck-glyph { width:18px; height:20px; }
+.deck-context-label .deck-name { min-width:0; }
+@media(prefers-reduced-motion:reduce) { .deck-glyph-closed,.deck-glyph-open { transition:none; } }

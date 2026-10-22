@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const CUSTOM_CLASSES = ['ICloudPlugin', 'ICloudSyncPlugin'];
+const CUSTOM_CLASSES = ['ICloudPlugin', 'ICloudSyncPlugin', 'LibraryControlsPlugin', 'MediaClipboardPlugin'];
 const CONFIG_PATH = resolve('ios/App/App/capacitor.config.json');
 
 const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));

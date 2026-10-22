@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Deck } from '../types';
 import type { DeckAssociation } from '../hooks/useTagSheet';
 import type { TagCount } from '../lib/db/queries';
-import { pillTextColor } from '../lib/tagColors';
+import { TagLabel } from './TagLabel';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -40,10 +40,10 @@ interface TagBottomSheetProps {
   deckAssociations?: DeckAssociation[];
   onClose: () => void;
   onRename: (oldTag: string, newTag: string) => boolean | Promise<boolean>;
-  onColorChange: (tag: string, hex: string) => void;
-  onDelete: (tag: string) => void;
-  onAddToDeck?: ((tag: string, deckId: string) => void) | undefined;
-  onRemoveFromDeck?: ((tag: string, deckId: string) => void) | undefined;
+  onColorChange: (tag: string, hex: string) => void | Promise<void>;
+  onDelete: (tag: string) => void | Promise<void>;
+  onAddToDeck?: ((tag: string, deckId: string) => void | Promise<void>) | undefined;
+  onRemoveFromDeck?: ((tag: string, deckId: string) => void | Promise<void>) | undefined;
   onTagUpdated: (newTag: string) => void;
 }
 
@@ -83,17 +83,34 @@ export function TagBottomSheet({
   // Remove-from-deck confirm
   const [removingDeckId, setRemovingDeckId] = useState<string | null>(null);
 
-  const handleRenameCommit = useCallback(() => {
+  const [busy, setBusy] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const runMutation = useCallback(async (work: () => boolean | void | Promise<boolean | void>): Promise<boolean> => {
+    if (busyRef.current) return false;
+    busyRef.current = true; setBusy(true); setMutationError(null);
+    try {
+      const result = await work();
+      if (result === false) throw new Error('The tag change could not be saved.');
+      return true;
+    } catch (error) {
+      console.warn('Could not save tag changes:', error);
+      setMutationError('Couldn’t finish this change. Some decks may already be updated. Please try again.');
+      return false;
+    } finally { busyRef.current = false; setBusy(false); }
+  }, []);
+  const dismiss = useCallback(() => { if (!busyRef.current) onClose(); }, [onClose]);
+  const handleRenameCommit = useCallback(async () => {
     const newName = renameDraft.trim();
-    setEditingName(false);
-    if (!newName || newName === tag.tag) return;
-    const ok = onRename(tag.tag, newName);
-    if (ok) onTagUpdated(newName);
-  }, [renameDraft, tag.tag, onRename, onTagUpdated]);
+    if (!newName || newName === tag.tag) { setEditingName(false); return; }
+    const ok = await runMutation(() => onRename(tag.tag, newName));
+    if (ok) { setEditingName(false); onTagUpdated(newName); }
+  }, [renameDraft, tag.tag, onRename, onTagUpdated, runMutation]);
 
   // ── Drag handlers ──────────────────────────────────────────────────────
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (busyRef.current) return;
     dragStartY.current = e.touches[0]!.clientY;
     isDragging.current = true;
     setDragY(0);
@@ -110,10 +127,10 @@ export function TagBottomSheet({
     if (dragY < -EXPAND_THRESHOLD) {
       setExpanded(true);
     } else if (dragY > DISMISS_THRESHOLD) {
-      onClose();
+      dismiss();
     }
     setDragY(0);
-  }, [dragY, onClose]);
+  }, [dragY, dismiss]);
 
   // ── Computed styles ────────────────────────────────────────────────────
 
@@ -122,15 +139,13 @@ export function TagBottomSheet({
   const upLimit = expanded ? 0 : -60;
   const transform = dragY !== 0 ? `translateY(${Math.max(upLimit, Math.min(dragY, 200))}px)` : undefined;
 
-  const pillBg = tag.color || '#9E9E9E';
-  const pillText = tag.color ? pillTextColor(tag.color) : '#ffffff';
 
   return (
     <>
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/40"
-        onClick={onClose}
+        onClick={dismiss}
       />
 
       {/* Sheet */}
@@ -153,24 +168,20 @@ export function TagBottomSheet({
           <div className="w-10 h-1 rounded-full bg-[#D4D4D4] dark:bg-[#404040]" />
         </div>
 
+        {mutationError && <p role="alert" className="px-4 pb-2 text-sm text-red-500">{mutationError}</p>}
         {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto">
+        <fieldset disabled={busy} aria-busy={busy} className="flex-1 min-h-0 min-w-0 overflow-y-auto border-0 p-0">
           {/* Tag name */}
           <div className="px-4 pt-2 pb-4 flex items-center gap-3">
-            <span
-              className="px-3 py-1 rounded-full text-sm font-medium shrink-0"
-              style={{ background: pillBg, color: pillText }}
-            >
-              {tag.tag}
-            </span>
+            <TagLabel name={tag.tag} color={tag.color} />
             {editingName ? (
               <input
                 ref={renameInputRef}
                 value={renameDraft}
                 onChange={e => setRenameDraft(e.target.value)}
-                onBlur={handleRenameCommit}
+                onBlur={() => { void handleRenameCommit(); }}
                 onKeyDown={e => {
-                  if (e.key === 'Enter') handleRenameCommit();
+                  if (e.key === 'Enter') { e.preventDefault(); void handleRenameCommit(); }
                   if (e.key === 'Escape') { setEditingName(false); setRenameDraft(tag.tag); }
                 }}
                 className="flex-1 px-4 py-1.5 text-sm bg-[var(--kit-surface)] rounded-full text-[#1c1c1e] dark:text-[#E5E5E5] placeholder-[#C4C4C4] outline-none"
@@ -190,10 +201,10 @@ export function TagBottomSheet({
             <p className="px-4 pt-3 pb-1 text-xs font-medium text-[#C4C4C4] uppercase tracking-wide">
               Colour
             </p>
-            <TagColourPicker value={tag.color} onChange={hex => onColorChange(tag.tag, hex)} />
+            <TagColourPicker value={tag.color} onChange={hex => { void runMutation(() => onColorChange(tag.tag, hex)); }} />
             {tag.color && (
               <button
-                onClick={() => onColorChange(tag.tag, '')}
+                onClick={() => { void runMutation(() => onColorChange(tag.tag, '')); }}
                 className="mx-4 mb-3 text-xs text-[#C4C4C4]"
               >
                 Clear colour
@@ -257,7 +268,7 @@ export function TagBottomSheet({
               </p>
             </div>
           )}
-        </div>
+        </fieldset>
       </div>
 
       {/* Deck picker overlay */}
@@ -266,11 +277,12 @@ export function TagBottomSheet({
           style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}
         >
           <div className="flex items-center gap-3 px-4 py-3 border-b border-[#E5E5E5] dark:border-[#262626]">
-            <button onClick={() => setShowDeckPicker(false)} className="text-sm text-[#C4C4C4]">
+            <button disabled={busy} onClick={() => setShowDeckPicker(false)} className="text-sm text-[#C4C4C4]">
               Done
             </button>
             <span className="flex-1 text-base font-bold text-center">Add to deck</span>
           </div>
+          {mutationError && <p role="alert" className="px-4 py-2 text-sm text-red-500">{mutationError}</p>}
           <div className="flex-1 overflow-y-auto">
             {allDecks.length === 0 && (
               <p className="px-4 py-12 text-sm text-[#C4C4C4] text-center">No decks yet</p>
@@ -280,9 +292,12 @@ export function TagBottomSheet({
               return (
                 <button
                   key={deck.id}
+                  disabled={busy}
                   onClick={() => {
-                    if (isAdded && onRemoveFromDeck) onRemoveFromDeck(tag.tag, deck.id);
-                    else if (onAddToDeck) onAddToDeck(tag.tag, deck.id);
+                    void runMutation(() => {
+                      if (isAdded && onRemoveFromDeck) return onRemoveFromDeck(tag.tag, deck.id);
+                      return onAddToDeck?.(tag.tag, deck.id);
+                    });
                   }}
                   className="w-full flex items-center gap-3 px-4 py-3.5 border-b border-[#F0F0F0] dark:border-[#1E1E1E] active:bg-[#F5F5F5] dark:active:bg-[#1A1A1A]"
                 >
@@ -313,13 +328,13 @@ export function TagBottomSheet({
             </div>
             <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
               <button
-                onClick={() => setConfirmDelete(false)}
+                disabled={busy} onClick={() => setConfirmDelete(false)}
                 className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
               >
                 Cancel
               </button>
               <button
-                onClick={() => { setConfirmDelete(false); onDelete(tag.tag); onClose(); }}
+                disabled={busy} onClick={() => { void runMutation(() => onDelete(tag.tag)).then(ok => { setConfirmDelete(false); if (ok) onClose(); }); }}
                 className="flex-1 py-3.5 text-sm font-semibold text-red-500 active:bg-red-50 dark:active:bg-red-950"
               >
                 Delete
@@ -343,13 +358,13 @@ export function TagBottomSheet({
               </div>
               <div className="flex border-t border-[#E5E5E5] dark:border-[#333]">
                 <button
-                  onClick={() => setRemovingDeckId(null)}
+                  disabled={busy} onClick={() => setRemovingDeckId(null)}
                   className="flex-1 py-3.5 text-sm font-medium text-[#1c1c1e] dark:text-[#E5E5E5] active:bg-[#F0F0F0] dark:active:bg-[#262626] border-r border-[#E5E5E5] dark:border-[#333]"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => { onRemoveFromDeck(tag.tag, removingDeckId); setRemovingDeckId(null); }}
+                  disabled={busy} onClick={() => { void runMutation(() => onRemoveFromDeck(tag.tag, removingDeckId)).then(() => setRemovingDeckId(null)); }}
                   className="flex-1 py-3.5 text-sm font-semibold text-red-500 active:bg-red-50 dark:active:bg-red-950"
                 >
                   Remove

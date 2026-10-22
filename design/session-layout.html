@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Kit — session layout</title></head>
+<body><div id="session-layout"></div><script type="module">
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { SessionLayout } from './session-layout.tsx';
+document.documentElement.dataset.theme = 'black';
+document.documentElement.classList.add('dark');
+createRoot(document.getElementById('session-layout')).render(createElement(SessionLayout));
+</script></body></html>

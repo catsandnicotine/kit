@@ -1,0 +1,5 @@
+.card-face-indicator { position:relative; }
+.card-seen-count { position:absolute; left:calc(100% + 6px); top:50%; transform:translateY(-50%); color:#73766f; font:400 10px/14px -apple-system,BlinkMacSystemFont,system-ui,sans-serif; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.dark .card-seen-count { color:#92958c; }
+.study-count-notice { position:absolute; z-index:25; top:calc(env(safe-area-inset-top) + 58px); left:0; right:0; pointer-events:none; }
+.study-count-notice .library-notice { width:min(440px,calc(100% - 32px)); margin:8px auto 0; pointer-events:auto; }

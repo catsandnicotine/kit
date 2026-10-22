@@ -1,0 +1,34 @@
+[
+  {
+    "button": "study",
+    "meaning": "Reading, translation and deliberate understanding.",
+    "title": "Saint Jerome as Scholar",
+    "artist": "El Greco (Domenikos Theotokopoulos)",
+    "date": "ca. 1610",
+    "museum": "The Metropolitan Museum of Art",
+    "objectId": 459088,
+    "objectUrl": "https://www.metmuseum.org/art/collection/search/459088",
+    "imageUrl": "https://images.metmuseum.org/CRDImages/rl/web-large/DT3103.jpg",
+    "rights": "CC0 / Public Domain",
+    "rightsEvidence": "Met Open Access API isPublicDomain = true; object page labelled Public Domain.",
+    "licenseUrl": "https://www.metmuseum.org/about-the-met/policies-and-documents/open-access",
+    "sha256": "30500670b38f5d3c8ebd75cd484d8918f351c6b34ee73b775b2e868a012e867f",
+    "treatment": "Original bundled JPEG, cropped and Gaussian-blurred in CSS. Text is separate and unblurred."
+  },
+  {
+    "button": "practice",
+    "meaning": "Musical rehearsal: returning to a skill through doing.",
+    "title": "The Musicians",
+    "artist": "Caravaggio (Michelangelo Merisi)",
+    "date": "1597",
+    "museum": "The Metropolitan Museum of Art",
+    "objectId": 435844,
+    "objectUrl": "https://www.metmuseum.org/art/collection/search/435844",
+    "imageUrl": "https://images.metmuseum.org/CRDImages/ep/web-large/DP-687-001.jpg",
+    "rights": "CC0 / Public Domain",
+    "rightsEvidence": "Met Open Access API isPublicDomain = true; object page labelled Public Domain.",
+    "licenseUrl": "https://www.metmuseum.org/about-the-met/policies-and-documents/open-access",
+    "sha256": "4fcfc9c757f22dc2196d6f91596ea917d431500496775d88d1d612b4aec61c1c",
+    "treatment": "Original bundled JPEG, cropped and Gaussian-blurred in CSS. Text is separate and unblurred."
+  }
+]

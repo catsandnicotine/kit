@@ -2,9 +2,11 @@
 import { Capacitor } from '@capacitor/core';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import type { Rating } from '../../types';
+import type { LibrarySwipeHapticFeedback } from '../../types/haptics';
 
 let generation = 0;
 let lastStarted = -Infinity;
+let selectionBusy = false;
 
 function available(): boolean {
   return Capacitor.isNativePlatform() && (typeof document === 'undefined' || document.visibilityState !== 'hidden');
@@ -13,6 +15,46 @@ function available(): boolean {
 async function impact(style: ImpactStyle): Promise<void> {
   try { await Haptics.impact({ style }); }
   catch { /* Unsupported hardware/disabled feedback is a quiet no-op. */ }
+}
+
+async function selectionTick(token: number): Promise<void> {
+  const requestedAt = Date.now();
+  if (token !== generation || !available() || selectionBusy || requestedAt - lastStarted < 45) return;
+  lastStarted = requestedAt;
+  selectionBusy = true;
+  try {
+    await Haptics.selectionStart();
+    // A bridge backlog must not turn old finger feedback into a late pulse.
+    if (token !== generation || !available() || Date.now() - requestedAt > 45) return;
+    await Haptics.selectionChanged();
+  } catch { /* Optional detents must never block or reject navigation. */ }
+  finally {
+    try { await Haptics.selectionEnd(); }
+    catch { /* End preparation quietly even when feedback is unsupported. */ }
+    selectionBusy = false;
+  }
+}
+
+async function swipeImpact(token: number): Promise<void> {
+  const requestedAt = Date.now();
+  if (token !== generation || !available() || requestedAt - lastStarted < 45) return;
+  lastStarted = requestedAt;
+  // Dispatch immediately: no queued preparation can outlive this gesture.
+  await impact(ImpactStyle.Light);
+}
+
+/** Scope quiet library detents to one drag and the existing visual landing.
+ * @returns Optional lift/threshold/landing ticks; newer feedback cancels this scope.
+ */
+export function createLibrarySwipeHaptics(): LibrarySwipeHapticFeedback {
+  const token = ++generation;
+  const cancel = () => { if (token === generation) ++generation; };
+  return {
+    lift: () => swipeImpact(token),
+    threshold: () => selectionTick(token),
+    land: async () => { await swipeImpact(token); cancel(); },
+    cancel,
+  };
 }
 
 // New interactions cancel any remaining pulses; rapid duplicate calls coalesce.

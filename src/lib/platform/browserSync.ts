@@ -11,6 +11,7 @@ import type { SyncStorage, PendingEdit } from '../sync/syncStorage';
 
 const PREFIX = 'kit_sync:';
 const PENDING_PREFIX = 'kit_pending:';
+const ARCHIVE_PREFIX = 'kit_retained:';
 
 /**
  * Create a SyncStorage backed by localStorage (browser dev mode).
@@ -89,6 +90,25 @@ export function createBrowserSyncStorage(): SyncStorage {
 
     async removePendingEdit(deckId: string, filename: string): Promise<void> {
       localStorage.removeItem(`${PENDING_PREFIX}${deckId}_${filename}`);
+    },
+
+    async archiveEdit(deckId: string, filename: string, data: string): Promise<void> {
+      const key = `${ARCHIVE_PREFIX}${deckId}_${filename}`;
+      const existing = localStorage.getItem(key);
+      const content = JSON.stringify({ deckId, filename, data });
+      if (existing !== null && existing !== content) throw new Error('A retained edit identity has different contents');
+      if (existing === null) localStorage.setItem(key, content);
+    },
+
+    async listArchivedEdits(): Promise<PendingEdit[]> {
+      const edits: PendingEdit[] = [];
+      for (let index = 0; index < localStorage.length; index++) {
+        const key = localStorage.key(index);
+        if (!key?.startsWith(ARCHIVE_PREFIX)) continue;
+        const value = localStorage.getItem(key);
+        if (value) edits.push(JSON.parse(value) as PendingEdit);
+      }
+      return edits;
     },
 
     async isAvailable(): Promise<boolean> {

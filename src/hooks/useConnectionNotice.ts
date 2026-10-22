@@ -10,7 +10,7 @@ import { updateConnectionNotice } from '../lib/connectionNotice';
  * @param availability - Separate iCloud account availability.
  * @param status - Current sync activity.
  * @param active - Whether the home toolbar is visible.
- * @returns Visibility, presentation state, and dismissal callback.
+ * @returns Visibility, deduplicated presentation state, and dismissal callback; the visible notice owns reading-time dismissal.
  */
 export function useConnectionNotice(online: boolean, availability: ICloudAvailability, status: SyncStatus, active: boolean) {
   const connection: ConnectionState = !online ? 'offline' : availability === 'unavailable' || status === 'error'
@@ -29,11 +29,6 @@ export function useConnectionNotice(online: boolean, availability: ICloudAvailab
     if (wasActive.current && !active) dismiss();
     wasActive.current = active;
   }, [active, dismiss]);
-  const kind: ConnectionState | 'syncing' = notice.connection === 'online' && status === 'syncing' ? 'syncing' : notice.connection;
-  useEffect(() => {
-    if (!active || !notice.visible || kind === 'syncing') return;
-    const timer = setTimeout(dismiss, kind === 'paused' ? 6000 : 3500);
-    return () => clearTimeout(timer);
-  }, [active, notice.visible, kind, dismiss]);
+  const kind: ConnectionState | 'syncing' = online && availability === 'available' && status === 'syncing' ? 'syncing' : notice.connection;
   return { visible: notice.visible && active, kind, dismiss };
 }

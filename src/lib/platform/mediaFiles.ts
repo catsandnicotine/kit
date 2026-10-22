@@ -22,9 +22,42 @@ import { Capacitor } from '@capacitor/core';
 import { uint8ToBase64, base64ToUint8 } from './persistence';
 import { isNativePlatform } from './platformDetect';
 
-import { saveBrowserMedia, readBrowserMedia, listBrowserMedia, deleteBrowserMedia } from './browserMediaFiles';
+import { saveBrowserMedia, saveBrowserMediaBlob, readBrowserMedia, listBrowserMedia, deleteBrowserMedia } from './browserMediaFiles';
 
 const MEDIA_ROOT = 'media';
+
+/** Store a new attachment with bounded memory use and without overwriting older media.
+ * @param deckId - Safe single-segment deck owner, validated by the attachment caller.
+ * @param filename - New generated filename.
+ * @param data - Original file-backed photo or video.
+ * @returns Completion after the whole file is written; generated partial files are cleaned up.
+ */
+export async function saveMediaBlobFile(deckId: string, filename: string, data: Blob): Promise<void> {
+  if (!/^[a-zA-Z0-9_-]{1,160}$/.test(deckId) || !filename || /[\\/]/.test(filename) || filename === '.' || filename === '..'
+    || [...filename].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)) throw new Error('Invalid media location');
+  if (!isNativePlatform()) return saveBrowserMediaBlob(deckId, filename, data);
+  const folder = `${MEDIA_ROOT}/${deckId}`;
+  const path = `${folder}/${filename}`;
+  try { await Filesystem.mkdir({ path:folder, directory:Directory.Documents, recursive:true }); }
+  catch (error) {
+    if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'OS-PLUG-FILE-0010')) throw error;
+  }
+  const existing = await Filesystem.readdir({ path:folder, directory:Directory.Documents });
+  if (existing.files.some(file => (typeof file === 'string' ? file : file.name) === filename)) throw new Error('Media already exists');
+  const chunkSize = 512 * 1024;
+  try {
+    for (let offset = 0; offset < Math.max(1, data.size); offset += chunkSize) {
+      const chunk = new Uint8Array(await data.slice(offset, offset + chunkSize).arrayBuffer());
+      const options = { path, directory:Directory.Documents, data:uint8ToBase64(chunk) };
+      if (offset === 0) await Filesystem.writeFile(options);
+      else await Filesystem.appendFile(options);
+    }
+  } catch (error) {
+    // The existence check and unique filename ensure this is only our partial write.
+    await Filesystem.deleteFile({ path, directory:Directory.Documents }).catch(cleanupError => console.warn('Could not remove an incomplete media file', cleanupError));
+    throw error;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -160,7 +193,7 @@ export async function getMediaFileWebUrl(deckId: string, filename: string): Prom
     const file = await readBrowserMedia(deckId, filename);
     if (!file) return '';
     const extension = filename.split('.').pop()?.toLowerCase() ?? '';
-    const types: Record<string, string> = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml', mp3:'audio/mpeg', mp4:'video/mp4', m4a:'audio/mp4', ogg:'audio/ogg', wav:'audio/wav', woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf', otf:'font/otf', css:'text/css' };
+    const types: Record<string, string> = { png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', webp:'image/webp', svg:'image/svg+xml', heic:'image/heic', heif:'image/heif', avif:'image/avif', bmp:'image/bmp', tif:'image/tiff', tiff:'image/tiff', mp3:'audio/mpeg', mp4:'video/mp4', mov:'video/quicktime', m4v:'video/x-m4v', webm:'video/webm', ogv:'video/ogg', m4a:'audio/mp4', ogg:'audio/ogg', wav:'audio/wav', woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf', otf:'font/otf', css:'text/css' };
     return URL.createObjectURL(file.slice(0, file.size, types[extension] ?? 'application/octet-stream'));
   }
   try {

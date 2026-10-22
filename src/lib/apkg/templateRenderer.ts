@@ -249,13 +249,7 @@ function processTemplate(
     (_, name: string) => {
       const value = (fieldMap[name.trim()] ?? '').trim();
       if (!value) return '';
-      return (
-        `<a class="hint" onclick="` +
-        `this.style.display='none';` +
-        `document.getElementById('hint_${escapeAttr(name.trim())}').style.display='';` +
-        `return false;" href="#">Show Hint</a>` +
-        `<span id="hint_${escapeAttr(name.trim())}" style="display:none">${value}</span>`
-      );
+      return `<details class="hint"><summary>Show Hint</summary><span>${value}</span></details>`;
     },
   );
 

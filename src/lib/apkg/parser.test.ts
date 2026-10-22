@@ -15,6 +15,8 @@ import {
   extractDecksNewSchema,
   guessMimeType,
   parseApkg,
+  parseApkgLazy,
+  extractMediaBatch,
   parseDecksJson,
   parseNoteTypesJson,
   splitFields,
@@ -635,7 +637,7 @@ describe('parseApkg — media mapping', () => {
     expect(result.data.media).toEqual([]);
   });
 
-  it('skips media entries whose blob is missing from the ZIP', async () => {
+  it('rejects media entries whose blob is missing instead of importing broken pictures', async () => {
     const db = await buildCollectionDb();
     const buf = await buildApkg({
       dbBytes: db,
@@ -644,12 +646,11 @@ describe('parseApkg — media mapping', () => {
     });
 
     const result = await parseApkg(buf);
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.media).toEqual([]);
+    expect(result).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
+    expect(await parseApkgLazy(buf)).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
   });
 
-  it('returns empty media array when the media JSON is corrupt', async () => {
+  it('rejects a present but unreadable media manifest before any import storage', async () => {
     const db = await buildCollectionDb();
     const zip = new JSZip();
     zip.file('collection.anki2', db);
@@ -657,10 +658,62 @@ describe('parseApkg — media mapping', () => {
     const buf = await zip.generateAsync({ type: 'arraybuffer' });
 
     const result = await parseApkg(buf);
-    // Corrupt media manifest should NOT fail the whole parse
-    expect(result.success).toBe(true);
-    if (!result.success) return;
-    expect(result.data.media).toEqual([]);
+    expect(result).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
+    expect(await parseApkgLazy(buf)).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
+  });
+
+  it.each(['{}', 'absent'])('does not invent numeric media names when the %s manifest cannot identify blobs', async manifest => {
+    const zip = new JSZip();
+    zip.file('collection.anki2', await buildCollectionDb());
+    if (manifest !== 'absent') zip.file('media', manifest);
+    zip.file('0', new Uint8Array([137, 80, 78, 71]));
+    const bytes = await zip.generateAsync({ type:'arraybuffer' });
+    expect(await parseApkgLazy(bytes)).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
+  });
+
+  it.each(['{"0":42}', '[]', 'null', '{"0":"../outside.png"}', '{"0":"a.png","1":"a.png"}'])('rejects malformed filename mappings: %s', async manifest => {
+    const zip = new JSZip();
+    zip.file('collection.anki2', await buildCollectionDb());
+    zip.file('media', manifest);
+    zip.file('0', new Uint8Array([1])); zip.file('1', new Uint8Array([2]));
+    expect(await parseApkgLazy(await zip.generateAsync({ type:'arraybuffer' }))).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
+  });
+
+  it('supports modern protobuf and zstd media while retaining original filenames and bytes', async () => {
+    const name = new TextEncoder().encode('cell diagram.png');
+    const entry = new Uint8Array([10, name.length, ...name, 16, 4, 26, 3, 1, 2, 3]);
+    const manifest = new Uint8Array([10, entry.length, ...entry]);
+    const literalZstd = (data: Uint8Array) => {
+      const block = (data.length << 3) | 1;
+      return new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x20, data.length, block & 255, (block >> 8) & 255, (block >> 16) & 255, ...data]);
+    };
+    const photo = new Uint8Array([137, 80, 78, 71]);
+    for (const compressed of [false, true]) {
+      const zip = new JSZip();
+      zip.file('collection.anki21b', await buildCollectionDb());
+      zip.file('media', compressed ? literalZstd(manifest) : manifest);
+      zip.file('0', compressed ? literalZstd(photo) : photo);
+      zip.file('meta', new Uint8Array([8, 2]));
+      const bytes = await zip.generateAsync({ type:'arraybuffer' });
+      const parsed = await parseApkgLazy(bytes);
+      if (!parsed.success) throw new Error(parsed.error);
+      expect(parsed.data.mediaManifest).toEqual([{ zipKey:'0', filename:'cell diagram.png', mimeType:'image/png' }]);
+      expect(await extractMediaBatch(parsed.data.zip, parsed.data.mediaManifest, 0, 50, parsed.data.mediaIsCompressed)).toEqual([{ filename:'cell diagram.png', data:photo, mimeType:'image/png' }]);
+      const eager = await parseApkg(bytes);
+      if (!eager.success) throw new Error(eager.error);
+      expect(eager.data.media).toEqual([{ filename:'cell diagram.png', data:photo, mimeType:'image/png' }]);
+    }
+  });
+
+  it.each([
+    { bytes:[10, 255, 255, 255, 255, 15] },
+    { bytes:[10, 128] },
+    { bytes:[10, 10, 10, 2, 65] },
+  ])('rejects truncated/oversized protobuf lengths without numeric fallback or a parsing loop: $bytes', async ({ bytes }) => {
+    const zip = new JSZip();
+    zip.file('collection.anki2', await buildCollectionDb());
+    zip.file('media', new Uint8Array(bytes));
+    expect(await parseApkgLazy(await zip.generateAsync({ type:'arraybuffer' }))).toEqual({ success:false, error:expect.stringContaining('Pictures or audio') });
   });
 });
 

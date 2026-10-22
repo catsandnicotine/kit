@@ -9,15 +9,15 @@ export const EYE_LIGHT_POSES = [
   'M27 10h1v1h-1Z',
 ] as const;
 
-// Slightly wider than circular. Half-grid intermediate poses keep the breath
-// to two screen pixels before its four-pixel outermost exposure at full size.
+// Slightly wider than circular. Unit direction vectors let the shared breath
+// move each mark radially by about nine screen pixels over a full-size cycle.
 export const EYE_HALO_MARKS = [
-  { path:'M15 0h2v3h-2Z', dx:0, dy:-1 },
-  { path:'M1 4h2v1h1v1H2V5H1Z', dx:-1, dy:-1 },
-  { path:'M28 4h2v1h-1v1h-2V5h1Z', dx:1, dy:-1 },
-  { path:'M-6 19h3v1h-3Z', dx:-1, dy:0 },
-  { path:'M35 19h3v1h-3Z', dx:1, dy:0 },
-  { path:'M2 34h2v1H3v1H1v-1h1Z', dx:-1, dy:1 },
-  { path:'M27 34h2v1h1v1h-2v-1h-1Z', dx:1, dy:1 },
-  { path:'M15 37h2v3h-2Z', dx:0, dy:1 },
+  { path:'M15 -1h2v4h-2Z', dx:0, dy:-1 },
+  { path:'M0 3h2v1h1v1h1v1H2V5H1V4H0Z', dx:-1, dy:-1 },
+  { path:'M29 3h2v1h-1v1h-1v1h-2V5h1V4h1Z', dx:1, dy:-1 },
+  { path:'M-7 19h4v1h-4Z', dx:-1, dy:0 },
+  { path:'M35 19h4v1h-4Z', dx:1, dy:0 },
+  { path:'M2 34h2v1H3v1H2v1H0v-1h1v-1h1Z', dx:-1, dy:1 },
+  { path:'M27 34h2v1h1v1h1v1h-2v-1h-1v-1h-1Z', dx:1, dy:1 },
+  { path:'M15 37h2v4h-2Z', dx:0, dy:1 },
 ] as const;

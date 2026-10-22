@@ -8,6 +8,7 @@
 import { useCallback, useRef, useState } from 'react';
 import type { Card } from '../types';
 import { hapticFlip, hapticCelebration } from '../lib/platform/haptics';
+import { v4 as uuidv4 } from 'uuid';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -27,13 +28,16 @@ export interface ReviewPassStats {
 export interface UseReviewPassReturn {
   phase: ReviewPassPhase;
   currentCard: Card | null;
+  seenSessionKey: string;
+  seenOccurrenceId: string | null;
   stats: ReviewPassStats;
-  /** Flip the current card to show the back. */
+  /** Turn between question and answer without advancing or recording a choice. */
   flip: () => void;
   /** Mark current card as done and advance. No scheduling change. */
   gotIt: () => void;
   /** Re-insert card 5–10 positions ahead, then advance. */
   repeat: () => void;
+  updateCard: (card: Card) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -46,6 +50,9 @@ export interface UseReviewPassReturn {
 export function useReviewPass(initialCards: Card[]): UseReviewPassReturn {
   const queueRef = useRef<Card[]>([...initialCards]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [seenSessionKey] = useState(() => uuidv4());
+  const [initialOccurrenceIds] = useState(() => initialCards.map((_, index) => String(index)));
+  const occurrenceIdsRef = useRef(initialOccurrenceIds);
   const [phase, setPhase] = useState<ReviewPassPhase>(
     initialCards.length > 0 ? 'front' : 'complete',
   );
@@ -76,9 +83,9 @@ export function useReviewPass(initialCards: Card[]): UseReviewPassReturn {
   );
 
   const flip = useCallback(() => {
-    if (phase !== 'front') return;
+    if (phase !== 'front' && phase !== 'back') return;
     hapticFlip();
-    setPhase('back');
+    setPhase(phase === 'front' ? 'back' : 'front');
   }, [phase]);
 
   const gotIt = useCallback(() => {
@@ -94,15 +101,24 @@ export function useReviewPass(initialCards: Card[]): UseReviewPassReturn {
     const offset = 5 + Math.floor(Math.random() * 6);
     const insertAt = Math.min(currentIndex + offset, queue.length);
     queue.splice(insertAt, 0, { ...card });
+    occurrenceIdsRef.current.splice(insertAt, 0, uuidv4());
     advance(currentIndex + 1, true);
   }, [phase, currentIndex, advance]);
+
+  const updateCard = useCallback((updated: Card) => {
+    queueRef.current = queueRef.current.map(card => card.id === updated.id ? updated : card);
+    setStats(previous => ({ ...previous }));
+  }, []);
 
   return {
     phase,
     currentCard: queueRef.current[currentIndex] ?? null,
+    seenSessionKey,
+    seenOccurrenceId: phase !== 'complete' ? occurrenceIdsRef.current[currentIndex] ?? null : null,
     stats,
     flip,
     gotIt,
     repeat,
+    updateCard,
   };
 }

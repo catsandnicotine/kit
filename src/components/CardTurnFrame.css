@@ -1,0 +1,27 @@
+.card-turn-frame { position:relative; min-height:0; min-width:0; perspective:1200px; touch-action:pan-y; pointer-events:none; -webkit-tap-highlight-color:transparent; }
+/* Touch-action panning stops at the nearest scroll container. The outer frame's
+   rule alone cannot reserve horizontal gestures that start inside this scroller. */
+.card-turn-frame .card-scroll-viewport { touch-action:pan-y; }
+.card-turn-plane { position:absolute; inset:0; transform-style:preserve-3d; }
+.card-turn-frame--moving .card-turn-plane { will-change:transform; user-select:none; -webkit-user-select:none; }
+.card-turn-frame img { -webkit-user-drag:none; }
+.card-turn-surface { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; min-height:0; min-width:0; pointer-events:auto; background:var(--kit-bg); backface-visibility:hidden; -webkit-backface-visibility:hidden; }
+/* Each native scroll viewport keeps its final bounds even during a direct turn.
+   The inset is static for a viewport size, never driven by the active face. */
+.card-turn-surface--front { bottom:var(--study-front-card-inset,0px); transform:rotateY(0deg) translateZ(.4px); }
+.card-turn-surface--back { transform:rotateY(180deg) translateZ(.4px); }
+.card-turn-frame .hold-edit-strip { pointer-events:auto; }
+.card-turn-surface::after { content:""; position:absolute; inset:0; pointer-events:none; background:#000; opacity:var(--card-turn-shade,0); }
+/* A hidden session face remains a real rendering surface while its audio/scroll cue
+   still follows the controlled phase. Each side retains its own scroll viewport. */
+.card-turn-frame .card-scroll-frame.card-face-hidden { display:block; }
+.card-turn-frame--reduced { perspective:none; }
+.card-turn-frame--reduced .card-turn-plane { transform:none!important; transform-style:flat; }
+.card-turn-frame--reduced .card-turn-surface { transform:none; }
+/* React owns the wrapper className. The actual device preference must remain
+   authoritative even when a phase render replaces an imperative motion class. */
+@media (prefers-reduced-motion:reduce) {
+  .card-turn-frame { perspective:none; }
+  .card-turn-frame .card-turn-plane { transform:none!important; transform-style:flat; }
+  .card-turn-frame .card-turn-surface { transform:none; }
+}

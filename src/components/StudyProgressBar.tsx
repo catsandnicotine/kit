@@ -6,13 +6,10 @@ import type { StudyProgress } from '../types/studyProgress';
  */
 export function StudyProgressBar({ progress }: { progress: StudyProgress }) {
   const { completed, total, remaining, percent } = progress;
-  return <div className="study-progress">
-    <div className="study-progress-counts" aria-hidden="true">
-      <span><strong>{completed}</strong><span className="study-progress-divider"> / </span>{total}<span className="study-progress-caption"> done</span></span>
-      <span><strong>{remaining}</strong> left</span>
-    </div>
+  return <div className="study-progress study-progress--single-count">
     <div className="deck-progress-track" role="progressbar" aria-label="Session progress" aria-valuemin={0} aria-valuemax={total || 1} aria-valuenow={completed} aria-valuetext={`${completed} of ${total} cards cleared for this session; ${remaining} left`}>
       <div className="deck-progress-fill" style={{ width: `${percent}%` }} aria-hidden="true" />
     </div>
+    <span className="study-remaining" aria-hidden="true">{remaining} left</span>
   </div>;
 }

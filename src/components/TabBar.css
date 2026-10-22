@@ -1,0 +1,7 @@
+.library-page-position .library-page-dots { position:relative; display:grid; grid-template-columns:44px 44px; width:88px; height:44px; contain:paint; }
+.library-page-position .library-page-dots button { width:44px; min-width:44px; height:44px; margin:0; padding:0; }
+.library-page-position .library-page-dots button span { flex-shrink:0; }
+/* The pip travels only through the clear gap; it never sits over an anchor dot. */
+.library-page-traveller { position:absolute; z-index:1; left:calc(28.5px + var(--library-page-progress,0) * 28px); top:20.5px; width:3px; height:3px; border-radius:50%; background:currentColor; opacity:var(--library-traveller-opacity,0); pointer-events:none; }
+.library-page-dots[data-returning="true"] .library-page-traveller { transition:left var(--library-page-settle-duration,120ms) cubic-bezier(.2,.7,.3,1),opacity var(--library-page-settle-duration,120ms) ease-out; }
+@media(prefers-reduced-motion:reduce) { .library-page-traveller { display:none; transition:none; } }

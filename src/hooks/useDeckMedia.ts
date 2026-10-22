@@ -19,31 +19,7 @@ import { isNativePlatform } from '../lib/platform/platformDetect';
 import { refreshBuiltInKitArtwork } from '../lib/kitCat';
 import { WELCOME_DECK_ID } from '../lib/db/welcomeDeck';
 import { getBundledPaintingFiles, getBundledPaintingUrl } from '../lib/jesusPaintingAssets';
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
-
-export interface UseDeckMediaReturn {
-  /**
-   * Rewrite media references in card HTML to use object URLs.
-   * Call this on frontHtml/backHtml before rendering.
-   *
-   * @param html - Raw card HTML from the database.
-   * @returns HTML with media filenames replaced by blob: URLs.
-   */
-  rewriteHtml: (html: string) => string;
-  /** True while media filenames are being loaded from the database. */
-  loading: boolean;
-  /**
-   * Register a newly saved media file so it resolves immediately via rewriteHtml.
-   * Call this after saving a user-inserted image during card editing.
-   *
-   * @param filename - Media filename (e.g. "user_abc.jpg").
-   * @param url      - Web-accessible URL (capacitor:// or blob:).
-   */
-  addMediaFile: (filename: string, url: string) => void;
-}
+import type { DeckMediaBootstrap, UseDeckMediaReturn } from '../types/deckMedia';
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -57,11 +33,13 @@ export interface UseDeckMediaReturn {
  *
  * @param db     - sql.js Database instance (null while loading).
  * @param deckId - UUID of the deck whose media to load.
+ * @param bootstrap - Optional native metadata prepared for this exact navigation/deck.
  * @returns HTML rewriter function and loading state.
  */
 export function useDeckMedia(
   db: Database | null,
   deckId: string,
+  bootstrap?: DeckMediaBootstrap | null,
 ): UseDeckMediaReturn {
   const [loading, setLoading] = useState(true);
   /** Set of known media filenames (fetched without blob data). */
@@ -88,43 +66,50 @@ export function useDeckMedia(
 
     let cancelled = false;
 
+    const addLegacyFilenames = () => {
+      if (!db) return;
+      const result = getMediaFilenames(db);
+      if (!result.success) throw new Error(result.error);
+      for (const filename of result.data) knownFilesRef.current.add(filename);
+    };
+
+    const applyNativeMetadata = (filenames: readonly string[], dirUri: string) => {
+      knownFilesRef.current = new Set(filenames);
+      if (dirUri) for (const filename of filenames) urlCacheRef.current.set(filename, mediaUriToWebUrl(dirUri, filename));
+      addLegacyFilenames();
+    };
+
     if (isNativePlatform()) {
       // On native: load filenames + directory URI from the filesystem, then
       // pre-populate the URL cache with capacitor:// URLs so resolveUrl is sync.
-      (async () => {
-        const [filenames, dirUri] = await Promise.all([
-          listMediaFilenames(deckId),
-          getMediaDirUri(deckId),
-        ]);
-        if (cancelled) return;
-        knownFilesRef.current = new Set(filenames);
-        if (db) {
-          const legacy = getMediaFilenames(db);
-          if (legacy.success) for (const filename of legacy.data) knownFilesRef.current.add(filename);
-        }
-        if (dirUri) {
-          for (const filename of filenames) {
-            urlCacheRef.current.set(filename, mediaUriToWebUrl(dirUri, filename));
-          }
-        }
-        setLoading(false);
-      })();
+      if (bootstrap?.deckId === deckId) {
+        try { applyNativeMetadata(bootstrap.filenames, bootstrap.dirUri); }
+        catch (error) { console.warn('Could not load deck media metadata:', error); }
+        finally { setLoading(false); }
+      } else {
+        void (async () => {
+          try {
+            const [filenames, dirUri] = await Promise.all([listMediaFilenames(deckId), getMediaDirUri(deckId)]);
+            if (!cancelled) applyNativeMetadata(filenames, dirUri);
+          } catch (error) { console.warn('Could not load deck media metadata:', error); }
+          finally { if (!cancelled) setLoading(false); }
+        })();
+      }
     } else {
-      (async () => {
-        const filenames = await listMediaFilenames(deckId);
-        const entries = await Promise.all(filenames.map(async filename => [filename, await getMediaFileWebUrl(deckId, filename)] as const));
-        if (cancelled) {
-          for (const [, url] of entries) if (url.startsWith('blob:')) URL.revokeObjectURL(url);
-          return;
-        }
-        knownFilesRef.current = new Set(filenames);
-        for (const [filename, url] of entries) if (url) urlCacheRef.current.set(filename, url);
-        // Retain legacy DB media as a fallback for decks imported before file storage.
-        if (db) {
-          const result = getMediaFilenames(db);
-          if (result.success) for (const filename of result.data) knownFilesRef.current.add(filename);
-        }
-        setLoading(false);
+      void (async () => {
+        try {
+          const filenames = await listMediaFilenames(deckId);
+          const entries = await Promise.all(filenames.map(async filename => [filename, await getMediaFileWebUrl(deckId, filename)] as const));
+          if (cancelled) {
+            for (const [, url] of entries) if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+            return;
+          }
+          knownFilesRef.current = new Set(filenames);
+          for (const [filename, url] of entries) if (url) urlCacheRef.current.set(filename, url);
+          // Retain legacy DB media as a fallback for decks imported before file storage.
+          addLegacyFilenames();
+        } catch (error) { console.warn('Could not load deck media metadata:', error); }
+        finally { if (!cancelled) setLoading(false); }
       })();
     }
 
@@ -133,7 +118,7 @@ export function useDeckMedia(
       cancelled = true;
       revokeAll();
     };
-  }, [db, deckId, revokeAll]);
+  }, [db, deckId, bootstrap, revokeAll]);
 
   /**
    * Lazily resolve a media filename to a blob: URL.

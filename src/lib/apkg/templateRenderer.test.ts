@@ -13,6 +13,25 @@ import {
 } from './templateRenderer';
 import type { ParsedNote, ParsedNoteType } from './parser';
 
+describe('CSP-compatible hints', () => {
+  it('keeps each hint independently expandable without inline JavaScript', () => {
+    const result = renderTemplate(
+      makeNote(['<b>First clue</b>', 'Second clue']),
+      makeNoteType(['One', 'Two'], [{ qfmt: '{{hint:One}}{{hint:Two}}', afmt: '{{One}}' }]),
+      0,
+    );
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.front).toBe('<details class="hint"><summary>Show Hint</summary><span><b>First clue</b></span></details><details class="hint"><summary>Show Hint</summary><span>Second clue</span></details>');
+    expect(result.data.front).not.toMatch(/onclick|javascript:|display:none/);
+  });
+
+  it('does not create an empty disclosure for a missing hint', () => {
+    const result = renderTemplate(makeNote(['  ']), makeNoteType(['Clue'], [{ qfmt: 'Question {{hint:Clue}}', afmt: 'Answer' }]), 0);
+    expect(result.success && result.data.front).toBe('Question ');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Fixture builders
 // ---------------------------------------------------------------------------

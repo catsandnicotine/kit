@@ -14,6 +14,7 @@ import type { Database } from 'sql.js';
 import type { Card } from '../types';
 import { getCardsByDeck } from '../lib/db/queries';
 import { hapticFlip, hapticNavigate, hapticCelebration } from '../lib/platform/haptics';
+import { v4 as uuidv4 } from 'uuid';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -35,8 +36,10 @@ export interface UseReviewStudySessionReturn {
   errorMessage: string;
   retry: () => void;
   currentCard: Card | null;
+  seenSessionKey: string;
+  seenOccurrenceId: string | null;
   stats: ReviewStudyStats;
-  /** Flip the current card to show the back. */
+  /** Turn between question and answer without advancing or recording a choice. */
   flip: () => void;
   /** Move current card to the end of the queue. */
   sendToBack: () => void;
@@ -44,6 +47,7 @@ export interface UseReviewStudySessionReturn {
   putAside: () => void;
   /** Reshuffle put-aside cards for another round. */
   reshufflePutAside: () => void;
+  updateCard: (card: Card) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +76,8 @@ export function useReviewStudySession(
   const queueRef = useRef<Card[]>([]);
   const putAsideRef = useRef<Card[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [seenSessionKey, setSeenSessionKey] = useState(() => uuidv4());
+  const occurrenceIdsRef = useRef<string[]>([]);
   const [phase, setPhase] = useState<ReviewStudyPhase>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [loadVersion, setLoadVersion] = useState(0);
@@ -95,6 +101,8 @@ export function useReviewStudySession(
 
     const shuffled = shuffle(result.data);
     queueRef.current = shuffled;
+    setSeenSessionKey(uuidv4());
+    occurrenceIdsRef.current = shuffled.map((_, index) => String(index));
     putAsideRef.current = [];
     setCurrentIndex(0);
     setStats({ total: shuffled.length, remaining: shuffled.length, putAside: 0 });
@@ -121,9 +129,9 @@ export function useReviewStudySession(
   // ── Actions ─────────────────────────────────────────────────────────────
 
   const flip = useCallback(() => {
-    if (phase !== 'front') return;
+    if (phase !== 'front' && phase !== 'back') return;
     hapticFlip();
-    setPhase('back');
+    setPhase(phase === 'front' ? 'back' : 'front');
   }, [phase]);
 
   const sendToBack = useCallback(() => {
@@ -133,6 +141,7 @@ export function useReviewStudySession(
     if (!card) return;
     // Push a copy to the end
     queue.push({ ...card });
+    occurrenceIdsRef.current.push(uuidv4());
     advance();
   }, [phase, currentIndex, advance]);
 
@@ -160,10 +169,18 @@ export function useReviewStudySession(
     hapticNavigate();
     const shuffled = shuffle(putAsideRef.current);
     queueRef.current = shuffled;
+    setSeenSessionKey(uuidv4());
+    occurrenceIdsRef.current = shuffled.map((_, index) => String(index));
     putAsideRef.current = [];
     setCurrentIndex(0);
     setStats({ total: shuffled.length, remaining: shuffled.length, putAside: 0 });
     setPhase('front');
+  }, []);
+
+  const updateCard = useCallback((updated: Card) => {
+    queueRef.current = queueRef.current.map(card => card.id === updated.id ? updated : card);
+    putAsideRef.current = putAsideRef.current.map(card => card.id === updated.id ? updated : card);
+    setStats(previous => ({ ...previous }));
   }, []);
 
   // ── Return ──────────────────────────────────────────────────────────────
@@ -177,10 +194,13 @@ export function useReviewStudySession(
     errorMessage,
     retry: () => { setPhase('loading'); setLoadVersion(value => value + 1); },
     currentCard,
+    seenSessionKey,
+    seenOccurrenceId: currentCard ? occurrenceIdsRef.current[currentIndex] ?? null : null,
     stats,
     flip,
     sendToBack,
     putAside,
     reshufflePutAside,
+    updateCard,
   };
 }

@@ -18,6 +18,8 @@ import { decompress as zstdDecompress } from 'fzstd';
 import initSqlJs from 'sql.js';
 import type { Database } from 'sql.js';
 import type { Result } from '../../types';
+import type { KitCardMetadata } from '../../types/apkgMetadata';
+import { parseKitCardMetadata } from './kitCardMetadata';
 
 // ---------------------------------------------------------------------------
 // Public output types
@@ -90,7 +92,7 @@ export interface ParsedCard {
    * Anki due value. Interpretation depends on type:
    *  - new: card position
    *  - learning: Unix timestamp (seconds)
-   *  - review: days since Anki epoch (2006-01-01)
+   *  - review: days since the collection's creation date (col.crt)
    */
   due: number;
   /** Interval in days (negative = seconds, for intra-day learning steps). */
@@ -116,6 +118,7 @@ export interface ParsedApkg {
   notes: ParsedNote[];
   cards: ParsedCard[];
   media: ParsedMedia[];
+  kitCardMetadata?: KitCardMetadata;
 }
 
 /** Lightweight media manifest entry — metadata only, no binary data. */
@@ -144,6 +147,7 @@ export interface ParsedApkgLazy {
   zip: JSZip;
   /** True when media blobs are individually zstd-compressed (meta version >= 2). */
   mediaIsCompressed: boolean;
+  kitCardMetadata?: KitCardMetadata;
 }
 
 // ---------------------------------------------------------------------------
@@ -276,11 +280,13 @@ export async function parseApkg(
       // 5. Extract notes and cards (same schema in both formats)
       const notes = extractNotes(db);
       const cards = extractCards(db);
+      const metadata = await readKitCardMetadata(zip, cards);
+      if (!metadata.success) return metadata;
 
       // 6. Parse media
       const media = await extractMedia(zip);
 
-      return { success: true, data: { decks, noteTypes, notes, cards, media } };
+      return { success: true, data: { decks, noteTypes, notes, cards, media, ...(metadata.data ? { kitCardMetadata:metadata.data } : {}) } };
     } finally {
       db.close();
     }
@@ -352,6 +358,8 @@ export async function parseApkgLazy(
 
       const notes = extractNotes(db);
       const cards = extractCards(db);
+      const metadata = await readKitCardMetadata(zip, cards);
+      if (!metadata.success) return metadata;
 
       // Build media manifest without extracting blob data
       const mediaManifest = await buildMediaManifest(zip);
@@ -362,7 +370,7 @@ export async function parseApkgLazy(
 
       return {
         success: true,
-        data: { decks, noteTypes, notes, cards, mediaManifest, zip, mediaIsCompressed },
+        data: { decks, noteTypes, notes, cards, mediaManifest, zip, mediaIsCompressed, ...(metadata.data ? { kitCardMetadata:metadata.data } : {}) },
       };
     } finally {
       db.close();
@@ -527,11 +535,34 @@ export function guessMimeType(filename: string): string {
     ogg:  'audio/ogg',
     wav:  'audio/wav',
     flac: 'audio/flac',
+    m4a:  'audio/mp4',
+    aac:  'audio/aac',
     mp4:  'video/mp4',
+    mov:  'video/quicktime',
+    m4v:  'video/x-m4v',
     webm: 'video/webm',
+    woff: 'font/woff',
+    woff2:'font/woff2',
+    ttf:  'font/ttf',
+    otf:  'font/otf',
+    css:  'text/css',
+    vtt:  'text/vtt',
     pdf:  'application/pdf',
   };
   return MAP[ext] ?? 'application/octet-stream';
+}
+
+async function readKitCardMetadata(zip: JSZip, cards: readonly ParsedCard[]): Promise<Result<KitCardMetadata | undefined>> {
+  try {
+    const file = zip.file('kit_cards.json');
+    if (!file) return { success:true, data:undefined };
+    const result = parseKitCardMetadata(await file.async('string'));
+    if (!result.success) return result;
+    if (Object.keys(result.data.cardsById).length !== cards.length || cards.some(card => !Object.hasOwn(result.data.cardsById, card.id))) {
+      return { success:false, error:'This file’s Kit card details do not match its cards. Your existing decks have not been replaced.' };
+    }
+    return result;
+  } catch { return { success:false, error:'This file’s Kit card details could not be read. Your existing decks have not been replaced.' }; }
 }
 
 // ---------------------------------------------------------------------------
@@ -1006,8 +1037,22 @@ function extractStructure(
  * @returns Manifest entries sorted by zip key.
  */
 async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
+  const error = 'Pictures or audio in this package could not be read. Export it from Anki again with media included.';
+  const numbered = Object.keys(zip.files).filter(name => /^\d+$/.test(name) && !zip.files[name]?.dir);
+  const validate = (entries: MediaManifestEntry[]) => {
+    const names = new Set<string>();
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry.zipKey) || !entry.filename || /[\\/]/.test(entry.filename) || entry.filename === '.' || entry.filename === '..'
+        || Array.from(entry.filename).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+        || names.has(entry.filename) || !zip.file(entry.zipKey)) throw new Error(error);
+      names.add(entry.filename);
+    }
+    if (entries.length === 0 && numbered.length > 0) throw new Error(error);
+    return entries;
+  };
   const mediaEntry = zip.file('media');
-  if (mediaEntry) {
+  if (!mediaEntry) return validate([]);
+  try {
     // Get the raw bytes first — needed for both JSON and protobuf paths
     const rawBytes = await mediaEntry.async('uint8array');
 
@@ -1015,19 +1060,22 @@ async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
     const bytes = tryZstdDecompress(rawBytes) ?? rawBytes;
 
     // Try JSON manifest first (older Anki format: {"0": "filename.png", ...})
+    let parsedJson = false;
     try {
       const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
       const parsed: unknown = JSON.parse(text);
+      parsedJson = true;
       if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        const mapping = parsed as Record<string, string>;
-        const entries = Object.entries(mapping).map(([zipKey, filename]) => ({
-          zipKey,
-          filename,
-          mimeType: guessMimeType(filename),
-        }));
-        if (entries.length > 0) return entries;
+        const entries: MediaManifestEntry[] = [];
+        for (const [zipKey, filename] of Object.entries(parsed)) {
+          if (typeof filename !== 'string') throw new Error(error);
+          entries.push({ zipKey, filename, mimeType:guessMimeType(filename) });
+        }
+        return validate(entries);
       }
+      throw new Error(error);
     } catch {
+      if (parsedJson) throw new Error(error);
       // Not JSON — try protobuf
     }
 
@@ -1035,33 +1083,42 @@ async function buildMediaManifest(zip: JSZip): Promise<MediaManifestEntry[]> {
     // message MediaEntries { repeated MediaEntry entries = 1; }
     // message MediaEntry { string name = 1; uint64 size = 2; bytes sha1 = 3; }
     // Zip keys are sequential indices: "0", "1", "2", ...
-    try {
-      const entries = parseMediaProtobuf(bytes);
-      if (entries.length > 0) return entries;
-    } catch {
-      // Fall through to ZIP scan
-    }
-  }
+    const entries = parseMediaProtobuf(bytes);
+    if (bytes.length > 0 && entries.length === 0) throw new Error(error);
+    return validate(entries);
+  } catch { throw new Error(error); }
+}
 
-  // Fallback: scan the ZIP for numbered files (0, 1, 2, …) that aren't
-  // known structural files. This handles cases where the media manifest
-  // is missing or empty but media blobs are present.
-  const results: MediaManifestEntry[] = [];
-  const skipNames = new Set([
-    'media', 'meta', 'collection.anki2', 'collection.anki21',
-    'collection.anki21b',
-  ]);
-  zip.forEach((relativePath, file) => {
-    if (file.dir || skipNames.has(relativePath)) return;
-    if (/^\d+$/.test(relativePath)) {
-      results.push({
-        zipKey: relativePath,
-        filename: relativePath,
-        mimeType: 'application/octet-stream',
-      });
-    }
-  });
-  return results;
+function readMediaVarint(data: Uint8Array, start: number) {
+  let value = 0;
+  let next = start;
+  for (let shift = 0; shift <= 49; shift += 7) {
+    const byte = data[next++];
+    if (byte === undefined) throw new Error('Truncated media metadata');
+    value += (byte & 127) * 2 ** shift;
+    if (!Number.isSafeInteger(value)) throw new Error('Invalid media metadata length');
+    if (!(byte & 128)) return { value, next };
+  }
+  throw new Error('Invalid media metadata varint');
+}
+
+function readMediaField(data: Uint8Array, start: number) {
+  const tag = readMediaVarint(data, start);
+  const field = Math.floor(tag.value / 8);
+  const wire = tag.value % 8;
+  if (field === 0) throw new Error('Invalid media metadata field');
+  let offset = tag.next;
+  let end = offset;
+  if (wire === 2) {
+    const length = readMediaVarint(data, offset);
+    offset = length.next;
+    end = offset + length.value;
+  } else if (wire === 0) end = readMediaVarint(data, offset).next;
+  else if (wire === 1) end += 8;
+  else if (wire === 5) end += 4;
+  else throw new Error('Unsupported media metadata wire type');
+  if (end > data.length || end <= start) throw new Error('Truncated media metadata field');
+  return { field, wire, offset, end };
 }
 
 /**
@@ -1084,45 +1141,13 @@ function parseMediaProtobuf(data: Uint8Array): MediaManifestEntry[] {
   let index = 0;
 
   while (pos < data.length) {
-    // Read tag byte
-    const tag = data[pos]!;
-    pos++;
-    const fieldNum = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType === 2) {
-      // Length-delimited: read varint length, then bytes
-      let length = 0;
-      let shift = 0;
-      while (pos < data.length) {
-        const b = data[pos]!;
-        pos++;
-        length |= (b & 0x7f) << shift;
-        shift += 7;
-        if (!(b & 0x80)) break;
-      }
-      const sub = data.subarray(pos, pos + length);
-      pos += length;
-
-      if (fieldNum === 1) {
+    const field = readMediaField(data, pos);
+    pos = field.end;
+    if (field.wire === 2 && field.field === 1) {
         // This is a MediaEntry sub-message — extract the filename
-        const filename = parseMediaEntryFilename(sub);
-        if (filename) {
-          entries.push({
-            zipKey: String(index),
-            filename,
-            mimeType: guessMimeType(filename),
-          });
-        }
-        index++;
-      }
-    } else if (wireType === 0) {
-      // Varint: skip
-      while (pos < data.length && (data[pos]! & 0x80)) pos++;
-      pos++;
-    } else {
-      // Unknown wire type — bail
-      break;
+      const filename = parseMediaEntryFilename(data.subarray(field.offset, field.end));
+      if (!filename) throw new Error('Missing media filename');
+      entries.push({ zipKey:String(index++), filename, mimeType:guessMimeType(filename) });
     }
   }
 
@@ -1137,36 +1162,16 @@ function parseMediaProtobuf(data: Uint8Array): MediaManifestEntry[] {
  */
 function parseMediaEntryFilename(sub: Uint8Array): string | null {
   let pos = 0;
+  let filename: string | null = null;
   while (pos < sub.length) {
-    const tag = sub[pos]!;
-    pos++;
-    const fieldNum = tag >> 3;
-    const wireType = tag & 0x07;
-
-    if (wireType === 2) {
-      let length = 0;
-      let shift = 0;
-      while (pos < sub.length) {
-        const b = sub[pos]!;
-        pos++;
-        length |= (b & 0x7f) << shift;
-        shift += 7;
-        if (!(b & 0x80)) break;
-      }
-      const val = sub.subarray(pos, pos + length);
-      pos += length;
-
-      if (fieldNum === 1) {
-        return new TextDecoder().decode(val);
-      }
-    } else if (wireType === 0) {
-      while (pos < sub.length && (sub[pos]! & 0x80)) pos++;
-      pos++;
-    } else {
-      break;
+    const field = readMediaField(sub, pos);
+    pos = field.end;
+    if (field.wire === 2 && field.field === 1) {
+      if (filename !== null) throw new Error('Duplicate media filename field');
+      filename = new TextDecoder('utf-8', { fatal:true }).decode(sub.subarray(field.offset, field.end));
     }
   }
-  return null;
+  return filename;
 }
 
 /**
@@ -1254,38 +1259,8 @@ function extractCards(db: Database): ParsedCard[] {
  * @returns All successfully extracted media files.
  */
 async function extractMedia(zip: JSZip): Promise<ParsedMedia[]> {
-  const mediaEntry = zip.file('media');
-  if (!mediaEntry) return [];
-
-  let mapping: Record<string, string>;
-  try {
-    const raw = await mediaEntry.async('text');
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      return [];
-    }
-    mapping = parsed as Record<string, string>;
-  } catch {
-    // Corrupt media manifest — skip all media rather than failing the whole parse
-    return [];
-  }
-
-  const results: ParsedMedia[] = [];
-  for (const [zipKey, filename] of Object.entries(mapping)) {
-    const entry = zip.file(zipKey);
-    if (!entry) continue; // referenced but missing blob — skip gracefully
-
-    try {
-      const data = await entry.async('uint8array');
-      results.push({
-        filename,
-        data,
-        mimeType: guessMimeType(filename),
-      });
-    } catch {
-      // Individual media blob unreadable — skip, don't fail the whole parse
-    }
-  }
-
+  const manifest = await buildMediaManifest(zip);
+  const results = await extractMediaBatch(zip, manifest, 0, manifest.length);
+  if (results.length !== manifest.length) throw new Error('Some pictures or audio could not be read. Export the package from Anki again with media included.');
   return results;
 }

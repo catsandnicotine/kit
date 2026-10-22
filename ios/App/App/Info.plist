@@ -22,6 +22,8 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -52,6 +54,10 @@
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Kit connects to a development server on your local network during testing.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Kit uses the camera when you choose to take a photo or video for a card.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Kit uses the microphone to include sound when you choose to record a video for a card.</string>
 	<key>NSUbiquitousContainers</key>
 	<dict>
 		<key>iCloud.com.kai.kit</key>

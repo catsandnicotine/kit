@@ -91,6 +91,9 @@ export interface UseStudySessionReturn {
   backHtml: string;
   /** The card being studied right now, or null when loading/complete. */
   currentCard: Card | null;
+  /** Stable identities for tracked answer exposure; Undo preserves an occurrence. */
+  seenSessionKey: string;
+  seenOccurrenceId: string | null;
   /** Learning state of the current card: new, learning, review, or relearning. */
   currentCardLearningState: LearningState | null;
   stats: SessionStats;
@@ -108,7 +111,7 @@ export interface UseStudySessionReturn {
   leechCardId: string | null;
   /** Dismiss the leech warning. */
   dismissLeech: () => void;
-  /** Flip the current card from front to back. */
+  /** Turn the current card between its question and answer, without rating it. */
   flip: () => void;
   /** Rate the current card; moves to the next card in the queue. */
   rate: (rating: Rating) => Promise<void>;
@@ -176,6 +179,8 @@ export function useStudySession(
   const [frontHtml, setFrontHtml] = useState('');
   const [backHtml, setBackHtml] = useState('');
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [seenSessionKey, setSeenSessionKey] = useState(() => uuidv4());
+  const occurrenceIdsRef = useRef<string[]>([]);
   const [stats, setStats] = useState<SessionStats>({
     studied: 0,
     remaining: 0,
@@ -255,6 +260,7 @@ export function useStudySession(
     if (!db) return;
 
     setPhase('loading');
+    setSeenSessionKey(uuidv4());
     startedAtRef.current = Date.now();
     undoRef.current = null;
     ratedCardIdsRef.current = new Set();
@@ -309,6 +315,7 @@ export function useStudySession(
     }
 
     queueRef.current = queue;
+    occurrenceIdsRef.current = queue.map((_, index) => String(index));
 
     if (queue.length === 0) {
       setStats({ studied: 0, remaining: 0, elapsedSeconds: 0, newCount: 0, learningCount: 0, reviewCount: 0, totalRepeats: 0 });
@@ -328,6 +335,11 @@ export function useStudySession(
   // -------------------------------------------------------------------------
 
   const flip = useCallback(() => {
+    if (phase === 'back') {
+      hapticFlip();
+      setPhase('front');
+      return;
+    }
     if (phase !== 'front' || !db) return;
     hapticFlip();
     const cws = queueRef.current[currentIndex];
@@ -420,6 +432,7 @@ export function useStudySession(
       let againInsertedAtIndex: number | null = null;
       if (shouldRequeueAfterRating(resolved, nowSec) && writeState.success) {
         queue.push({ card, state: writeState.data });
+        occurrenceIdsRef.current.push(uuidv4());
         againInsertedAtIndex = queue.length - 1;
       }
 
@@ -483,6 +496,7 @@ export function useStudySession(
     const queue = queueRef.current;
     if (againInsertedAtIndex !== null) {
       queue.splice(againInsertedAtIndex, 1);
+      occurrenceIdsRef.current.splice(againInsertedAtIndex, 1);
     }
 
     if (isFirstRatingThisSession) {
@@ -517,6 +531,7 @@ export function useStudySession(
     const offset = 5 + Math.floor(Math.random() * 6);
     const insertAt = Math.min(currentIndex + offset, queue.length);
     queue.splice(insertAt, 0, { ...cws });
+    occurrenceIdsRef.current.splice(insertAt, 0, uuidv4());
 
     // Clear undo — a repeat is not undoable.
     undoRef.current = null;
@@ -546,13 +561,16 @@ export function useStudySession(
   /** Replace the current card's data in the queue and re-display it. */
   const updateCurrentCardInQueue = useCallback(
     (updated: Card) => {
-      const queue = queueRef.current;
-      const cws = queue[currentIndex];
-      if (!cws) return;
-      queue[currentIndex] = { ...cws, card: updated };
-      showCard(queue, currentIndex);
+      queueRef.current = queueRef.current.map(item => item.card.id === updated.id ? { ...item, card:updated } : item);
+      if (ratedCardsMapRef.current.has(updated.id)) ratedCardsMapRef.current.set(updated.id, updated);
+      const previous = undoRef.current?.previousCardWithState;
+      if (previous?.card.id === updated.id && undoRef.current) undoRef.current.previousCardWithState = { ...previous, card:updated };
+      setFrontHtml(updated.front);
+      setBackHtml(updated.back);
+      // An edit is not a flip, rating or restart; keep the visible face and schedule.
+
     },
-    [currentIndex, showCard],
+    [],
   );
 
   // -------------------------------------------------------------------------
@@ -564,6 +582,8 @@ export function useStudySession(
     frontHtml,
     backHtml,
     currentCard: queueRef.current[currentIndex]?.card ?? null,
+    seenSessionKey,
+    seenOccurrenceId: (phase === 'front' || phase === 'back') ? occurrenceIdsRef.current[currentIndex] ?? null : null,
     currentCardLearningState: queueRef.current[currentIndex]?.state.state ?? null,
     stats,
     progress: getStudyProgress(queueRef.current.map(item => item.card.id), currentIndex, phase === 'complete'),

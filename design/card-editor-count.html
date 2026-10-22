@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Kit — card count reset</title></head>
+<body><div id="card-editor-count"></div><script type="module">
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { CardEditorCountPreview } from './card-editor-count.tsx';
+document.documentElement.dataset.theme = 'black';
+document.documentElement.classList.add('dark');
+createRoot(document.getElementById('card-editor-count')).render(createElement(CardEditorCountPreview));
+</script></body></html>

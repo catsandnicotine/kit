@@ -1,0 +1,6 @@
+.kit-brand-header { position:relative; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; width:100%; height:calc(64px + env(safe-area-inset-top)); padding:env(safe-area-inset-top) max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left)); }
+.kit-brand-leading,.kit-brand-trailing { display:flex; align-items:center; gap:2px; min-width:44px; }
+.kit-brand-trailing { margin-left:auto; }
+.kit-brand-leading > .kit-icon-button { color:inherit; opacity:.7; }
+.kit-brand-mark { position:absolute; display:flex; left:50%; top:calc(env(safe-area-inset-top) + 26px); width:7px; height:12px; line-height:1; transform:translateX(-50%); color:#303032; pointer-events:none; }
+.dark .kit-brand-mark { color:#eeeae0; }

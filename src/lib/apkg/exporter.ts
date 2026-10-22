@@ -1,8 +1,9 @@
 /**
  * Anki .apkg exporter.
  *
- * Builds a valid .apkg file (ZIP archive) that can be imported by
- * Anki Desktop, AnkiMobile, and AnkiDroid.
+ * Builds an .apkg file (ZIP archive) from the current rendered card faces.
+ * Each card gets independent Front/Back fields, rather than reusing the
+ * imported note templates, which may no longer reflect the user's edits.
  *
  * Structure of an .apkg:
  *   collection.anki2  — SQLite database matching Anki's schema
@@ -35,18 +36,16 @@ import {
   getCardStatesByDeck,
   getDeckById,
   getMediaByDeck,
-  getNotesByDeck,
-  getNoteTypesByDeck,
   getReviewLogsByDeck,
 } from '../db/queries';
 import { getSqlJsLocator, getWasmBinary } from './parser';
+import type { KitProgressV2 } from '../../types/apkgProgress';
+import type { KitCardMetadata } from '../../types/apkgMetadata';
+import { getMediaReferences } from '../media';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-
-/** Anki epoch: 2006-01-01T00:00:00Z in seconds. */
-const ANKI_EPOCH = 1136073600;
 
 /**
  * Default deck configuration JSON.
@@ -183,17 +182,24 @@ async function buildApkg(
     if (!deckResult.data) return { success: false, error: 'Deck not found.' };
     const deck = deckResult.data;
 
-    const noteTypesResult = getNoteTypesByDeck(kitDb, deckId);
-    if (!noteTypesResult.success) return noteTypesResult;
-    const noteTypes = noteTypesResult.data;
-
-    const notesResult = getNotesByDeck(kitDb, deckId);
-    if (!notesResult.success) return notesResult;
-    const notes = notesResult.data;
-
     const cardsResult = getCardsByDeck(kitDb, deckId);
     if (!cardsResult.success) return cardsResult;
-    const cards = cardsResult.data;
+    if (cardsResult.data.length === 0) return { success:false, error:'Add a card before exporting this deck.' };
+    // Card HTML is the authoritative edited content. Original imported note
+    // fields can be older, shared by multiple cards, or absent for manual cards.
+    // Export one independent Front/Back note per current card so no card is
+    // dropped, re-generated from stale fields or assigned a different template.
+    const noteTypeId = `kit-export-${deckId}`;
+    const noteTypes: NoteType[] = [{
+      id:noteTypeId, deckId, name:'Kit card', fields:['Front', 'Back'],
+      templates:[{ name:'Card', ord:0, qfmt:'{{Front}}', afmt:'{{Back}}' }],
+      css:'', createdAt:deck.createdAt,
+    }];
+    const notes: Note[] = cardsResult.data.map(card => ({
+      id:card.id, deckId, noteTypeId, fields:{ Front:card.front, Back:card.back },
+      tags:card.tags, createdAt:card.createdAt, updatedAt:card.updatedAt,
+    }));
+    const cards = cardsResult.data.map(card => ({ ...card, noteId:card.id }));
 
     // For fresh export, use an empty stateMap so all cards export as "new".
     const stateMap = new Map<string, CardState>();
@@ -212,6 +218,15 @@ async function buildApkg(
       const mediaResult = getMediaByDeck(kitDb, deckId);
       if (!mediaResult.success) return mediaResult;
       mediaBlobs = mediaResult.data;
+    }
+    const availableMedia = new Set(mediaBlobs.map(media => media.filename));
+    for (const card of cards) {
+      const html = `${card.front}\n${card.back}`;
+      const assetMarkup = [...html.matchAll(/<(?:img|image|audio|video|source|track|link|script)\b[^>]*>/gi)].map(match => match[0]).join('\n');
+      const stylesAndSounds = [...html.matchAll(/\burl\(\s*(['"]?)(.*?)\1\s*\)|\[sound:[^\]]+\]/gi)].map(match => match[0]).join('\n');
+      for (const filename of getMediaReferences(`${assetMarkup}\n${stylesAndSounds}`)) {
+        if (!availableMedia.has(filename)) return { success:false, error:'Some pictures, audio or other attachments are not available on this device. Restore this deck’s media before exporting.' };
+      }
     }
 
     // ── 2. Build stable numeric IDs ──────────────────────────────────────
@@ -255,41 +270,28 @@ async function buildApkg(
         zip.file(key, m.data);
       });
       zip.file('media', JSON.stringify(mediaManifest));
+      const cardMetadata: KitCardMetadata = { version:1, cardsById:Object.create(null) as KitCardMetadata['cardsById'] };
+      for (const card of cards) {
+        const ankiId = cardIdMap.get(card.id);
+        if (ankiId !== undefined) cardMetadata.cardsById[String(ankiId)] = { tags:card.tags };
+      }
+      zip.file('kit_cards.json', JSON.stringify(cardMetadata));
 
       // ── 5. Optionally embed kit_progress.json ─────────────────────────────
       if (includeProgress) {
         const logsResult = getReviewLogsByDeck(kitDb, deckId);
         if (!logsResult.success) return logsResult;
 
-        // Index states and logs by card content (front + "\x1f" + back) so
-        // they can be matched to newly-assigned UUIDs on re-import.
-        // Using both sides avoids collisions when two cards share a front.
-        const statesByContent: Record<string, CardState> = {};
+        const progressData: KitProgressV2 = { version:2, exportedAt:baseTs, cardsById:Object.create(null) as KitProgressV2['cardsById'] };
         for (const card of cards) {
-          const state = stateMap.get(card.id);
-          if (state) statesByContent[`${card.front}\x1f${card.back}`] = state;
+          const ankiId = cardIdMap.get(card.id);
+          if (ankiId !== undefined) progressData.cardsById[String(ankiId)] = { state:stateMap.get(card.id) ?? null, logs:[] };
         }
-
-        // Group review logs by card content
-        const cardById = new Map<string, typeof cards[0]>();
-        for (const card of cards) cardById.set(card.id, card);
-
-        const logsByContent: Record<string, typeof logsResult.data> = {};
         for (const log of logsResult.data) {
-          const card = cardById.get(log.cardId);
-          if (!card) continue;
-          const key = `${card.front}\x1f${card.back}`;
-          const arr = logsByContent[key] ?? [];
-          arr.push(log);
-          logsByContent[key] = arr;
+          const ankiId = cardIdMap.get(log.cardId);
+          if (ankiId === undefined) continue;
+          progressData.cardsById[String(ankiId)]?.logs.push(log);
         }
-
-        const progressData = {
-          version: 1,
-          exportedAt: baseTs,
-          statesByContent,
-          logsByContent,
-        };
         zip.file('kit_progress.json', JSON.stringify(progressData));
       }
 
@@ -543,7 +545,7 @@ function buildAnkiModel(nt: NoteType, mid: number, ankiDeckId: number): Record<s
       size: 20,
       media: [],
     })),
-    css: nt.css || '.card { font-family: arial; font-size: 20px; text-align: center; color: black; background-color: white; }',
+    css: nt.css,
     latexPre: '\\documentclass[12pt]{article}\n\\special{papersize=3in,5in}\n\\usepackage{amssymb,amsmath}\n\\pagestyle{empty}\n\\setlength{\\parindent}{0in}\n\\begin{document}\n',
     latexPost: '\\end{document}',
     latexsvg: false,
@@ -612,9 +614,11 @@ function insertAnkiNotes(
 
     // guid = globally unique ID (Anki uses base91-encoded random).
     // We generate a short unique string from the note's Kit UUID.
-    const guid = note.id.replace(/-/g, '').slice(0, 10);
+    const guid = note.id.replace(/-/g, '');
 
-    const tags = note.tags.length > 0 ? ` ${note.tags.join(' ')} ` : '';
+    // Anki tags cannot contain spaces; Kit restores exact names from the
+    // content-only card sidecar, including distinct tags with the same display.
+    const tags = note.tags.length > 0 ? ` ${note.tags.map(tag => Array.from(tag, character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? '_' : character).join('').replace(/\s+/g, '_')).join(' ')} ` : '';
 
     stmt.bind([ankiNid, guid, ankiMid, baseTs, -1, tags, flds, sfld, csum, 0, '']);
     stmt.step();
@@ -696,8 +700,8 @@ function insertAnkiCards(
         case 'review':
           type = 2;
           queue = 2;
-          // Due as days since Anki epoch
-          due = Math.max(0, Math.floor((state.due - ANKI_EPOCH) / 86400));
+          // Review due is a day offset from this exported collection's crt.
+          due = Math.max(0, Math.floor((state.due - baseTs) / 86400));
           ivl = state.scheduledDays || 1;
           factor = Math.round((state.difficulty > 0 ? Math.max(1.3, 3.0 - state.difficulty * 0.17) : 2.5) * 1000);
           break;
@@ -707,6 +711,7 @@ function insertAnkiCards(
           due = state.due;
           break;
       }
+      if (state.suspended) queue = -1;
 
       stmt.bind([
         ankiCid, ankiNid, ankiDeckId, ord, baseTs, -1,

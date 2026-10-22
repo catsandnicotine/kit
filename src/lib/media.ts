@@ -38,10 +38,10 @@ export function rewriteMediaUrls(
   // Matches src= followed by a quoted value. Only rewrites if the bare
   // filename (no path separators, no protocol) is found in urlMap.
   result = result.replace(
-    /\bsrc=(["'])((?:(?!\1)[^\\])*?)\1/g,
-    (match: string, quote: string, filename: string) => {
+    /\b(src|poster)=(["'])((?:(?!\2)[^\\])*?)\2/g,
+    (match: string, attribute: string, quote: string, filename: string) => {
       const url = urlMap.get(filename) ?? urlMap.get(normalizeMediaFilename(filename));
-      if (url) return `src=${quote}${url}${quote}`;
+      if (url) return `${attribute}=${quote}${url}${quote}`;
       return match;
     },
   );
@@ -104,7 +104,7 @@ export function normalizeMediaFilename(value: string): string {
  */
 export function getMediaReferences(html: string): Set<string> {
   const found = new Set<string>();
-  for (const pattern of [/\b(?:src|(?:xlink:)?href)\s*=\s*(["'])(.*?)\1/gi, /\burl\(\s*(["']?)(.*?)\1\s*\)/gi]) {
+  for (const pattern of [/\b(?:src|poster|(?:xlink:)?href)\s*=\s*(["'])(.*?)\1/gi, /\burl\(\s*(["']?)(.*?)\1\s*\)/gi]) {
     for (const match of html.matchAll(pattern)) {
       const value = match[2];
       if (value && !/^(?:[a-z]+:|#|\/)/i.test(value)) found.add(normalizeMediaFilename(value));

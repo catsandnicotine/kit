@@ -13,7 +13,13 @@ export interface RatingSpriteArt {
 }
 
 /** Original eye directions available in the art study; the app uses Aureole. */
-export type EyeVariant = 'current' | 'lapis' | 'vesper' | 'aureole';
+export type EyeVariant = 'current' | 'lapis' | 'vesper' | 'aureole' | 'practice';
 
 /** Authored platinum light arrangements around the Aureole eye. */
 export type EyeHalo = 'oval' | 'rays' | 'beads' | 'arc';
+
+/** Shared reveal control; practice carries its own quiet visual identity. */
+export interface ShowAnswerButtonProps {
+  onReveal: () => void;
+  practice?: boolean;
+}

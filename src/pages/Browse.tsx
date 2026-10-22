@@ -1,3 +1,7 @@
+import { ManageDeckActions } from '../components/ManageDeckActions';
+import { InlineConfirmation } from '../components/InlineConfirmation';
+import type { UseDeckManagerReturn } from '../hooks/useDeckManager';
+import type { CardFace } from '../types/editorUi';
 import { UiIcon } from '../components/UiIcon';
 import { DeckName } from '../components/DeckName';
 /**
@@ -7,14 +11,17 @@ import { DeckName } from '../components/DeckName';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Database } from 'sql.js';
 import type { Card } from '../types';
-import { getCardsByDeck, deleteCards, renameDeck, getTagsForDeck, updateCardTags, type TagCount } from '../lib/db/queries';
+import { getCardsByDeck, deleteCards, getTagsForDeck, updateCardTags, type TagCount } from '../lib/db/queries';
 import { sortTagsByColor } from '../lib/tagSort';
-import { pillTextColor, getColorSortKey } from '../lib/tagColors';
-import { v4 as uuidv4 } from 'uuid';
+import { getColorSortKey } from '../lib/tagColors';
+import { TagLabel } from '../components/TagLabel';
+import { createCardDraft } from '../lib/cardDraft';
 import { useDeckMedia } from '../hooks/useDeckMedia';
+import { useNoticeAutoDismiss } from '../hooks/useNoticeAutoDismiss';
 import { useTheme } from '../hooks/useTheme';
 import { CardEditor } from '../components/CardEditor';
-import { hapticAgain, hapticTap } from '../lib/platform/haptics';
+import { renderLegacyCardHints } from '../lib/cardHints';
+import { hapticTap } from '../lib/platform/haptics';
 import { renderImageOcclusion } from '../lib/imageOcclusion';
 import { persistAndBackup } from '../hooks/useDatabase';
 import type { EditOp } from '../lib/sync/types';
@@ -34,6 +41,11 @@ interface BrowseProps {
   deckId: string;
   deckName: string;
   onBack: () => void;
+  manager?: UseDeckManagerReturn | undefined;
+  initialDetails?: boolean;
+  onStats: (name: string) => void;
+  onSettings: (name: string) => void;
+  onDeleted: () => void;
   /** Automatically open the first-card editor for a newly-created deck. */
   guideFirstCard?: boolean;
   /** Start a study session after the guided first card is saved. */
@@ -59,7 +71,7 @@ function CardFacePreview({ html, tagColors }: { html: string; tagColors?: string
   const { theme } = useTheme();
   const bodyClass = theme === 'black' ? 'night_mode black_mode' : theme === 'dark' ? 'night_mode' : '';
   useLayoutEffect(() => {
-    if (ref.current) ref.current.innerHTML = `<div class="${bodyClass}"><div class="card">${html}</div></div>`;
+    if (ref.current) ref.current.innerHTML = `<div class="${bodyClass}"><div class="card">${renderLegacyCardHints(html)}</div></div>`;
   }, [html, bodyClass]);
   return (
     <div className="flex-1 min-w-0 flex flex-col">
@@ -113,7 +125,7 @@ function CardPreviewRow({
   tagColorMap: Map<string, string>;
   /** Whether any tag pills are selected (enables swiping). */
   swipeEnabled: boolean;
-  onTap: () => void;
+  onTap: (face: CardFace) => void;
   onToggleSelect: () => void;
   onLongPress: () => void;
   onSwipeRight: () => void;
@@ -147,6 +159,8 @@ function CardPreviewRow({
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
   };
 
+  useEffect(() => () => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }, []);
+
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     const touch = e.touches[0];
     if (!touch) return;
@@ -160,6 +174,7 @@ function CardPreviewRow({
     longPressTimerRef.current = setTimeout(() => {
       longPressTimerRef.current = null;
       touchStartRef.current = null;
+      didSwipeRef.current = true;
       onLongPress();
     }, 500);
   }, [onLongPress]);
@@ -256,9 +271,9 @@ function CardPreviewRow({
     swipeOffsetRef.current = 0;
   }, [onSwipeRight, onSwipeLeft]);
 
-  const handleClick = useCallback(() => {
+  const handleClick = useCallback((face: CardFace = 'front') => {
     if (didSwipeRef.current) return;
-    if (selectionMode) onToggleSelect(); else onTap();
+    if (selectionMode) onToggleSelect(); else onTap(face);
   }, [selectionMode, onToggleSelect, onTap]);
 
   return (
@@ -293,6 +308,7 @@ function CardPreviewRow({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onTouchCancel={() => { clearLongPress(); swipeOffsetRef.current = 0; didSwipeRef.current = true; handleTouchEnd(); }}
       >
         {selectionMode && (
           <button
@@ -316,13 +332,13 @@ function CardPreviewRow({
           </button>
         )}
         <div
-          onClick={handleClick}
+          onClick={() => handleClick('front')}
           className="flex-1 text-left px-4 py-3 flex gap-2 active:bg-[#F0F0F0] dark:active:bg-[#1A1A1A] transition-colors items-stretch cursor-pointer"
           style={{ paddingLeft: selectionMode ? '0.5rem' : undefined }}
         >
-          <CardFacePreview html={front} tagColors={dotColors} />
+          <button type="button" className="browse-face-button" aria-label="Edit question" onClick={event => { event.stopPropagation(); handleClick('front'); }}><CardFacePreview html={front} tagColors={dotColors} /></button>
           <div className="w-px bg-border-light dark:bg-border-dark self-stretch mx-1" />
-          <CardFacePreview html={back} />
+          <button type="button" className="browse-face-button" aria-label="Edit answer" onClick={event => { event.stopPropagation(); handleClick('back'); }}><CardFacePreview html={back} /></button>
         </div>
       </div>
     </div>
@@ -338,17 +354,24 @@ export default function Browse({
   deckId,
   deckName,
   onBack,
+  manager,
+  initialDetails = false,
+  onStats,
+  onSettings,
+  onDeleted,
   guideFirstCard = false,
   onStartStudy,
   onSyncEdit,
 }: BrowseProps) {
   const [cards, setCards] = useState<Card[]>([]);
+  const [cardsLoading, setCardsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const [editingCard, setEditingCard] = useState<Card | null>(null);
-  const [isNewCard, setIsNewCard] = useState(false);
+  const [editingCard, setEditingCard] = useState<Card | null>(() => guideFirstCard ? createCardDraft(deckId) : null);
+  const [isNewCard, setIsNewCard] = useState(guideFirstCard);
   const [showPracticePrompt, setShowPracticePrompt] = useState(false);
-  const guideStartedRef = useRef(false);
+  const savedCardNotice = useNoticeAutoDismiss({ identity: 'first-card-saved', visible: showPracticePrompt, delayMs: 4000, onDismiss: () => setShowPracticePrompt(false) });
+  const guideStartedRef = useRef(guideFirstCard);
   const guidePromptedRef = useRef(false);
 
   // Selection mode
@@ -361,28 +384,15 @@ export default function Browse({
   // Delete confirmation
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  // Inline title editing
   const [currentDeckName, setCurrentDeckName] = useState(deckName);
-  const [editingTitle, setEditingTitle] = useState(false);
-  const [titleDraft, setTitleDraft] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(initialDetails);
+  const [nameDraft, setNameDraft] = useState(deckName);
+  const [discardName, setDiscardName] = useState(false);
+  const [manageBusy, setManageBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [editingFace, setEditingFace] = useState<CardFace>('front');
 
-  const handleTitleSave = useCallback(() => {
-    const name = titleDraft.trim();
-    setEditingTitle(false);
-    if (!name || !db || name === currentDeckName) return;
-    const now = Math.floor(Date.now() / 1000);
-    const result = renameDeck(db, deckId, name, now);
-    if (result.success) {
-      setCurrentDeckName(name);
-      if (onSyncEdit) {
-        onSyncEdit([{ type: 'deck_rename', name }]);
-      } else {
-        persistAndBackup();
-      }
-    }
-  }, [db, deckId, titleDraft, currentDeckName, onSyncEdit]);
-
-  const { rewriteHtml, addMediaFile } = useDeckMedia(db, deckId);
+  const { rewriteHtml, addMediaFile, loading:mediaLoading } = useDeckMedia(db, deckId);
 
   const loadCardsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -394,7 +404,8 @@ export default function Browse({
     loadCardsTimer.current = setTimeout(() => {
       loadCardsTimer.current = null;
       const result = getCardsByDeck(db, deckId);
-      if (result.success) setCards(result.data);
+      if (result.success) setCards(result.data); else setError('Couldn’t load these cards. Go back and reopen this deck.');
+      setCardsLoading(false);
     }, 0);
   }, [db, deckId]);
 
@@ -474,10 +485,9 @@ export default function Browse({
 
   const handleAddCard = useCallback(() => {
     hapticTap();
-    const now = Math.floor(Date.now() / 1000);
-    const blank: Card = { id: uuidv4(), deckId, noteId: null, front: '', back: '', tags: [], createdAt: now, updatedAt: now };
     setIsNewCard(true);
-    setEditingCard(blank);
+    setEditingFace('front');
+    setEditingCard(createCardDraft(deckId));
   }, [deckId]);
 
   useEffect(() => {
@@ -503,6 +513,15 @@ export default function Browse({
     setConfirmDelete(false);
   }, []);
 
+  const goBack = () => {
+    if (manageBusy) return;
+    if (selectionMode) exitSelection();
+    else if (detailsOpen) {
+      if (nameDraft.trim() !== currentDeckName) setDiscardName(true);
+      else setDetailsOpen(false);
+    } else onBack();
+  };
+
   const handleDeleteSelected = useCallback(() => {
     if (!db || selectedIds.size === 0) return;
     const ids = Array.from(selectedIds);
@@ -515,7 +534,7 @@ export default function Browse({
       }
       setCards(prev => prev.filter(c => !selectedIds.has(c.id)));
       exitSelection();
-    }
+    } else setError('Couldn’t delete those cards. Try again.');
   }, [db, selectedIds, exitSelection, onSyncEdit]);
 
   // ── Tag filter toggle ──────────────────────────────────────────────────
@@ -553,77 +572,21 @@ export default function Browse({
 
   return (
     <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] overflow-x-hidden">
-      {/* Header */}
-      <header
-        className="flex items-center gap-3 pb-3 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0"
-        style={{
-          paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)',
-          paddingLeft: 'max(1rem, env(safe-area-inset-left))',
-          paddingRight: 'max(1rem, env(safe-area-inset-right))',
-        }}
-      >
-        <button
-          onClick={() => {
-            hapticTap();
-            if (selectionMode) exitSelection();
-            else onBack();
-          }}
-          className="p-2 -ml-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0 text-sm"
-          aria-label={selectionMode ? 'Cancel selection' : 'Back'}
-        >
-          {selectionMode ? <UiIcon name="close" /> : (
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
-          )}
-        </button>
-        {editingTitle && !selectionMode ? (
-          <input
-            autoFocus
-            value={titleDraft}
-            onChange={e => setTitleDraft(e.target.value)}
-            onBlur={handleTitleSave}
-            onKeyDown={e => {
-              if (e.key === 'Enter') handleTitleSave();
-              if (e.key === 'Escape') setEditingTitle(false);
-            }}
-            className="flex-1 text-sm font-semibold bg-transparent border-b border-[#1c1c1e] dark:border-[#E5E5E5] outline-none text-[#1c1c1e] dark:text-[#E5E5E5] min-w-0"
-          />
-        ) : selectionMode ? (
-          <span className="flex-1 text-sm font-semibold truncate text-[#1c1c1e] dark:text-[#E5E5E5]">
-            {selectedCount > 0 ? `${selectedCount} selected` : 'Select cards'}
-          </span>
-        ) : (
-          <button
-            onClick={() => { setTitleDraft(currentDeckName); setEditingTitle(true); }}
-            className="flex-1 flex items-center gap-1.5 min-w-0 text-left"
-          >
-            <DeckName name={currentDeckName} className="text-sm font-semibold text-[#1c1c1e] dark:text-[#E5E5E5]" />
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[#C4C4C4]">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-          </button>
-        )}
-        {!selectionMode && (
-          <>
-            <span className="text-sm font-bold text-[#1c1c1e] dark:text-[#E5E5E5] shrink-0">
-              {filtered.length} {filtered.length === 1 ? 'card' : 'cards'}
-            </span>
-            <button
-              onClick={handleAddCard}
-              className="p-2 text-[#C4C4C4] hover:text-[#1c1c1e] dark:hover:text-[#E5E5E5] transition-colors shrink-0"
-              aria-label="Add card"
-            >
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="4" x2="12" y2="20" />
-                <line x1="4" y1="12" x2="20" y2="12" />
-              </svg>
-            </button>
-          </>
-        )}
-      </header>
+      <header className="manage-deck-header">
+        <button type="button" onClick={() => { hapticTap(); goBack(); }} disabled={manageBusy} className="kit-icon-button" aria-label={selectionMode ? 'Cancel selection' : 'Back'}><UiIcon name="back" /></button>
+        <div className="manage-deck-heading"><h1>{selectionMode ? `${selectedCount} selected` : 'Manage deck'}</h1><span className="deck-context-label"><DeckName name={currentDeckName} /></span></div>
+        {!selectionMode && <>
+          {!detailsOpen && <button type="button" className="kit-icon-button" aria-label="Deck details" onClick={() => { hapticTap(); setDetailsOpen(true); }}><UiIcon name="more" /></button>}
+          {!detailsOpen && cards.length > 0 && <button type="button" className="kit-icon-button" aria-label="Add card" onClick={handleAddCard}><UiIcon name="plus" /></button>}
 
+        </>}
+      </header>
+      {detailsOpen && <div className="manage-deck-details-scroll">
+        {discardName && <InlineConfirmation title="Discard changes?" detail="The deck name hasn’t been saved." cancelLabel="Keep editing" confirmLabel="Discard" onCancel={() => { setDiscardName(false); requestAnimationFrame(() => document.getElementById('manage-deck-name')?.focus()); }} onConfirm={() => { setNameDraft(currentDeckName); setDiscardName(false); setDetailsOpen(false); }} />}
+          <div inert={discardName}><ManageDeckActions db={db} deckId={deckId} deckName={currentDeckName} manager={manager} nameDraft={nameDraft} onNameDraftChange={setNameDraft} onBusyChange={setManageBusy} onRenamed={setCurrentDeckName} onDeleted={onDeleted} onStats={() => onStats(currentDeckName)} onSettings={() => onSettings(currentDeckName)} /></div>
+      </div>}
+      <div hidden={detailsOpen} className="manage-deck-cards">
+      {error && <p className="editor-error" role="alert">{error}</p>}
       {/* Search + sort bar */}
       <div
         className="py-2 border-b border-[#E5E5E5] dark:border-[#262626] shrink-0 flex items-center gap-2"
@@ -655,19 +618,15 @@ export default function Browse({
           >
             {deckTags.map(tc => {
               const isActive = activeTagFilters.includes(tc.tag);
-              const bg = tc.color || '#8E8E93';
-              const textColor = tc.color ? pillTextColor(tc.color) : '#ffffff';
               return (
                 <button
                   key={tc.tag}
                   onClick={() => toggleTagFilter(tc.tag)}
-                  className="shrink-0 px-3 py-1 text-xs rounded-full transition-all active:scale-95"
-                  style={isActive
-                    ? { background: bg, color: textColor, boxShadow: `0 0 0 2px var(--kit-bg), 0 0 0 4px ${bg}` }
-                    : { background: bg, color: textColor, opacity: 0.45 }
-                  }
+                  className="tag-control shrink-0"
+                  aria-pressed={isActive}
+                  style={{ opacity:isActive ? 1 : .5 }}
                 >
-                  {tc.tag}
+                  <TagLabel name={tc.tag} color={tc.color} />
                 </button>
               );
             })}
@@ -691,26 +650,13 @@ export default function Browse({
         >
           {!confirmDelete ? (
             <button
-              onClick={() => { hapticAgain(); setConfirmDelete(true); }}
+              onClick={() => setConfirmDelete(true)}
               className="flex-1 py-2 text-sm font-semibold rounded-lg text-red-500 active:bg-red-50 dark:active:bg-red-950 transition-colors"
             >
               Delete ({selectedCount})
             </button>
           ) : (
-            <div className="flex flex-1 gap-1">
-              <button
-                onClick={() => setConfirmDelete(false)}
-                className="flex-1 py-2 text-sm rounded-lg text-[#C4C4C4]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteSelected}
-                className="flex-1 py-2 text-sm font-semibold bg-red-500 text-white rounded-lg active:opacity-80"
-              >
-                Delete
-              </button>
-            </div>
+            <InlineConfirmation title={`Delete ${selectedCount} ${selectedCount === 1 ? 'card' : 'cards'}?`} detail="Their study history will also be removed." confirmLabel={selectedCount === 1 ? "Delete card" : "Delete cards"} onCancel={() => setConfirmDelete(false)} onConfirm={handleDeleteSelected} />
           )}
         </div>
       )}
@@ -720,7 +666,7 @@ export default function Browse({
         className="flex flex-col flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
         style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
       >
-        {filtered.length === 0 && (
+        {!cardsLoading && filtered.length === 0 && (
           <div className="px-6 py-12 text-center flex flex-col items-center">
             <p className="text-sm text-[#C4C4C4]">
               {search.trim() || activeTagFilters.length > 0
@@ -747,7 +693,8 @@ export default function Browse({
             <span className="flex-1 text-[10px] font-medium text-[#C4C4C4] uppercase tracking-wider">Back</span>
           </div>
         )}
-        {visible.map(card => (
+        {(mediaLoading || cardsLoading) && <div className="kit-loading-bar" role="status" aria-label="Loading card media"><div className="kit-loading-fill" /></div>}
+        {!mediaLoading && !cardsLoading && visible.map(card => (
           <CardPreviewRow
             key={card.id}
             card={card}
@@ -756,7 +703,7 @@ export default function Browse({
             selectionMode={selectionMode}
             tagColorMap={tagColorMap}
             swipeEnabled={activeTagFilters.length > 0}
-            onTap={() => setEditingCard(card)}
+            onTap={face => { setEditingFace(face); setEditingCard(card); }}
             onToggleSelect={() => toggleSelect(card.id)}
             onLongPress={() => { hapticTap(); setSelectionMode(true); toggleSelect(card.id); }}
             onSwipeRight={() => applyTagSwipe(card, 'add')}
@@ -773,6 +720,8 @@ export default function Browse({
         )}
       </div>
 
+      </div>
+
       {/* Card Editor overlay */}
       {editingCard && (
         <CardEditor
@@ -783,13 +732,14 @@ export default function Browse({
           onDelete={handleEditorDelete}
           onDismiss={() => { setEditingCard(null); setIsNewCard(false); }}
           isNew={isNewCard}
+          initialFace={editingFace}
           deckTags={deckTags}
           onMediaAdded={addMediaFile}
           onSyncEdit={onSyncEdit}
         />
       )}
 
-      {showPracticePrompt && <div className="first-card-next" role="status"><span>Card saved</span><button type="button" onClick={() => { hapticTap(); setShowPracticePrompt(false); onStartStudy?.(); }}>Study <UiIcon name="arrow" /></button><button type="button" className="kit-icon-button" aria-label="Dismiss saved card message" onClick={() => setShowPracticePrompt(false)}><UiIcon name="close" /></button></div>}
+      {showPracticePrompt && <div className="first-card-next" role="status" {...savedCardNotice.events}><span>Card saved</span><button type="button" onClick={() => { hapticTap(); setShowPracticePrompt(false); onStartStudy?.(); }}>Start <UiIcon name="arrow" /></button><button type="button" className="kit-icon-button" aria-label="Dismiss saved card message" onClick={() => setShowPracticePrompt(false)}><UiIcon name="close" /></button></div>}
     </div>
   );
 }

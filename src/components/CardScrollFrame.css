@@ -1,0 +1,10 @@
+.card-scroll-frame { position:relative; width:100%; height:100%; min-height:0; min-width:0; overflow:hidden; }
+.card-scroll-viewport { width:100%; height:100%; min-height:0; overflow-y:auto; overflow-x:hidden; overscroll-behavior:none; padding:max(24px,env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left)); transform:var(--card-edge-transform,none); transition:transform 200ms cubic-bezier(.22,.68,.35,1); }
+.card-scroll-viewport[data-card-edge-dragging],.card-scroll-viewport[data-card-edge-reset] { transition:none; }
+.card-scroll-body { min-width:0; width:100%; }
+/* A static colour fade, with no live blur or animated filter. */
+.card-scroll-edge { position:absolute; inset:auto 0 0; height:28px; pointer-events:none; background:linear-gradient(to bottom,transparent,var(--kit-bg)); color:#647166; }
+.dark .card-scroll-edge { color:#b8c4b9; }
+.card-scroll-edge svg { position:absolute; bottom:4px; left:calc(50% - 6px); opacity:.6; }
+@media (orientation:landscape) and (max-height:500px) { .card-scroll-edge { height:22px; } .card-scroll-edge svg { bottom:3px; } }
+@media (prefers-reduced-motion:reduce) { .card-scroll-viewport { transform:none!important; transition:none; } }

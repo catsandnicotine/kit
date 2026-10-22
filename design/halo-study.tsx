@@ -23,7 +23,7 @@ export function HaloStudy() {
       body { margin:0; background:#090b0a; }
       .halo-study { min-height:100dvh; padding:36px max(24px,calc((100vw - 1040px)/2)) 48px; background:#090b0a; color:#e3e9e5; font-family:-apple-system,BlinkMacSystemFont,sans-serif; }
       .halo-study.halo-light { background:#f5f5ef; color:#34413a; }
-      .halo-light .reveal-halo { fill:#606d69; opacity:.88; }.halo-light .reveal-eye-metal { fill:#a5b2ac; }.halo-light .reveal-caption { color:#56645e; }
+      .halo-light .reveal-halo { fill:#606d69; opacity:.14; }.halo-light .reveal-eye-metal { fill:#a5b2ac; }.halo-light .reveal-caption { color:#56645e; }
       .halo-heading { display:flex; align-items:center; justify-content:space-between; gap:24px; }
       .halo-study h1 { font-size:27px; font-weight:650; letter-spacing:-.04em; }.halo-study .intro { margin:12px 0 28px; max-width:560px; font-size:14px; line-height:1.65; opacity:.65; }
       .halo-study button { border:0; background:transparent; color:inherit; cursor:pointer; }
@@ -45,6 +45,7 @@ export function HaloStudy() {
       .halo-footnote { margin-top:28px; font-size:12px; line-height:1.7; opacity:.45; max-width:700px; }
       .eye-preview-toggle { margin-top:20px; padding:10px 14px; background:#cfd9d222!important; border-radius:8px; font-size:13px; }
       .force-eye-motion .reveal-eye--idle { animation:eye-idle-float 5.6s ease-in-out infinite!important; }
+      .force-eye-motion .reveal-eye--idle .eye-body { animation:eye-quiet-pulse 8.8s cubic-bezier(.4,0,.35,1) infinite!important; }
       .force-eye-motion .eye-halo-ray { animation:eye-ray-breathe 6.4s ease-in-out infinite!important; }
       .force-eye-motion .eye-halo-breath { animation:eye-ray-light 6.4s ease-in-out infinite!important; }
       .force-eye-motion .eye-light-pose { animation:eye-specular-pass 2.8s steps(1,end) infinite!important; }

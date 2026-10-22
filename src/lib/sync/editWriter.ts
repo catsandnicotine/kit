@@ -59,6 +59,14 @@ export async function writeEdit(
   // force-kill, power loss, or OS memory-pressure termination.
   await storage.queuePendingEdit(deckId, filename, data);
 
+  // Once queued, this action is committed. If retaining its independent replay
+  // copy fails, keep the queue entry and retry; do not report a false failed save.
+  try { await storage.archiveEdit?.(deckId, filename, data); }
+  catch (error) {
+    console.warn('[editWriter] Replay copy remains pending:', error);
+    return hlc;
+  }
+
   // Mirror to iCloud in the background. On success, remove the local queue
   // entry so the edit lives in one place (iCloud) rather than duplicated.
   // On failure, leave the local copy — flushPendingEdits will retry on the
@@ -87,6 +95,7 @@ export async function flushPendingEdits(
     for (const { deckId, filename, data } of pending) {
       try {
         const path = `${deckId}/edits/${filename}`;
+        await storage.archiveEdit?.(deckId, filename, data);
         await storage.writeFile(path, data);
         await storage.removePendingEdit(deckId, filename);
         flushed++;

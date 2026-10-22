@@ -1,6 +1,13 @@
-import { useState } from 'react';
-
-export type OnboardingAction = 'sample' | 'create' | 'import';
+import { KitHeader } from './KitHeader';
+import { useLayoutEffect, useRef } from 'react';
+import type { OnboardingAction } from '../types/deckCreation';
+import { useOnboardingFeedback } from '../hooks/useOnboardingFeedback';
+import { DeckEntryChoices } from './DeckEntryChoices';
+import { DeckCreationScreen } from './DeckCreationScreen';
+import { EyeGlyph } from './EyeGlyph';
+import { RatingGlyph } from './RatingGlyph';
+import { UiIcon } from './UiIcon';
+import './Onboarding.css';
 
 interface OnboardingProps {
   ready: boolean;
@@ -13,125 +20,57 @@ interface OnboardingProps {
   onDismiss: () => void;
 }
 
-/**
- * First-run choice screen that gets users to a useful deck quickly.
- *
- * @param props - Readiness state and first-run action callbacks.
- * @returns The onboarding UI.
+const RATINGS = [
+  { rating: 'again', label: 'Again', meaning: 'Forgot' },
+  { rating: 'hard', label: 'Hard', meaning: 'With effort' },
+  { rating: 'good', label: 'Good', meaning: 'Got it' },
+  { rating: 'easy', label: 'Easy', meaning: 'Instantly' },
+] as const;
+
+/** A hands-on first card, then a direct route to the user's own material.
+ * @param props - Readiness, existing decks, and first-run callbacks.
+ * @returns A skippable demonstration with no saved ratings or automatic sample deck.
  */
-export function Onboarding({
-  ready,
-  existingDeckCount,
-  busyAction,
-  error,
-  onTrySample,
-  onCreateDeck,
-  onImportDeck,
-  onDismiss,
-}: OnboardingProps) {
-  const [creating, setCreating] = useState(false);
-  const [deckName, setDeckName] = useState('');
+export function Onboarding({ ready, existingDeckCount, busyAction, error, onTrySample, onCreateDeck, onImportDeck, onDismiss }: OnboardingProps) {
+  const { step, creating, selected, pending, choose, reveal, skipDemo, startCreation, closeCreation } = useOnboardingFeedback(existingDeckCount);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const previousStep = useRef(step);
   const busy = busyAction !== null;
+  useLayoutEffect(() => {
+    if (previousStep.current !== step) heading.current?.focus({ preventScroll: true });
+    previousStep.current = step;
+  }, [step]);
 
-  const submitDeck = (event: React.FormEvent) => {
-    event.preventDefault();
-    const name = deckName.trim();
-    if (!name || busy || !ready) return;
-    void onCreateDeck(name);
-  };
+  if (creating) return <DeckCreationScreen initialStep="name" ready={ready} creating={busy} error={error} onCreate={name => { void onCreateDeck(name); }} onImport={() => { void onImportDeck(); }} onCancel={closeCreation} />;
+  return <main className={`kit-onboarding kit-onboarding--${step}`}>
+    <KitHeader quiet trailing={<button type="button" className="onboarding-skip" onClick={step === 'setup' ? onDismiss : skipDemo} disabled={busy || pending}>{existingDeckCount > 0 ? 'My decks' : 'Skip'}</button>} />
 
-  return (
-    <main
-      className="min-h-[100dvh] bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5] flex items-center justify-center"
-      style={{
-        paddingTop: 'max(1.5rem, env(safe-area-inset-top))',
-        paddingBottom: 'max(1.5rem, env(safe-area-inset-bottom))',
-        paddingLeft: 'max(1.25rem, env(safe-area-inset-left))',
-        paddingRight: 'max(1.25rem, env(safe-area-inset-right))',
-      }}
-    >
-      <div className="max-w-sm w-full flex flex-col items-center text-center">
-        <span className="text-2xl font-semibold tracking-widest">KIT</span>
-
-        {creating ? (
-          <form onSubmit={submitDeck} className="mt-8 w-full text-left">
-            <label htmlFor="first-deck-name" className="block text-xs font-medium text-[#6B6B6B] dark:text-[#A3A3A3] mb-2">
-              Deck name
-            </label>
-            <input
-              id="first-deck-name"
-              autoFocus
-              value={deckName}
-              onChange={event => setDeckName(event.target.value)}
-              placeholder="e.g. Biology"
-              maxLength={80}
-              disabled={busy}
-              className="w-full px-4 py-3.5 text-base bg-[var(--kit-surface)] rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-[#8E8E93] disabled:opacity-60"
-            />
-            <button
-              type="submit"
-              disabled={!ready || busy || !deckName.trim()}
-              className="mt-3 w-full py-3.5 text-sm font-semibold bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] rounded-xl active:opacity-80 disabled:opacity-40"
-            >
-              {busyAction === 'create' ? 'Creating…' : 'Create deck'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreating(false)}
-              disabled={busy}
-              className="w-full py-3 text-sm text-[#6B6B6B] dark:text-[#A3A3A3] disabled:opacity-40"
-            >
-              Back
-            </button>
-          </form>
-        ) : (
-          <div className="mt-8 w-full flex flex-col gap-3">
-            <button
-              onClick={() => void onTrySample()}
-              disabled={!ready || busy}
-              className="w-full rounded-xl bg-[#1c1c1e] dark:bg-[#E5E5E5] text-white dark:text-[#0A0A0A] px-4 py-3.5 text-left active:opacity-80 disabled:opacity-40"
-            >
-              <span className="block text-sm font-semibold">
-                {busyAction === 'sample' ? 'Opening…' : 'Try Kit'}
-              </span>
-            </button>
-            <button
-              onClick={() => setCreating(true)}
-              disabled={!ready || busy}
-              className="w-full rounded-xl bg-[var(--kit-surface)] px-4 py-3.5 text-left active:opacity-70 disabled:opacity-40"
-            >
-              <span className="block text-sm font-semibold">Create deck</span>
-            </button>
-            <button
-              onClick={() => void onImportDeck()}
-              disabled={!ready || busy}
-              className="w-full rounded-xl bg-[var(--kit-surface)] px-4 py-3.5 text-left active:opacity-70 disabled:opacity-40"
-            >
-              <span className="block text-sm font-semibold">
-                {busyAction === 'import' ? 'Opening Files…' : 'Import an Anki deck'}
-              </span>
-            </button>
-          </div>
-        )}
-
-        {!ready && !error && (
-          <p className="mt-4 text-xs text-[#6B6B6B] dark:text-[#A3A3A3]" role="status">Getting Kit ready…</p>
-        )}
-        {error && (
-          <p className="mt-4 text-xs text-red-500" role="alert">{error}</p>
-        )}
-        {!creating && (
-          <button
-            onClick={onDismiss}
-            disabled={busy}
-            className="mt-5 px-4 py-2 text-xs text-[#6B6B6B] dark:text-[#A3A3A3] disabled:opacity-40"
-          >
-            {existingDeckCount > 0
-              ? `Continue to my ${existingDeckCount === 1 ? 'deck' : 'decks'}`
-              : 'Skip'}
-          </button>
-        )}
+    {step === 'setup' ? <section className="onboarding-setup" aria-labelledby="onboarding-heading">
+      <h1 ref={heading} id="onboarding-heading" tabIndex={-1}>{existingDeckCount > 0 ? 'Make it yours.' : 'Your first deck.'}</h1>
+      <p className="onboarding-intro">Make your own, or bring one from Anki.</p>
+      <DeckEntryChoices disabled={!ready || busy} importing={busyAction === 'import'} onCreate={startCreation} onImport={() => { void onImportDeck(); }} />
+      <button type="button" className="onboarding-tutorial" onClick={() => { void onTrySample(); }} disabled={!ready || busy}>
+        <span>{busyAction === 'sample' ? 'Opening…' : 'Quick start'}<small>5 tutorial cards</small></span><UiIcon name="arrow" />
+      </button>
+    </section> : <section className="onboarding-demo" aria-labelledby="onboarding-heading">
+      <div className="onboarding-demo-intro">
+        <h1 ref={heading} id="onboarding-heading" tabIndex={-1}>{step === 'question' ? 'Try one card.' : 'How did you do?'}</h1>
+        <p className="onboarding-intro">{step === 'question' ? 'Think first. Then tap the eye.' : 'Rate what you remembered.'}</p>
       </div>
-    </main>
-  );
+      <div className="onboarding-example" aria-live="polite" aria-atomic="true">
+        {step === 'question' ? <p>What do you call a group<br />of flashcards?</p> : <><p className="onboarding-example-answer">A deck.</p><p className="onboarding-example-note">Forgot? Choose Again.<br />It will come back sooner.</p></>}
+      </div>
+      {step === 'question' ? <button type="button" className="onboarding-reveal" aria-label="Show answer" onClick={reveal}>
+        <EyeGlyph variant="aureole" halo="oval" idle />
+      </button> : <div className="onboarding-ratings" role="group" aria-label="How well did you remember?">
+        {RATINGS.map(({ rating, label, meaning }) => <button key={rating} type="button" className={`rating-control${selected === rating ? ' is-feedback' : ''}`} aria-label={`${label}: ${meaning}`} disabled={pending} onClick={() => choose(rating)}>
+          <RatingGlyph rating={rating} /><span className="rating-label">{label}</span><span className="onboarding-rating-meaning">{meaning}</span>
+        </button>)}
+      </div>}
+    </section>}
+    <div className="onboarding-notices">
+      {error && <p className="deck-entry-error" role="alert">{error}</p>}
+      {!ready && !error && <p className="deck-entry-loading" role="status">Getting Kit ready…</p>}
+    </div>
+  </main>;
 }

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>Kit — reveal and hold</title></head>
+<body><div id="interaction-study"></div><script type="module">
+import { createElement } from 'react';
+import { createRoot } from 'react-dom/client';
+import { InteractionPolish } from './interaction-polish.tsx';
+const light = new URLSearchParams(location.search).get('theme') === 'light';
+document.documentElement.dataset.theme = light ? 'light' : 'black';
+document.documentElement.classList.toggle('dark', !light);
+createRoot(document.getElementById('interaction-study')).render(createElement(InteractionPolish));
+</script></body></html>

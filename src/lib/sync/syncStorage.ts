@@ -108,6 +108,11 @@ export interface SyncStorage {
    */
   removePendingEdit(deckId: string, filename: string): Promise<void>;
 
+  /** Retain an immutable journal locally even after its cloud upload succeeds. */
+  archiveEdit?(deckId: string, filename: string, data: string): Promise<void>;
+  /** Read retained local journals without treating them as pending uploads. */
+  listArchivedEdits?(): Promise<PendingEdit[]>;
+
   /**
    * Check if the sync backend is available (e.g. iCloud signed in).
    *

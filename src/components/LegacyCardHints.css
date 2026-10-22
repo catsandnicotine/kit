@@ -1,0 +1,4 @@
+/* Editing reveals the clue for authoring through CSS only. Its saved HTML is
+   untouched unless the user actually edits it; the viewing renderer converts it. */
+.card-side-editor .side-text a.hint[onclick^="this.style.display='none';document.getElementById('hint_"] { display:none; }
+.card-side-editor .side-text a.hint[onclick^="this.style.display='none';document.getElementById('hint_"] + span[id^="hint_"] { display:inline!important; }

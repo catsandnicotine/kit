@@ -25,3 +25,7 @@ dist-ssr
 
 # Generated deck download; source images and catalogue are versioned separately.
 /design/jesus-paintings/*.apkg
+
+# Local signed release artifacts and Python validation caches.
+/.release/
+__pycache__/

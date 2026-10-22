@@ -1,0 +1,23 @@
+/* Entry opacity does not change the retained card/footer geometry. */
+.session-entrance > header,
+.session-entrance > .study-progress { animation:session-entry-fade 160ms ease-out both; }
+.session-entrance[data-entry-ready="false"] > .study-card-area,
+.session-entrance[data-entry-ready="false"] > .study-footer { opacity:0; }
+.session-entrance[data-entry-ready="false"] > .study-card-area,
+.session-entrance[data-entry-ready="false"] > .study-card-area *,
+.session-entrance[data-entry-ready="false"] > .study-footer,
+.session-entrance[data-entry-ready="false"] > .study-footer * { pointer-events:none; }
+.session-entrance[data-entry-ready="true"] > .study-card-area,
+.session-entrance[data-entry-ready="true"] > .study-footer { animation:session-entry-fade 160ms ease-out both; }
+.session-entrance-status { position:absolute; z-index:2; top:calc(env(safe-area-inset-top) + 90px); left:24px; right:24px; margin:0; text-align:center; font-size:12px; opacity:0; pointer-events:none; }
+.session-entrance-track { display:block; width:28px; height:2px; margin:0 auto; border-radius:2px; background:currentColor; opacity:.45; }
+.session-entrance[data-entry-ready="false"] > .session-entrance-status { animation:session-entry-status 1ms 200ms forwards; }
+.session-entrance[data-entry-ready="true"] > .session-entrance-status { display:none; }
+@keyframes session-entry-fade { from { opacity:0; } to { opacity:1; } }
+@keyframes session-entry-status { to { opacity:.55; } }
+@media(prefers-reduced-motion:reduce) {
+  .session-entrance > header,
+  .session-entrance > .study-progress,
+  .session-entrance[data-entry-ready="true"] > .study-card-area,
+  .session-entrance[data-entry-ready="true"] > .study-footer { animation:none; }
+}
