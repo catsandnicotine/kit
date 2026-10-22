@@ -16,6 +16,8 @@ import type { Database } from 'sql.js';
 import type { EditOp } from '../lib/sync/types';
 import { ModeAtmosphere } from './ModeAtmosphere';
 import { StudyFooter } from './StudyFooter';
+import { PracticeNavigationButton } from './PracticeNavigationButton';
+import { PracticeFinishNavigation } from './PracticeFinishNavigation';
 import { SessionFinish } from './SessionFinish';
 import { DeckName } from './DeckName';
 /**
@@ -107,16 +109,17 @@ export function ReviewPassView({
   const tagColors = useCardTagColors(db, currentCard?.deckId);
   const choiceFeedback = useChoiceFeedback<'again' | 'aside'>(choice => choice === 'again' ? repeat() : gotIt());
 
-  const hold = useHoldToEdit({ identity:`${currentCard?.id}:${phase}`, disabled:!db || !currentCard || choiceFeedback.pending || Boolean(editingCard),
+  const hold = useHoldToEdit({ identity:`${currentCard?.id}:${session.seenOccurrenceId}:${phase}`, disabled:!db || !currentCard || choiceFeedback.pending || Boolean(editingCard),
     onEdit:() => { if (currentCard) { setEditingFace(phase === 'back' ? 'back' : 'front'); setEditingCard(currentCard); } } });
   const seen = useCardSeen({ deckId:currentCard?.deckId ?? null, cardId:currentCard?.id ?? null,
     sessionKey:session.seenSessionKey, occurrenceId:session.seenOccurrenceId, mode:'practice', face:phase === 'back' ? 'back' : 'front',
     enabled:phase === 'front' || phase === 'back', onFlip:flip });
   const turn = useCardTurn({
-    face:phase === 'back' ? 'back' : 'front', identity:currentCard?.id ?? 'complete',
+    face:phase === 'back' ? 'back' : 'front', identity:`${currentCard?.id ?? 'complete'}:${session.seenOccurrenceId}`,
     disabled:choiceFeedback.pending || Boolean(editingCard) || !currentCard || hold.activated || hold.offered,
     locked:hold.locked, onFlip:seen.flip, onGestureStart:hold.dismiss,
   });
+  const navigationLocked = choiceFeedback.pending || Boolean(editingCard) || hold.locked || hold.holding || turn.moving;
 
   const frontHtml = useMemo(() => {
     if (!currentCard) return '';
@@ -132,9 +135,10 @@ export function ReviewPassView({
 
   // ── Complete screen ────────────────────────────────────────────────────
   if (phase === 'complete') {
-    return <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    return <div className="study-session h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       <header className="practice-finish-header"><DeckName name={contextLabel ?? 'Practice'} /></header>
-      <SessionFinish showMark={stats.reviewed > 0} title={stats.reviewed ? 'Practice complete' : 'No cards yet'} detail={stats.reviewed ? `${stats.reviewed} ${stats.reviewed === 1 ? 'card' : 'cards'}` : undefined} onDone={() => { hapticTap(); onDone(); }} />
+      <SessionFinish showMark={stats.reviewed > 0} title={stats.total ? 'Practice finished' : 'No cards yet'} detail={stats.reviewed ? `${stats.reviewed} ${stats.reviewed === 1 ? 'card' : 'cards'} put aside` : undefined} onDone={() => { hapticTap(); onDone(); }} />
+      <PracticeFinishNavigation canPrevious={session.canPrevious} onPrevious={session.previous} />
     </div>;
   }
 
@@ -195,9 +199,11 @@ export function ReviewPassView({
       </CardTurnFrame>
 
       {/* Bottom bar */}
-      <StudyFooter face={phase === 'front' ? 'front' : 'back'} layoutFace={turn.layoutFace} seenCount={seen.count} onFlip={turn.flip} disabled={choiceFeedback.pending}
+      <StudyFooter face={phase === 'front' ? 'front' : 'back'} layoutFace={turn.layoutFace} seenCount={seen.count} onFlip={turn.flip} disabled={navigationLocked}
+        leading={<PracticeNavigationButton direction="previous" onNavigate={session.previous} disabled={navigationLocked || !session.canPrevious} />}
+        trailing={<PracticeNavigationButton direction="next" onNavigate={session.next} disabled={navigationLocked || !session.canNext} />}
         frontActions={<ShowAnswerButton onReveal={turn.flip} practice />}
-        backActions={<ReviewChoices onRepeat={() => choiceFeedback.choose('again')} onPutAside={() => choiceFeedback.choose('aside')} selected={choiceFeedback.selected} pending={choiceFeedback.pending} />}
+        backActions={<ReviewChoices onRepeat={() => choiceFeedback.choose('again')} onPutAside={() => choiceFeedback.choose('aside')} selected={choiceFeedback.selected} pending={navigationLocked} readOnly={!session.canChoose} />}
       />
       {db && editingCard && <CardEditor db={db} card={editingCard} initialFace={editingFace} {...(rewriteHtml ? { rewriteHtml } : {})} {...(onMediaAdded ? { onMediaAdded } : {})} onSyncEdit={onSyncEdit}
         onSave={updated => { session.updateCard(updated); setEditingCard(null); }} onDelete={onDone} onDismiss={() => setEditingCard(null)} />}

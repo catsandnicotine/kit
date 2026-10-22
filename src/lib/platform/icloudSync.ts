@@ -41,24 +41,18 @@ const ICloudSyncPlugin = registerPlugin<ICloudSyncPluginInterface>('ICloudSyncPl
 // ---------------------------------------------------------------------------
 
 const PENDING_DIR = 'pending_edits';
-const ARCHIVE_DIR = 'retained_edits';
-
-function missingFile(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error
-    && ['OS-PLUG-FILE-0008', 'ENOENT'].includes(String(error.code));
-}
 
 /**
  * Read pending edits from local filesystem.
  *
  * @returns Array of pending edits.
  */
-async function readPendingEdits(directory = PENDING_DIR, strict = false): Promise<PendingEdit[]> {
+async function readPendingEdits(): Promise<PendingEdit[]> {
   if (!isNativePlatform()) return [];
 
   try {
     const result = await Filesystem.readdir({
-      path: directory,
+      path: PENDING_DIR,
       directory: Directory.Documents,
     });
 
@@ -75,14 +69,13 @@ async function readPendingEdits(directory = PENDING_DIR, strict = false): Promis
       if (realSet.has(canonical)) continue;
       try {
         await Filesystem.rename({
-          from: `${directory}/${name}`,
-          to: `${directory}/${canonical}`,
+          from: `${PENDING_DIR}/${name}`,
+          to: `${PENDING_DIR}/${canonical}`,
           directory: Directory.Documents,
           toDirectory: Directory.Documents,
         });
         realSet.add(canonical);
-      } catch (error) {
-        if (strict) throw error;
+      } catch {
         // Best effort — if recovery fails here, the edit stays unreadable
         // this session; atomicReadText-style recovery at per-file level
         // would pick it up, but bulk scan is simpler and cheap.
@@ -94,10 +87,10 @@ async function readPendingEdits(directory = PENDING_DIR, strict = false): Promis
     const contents = await Promise.all(
       names.map(name =>
         Filesystem.readFile({
-          path: `${directory}/${name}`,
+          path: `${PENDING_DIR}/${name}`,
           directory: Directory.Documents,
           encoding: Encoding.UTF8,
-        }).catch(error => { if (strict) throw error; return null; }),
+        }).catch(() => null),
       ),
     );
 
@@ -110,15 +103,13 @@ async function readPendingEdits(directory = PENDING_DIR, strict = false): Promis
         if (parsed.deckId && parsed.filename && parsed.data) {
           edits.push(parsed as PendingEdit);
         }
-      } catch (error) {
-        if (strict) throw error;
+      } catch {
         // Skip corrupted pending edits
       }
     }
 
     return edits;
-  } catch (error) {
-    if (strict && !missingFile(error)) throw error;
+  } catch {
     return [];
   }
 }
@@ -199,28 +190,7 @@ export function createICloudSyncStorage(): SyncStorage {
     },
 
     async listPendingEdits(): Promise<PendingEdit[]> {
-      return readPendingEdits(PENDING_DIR, true);
-    },
-
-    async archiveEdit(deckId: string, filename: string, data: string): Promise<void> {
-      if (!isNativePlatform()) return;
-      if (!/^[A-Za-z0-9_-]{1,160}$/.test(deckId) || !/^\d{13}_[A-Za-z0-9-]{1,160}_\d{4,}\.json$/.test(filename)) throw new Error('Invalid retained journal path');
-      const path = `${ARCHIVE_DIR}/${deckId}_${filename}`;
-      try {
-        const existing = await Filesystem.readFile({ path, directory:Directory.Documents, encoding:Encoding.UTF8 });
-        const retained = JSON.parse(String(existing.data)) as PendingEdit;
-        if (retained.deckId !== deckId || retained.filename !== filename || retained.data !== data) throw new Error('A retained edit identity has different contents');
-        return;
-      } catch (error) { if (!missingFile(error)) throw error; }
-      try { await Filesystem.mkdir({ path:ARCHIVE_DIR, directory:Directory.Documents, recursive:true }); }
-      catch (error) {
-        if (!(typeof error === 'object' && error !== null && 'code' in error && error.code === 'OS-PLUG-FILE-0010')) throw error;
-      }
-      await atomicWriteText({ path, directory:Directory.Documents, data:JSON.stringify({ deckId, filename, data }) });
-    },
-
-    async listArchivedEdits(): Promise<PendingEdit[]> {
-      return readPendingEdits(ARCHIVE_DIR, true);
+      return readPendingEdits();
     },
 
     async removePendingEdit(deckId: string, filename: string): Promise<void> {

@@ -15,7 +15,7 @@ const original = '<div><p>Which light crosses the room?</p><a class="hint" oncli
 /** Exercise saved hints and authoring without importing or updating a real deck.
  * @returns Real turn/hold/editor surfaces with a read-only serialization check.
  */
-function HintSafety() {
+export function HintSafety() {
   const [face, setFace] = useState<CardFace>('front');
   const [edits, setEdits] = useState(0);
   const [holds, setHolds] = useState(0);

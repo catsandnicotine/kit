@@ -216,11 +216,6 @@ export interface DeckSnapshot {
   deletedCardIds: string[];
   /** True if the deck itself was soft-deleted. */
   deleted?: boolean;
-  /** Stable baseline and exact retained journal, allowing late edits to be replayed in order.
-   * Older snapshots without this metadata remain a legacy baseline; previously pruned
-   * history cannot be reconstructed. The baseline itself never contains replay metadata.
-   */
-  replay?: { v: 1; base: DeckSnapshot; edits: EditFile[] };
 }
 
 // ---------------------------------------------------------------------------

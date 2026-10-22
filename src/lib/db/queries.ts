@@ -23,7 +23,6 @@ import type {
   ReviewLog,
 } from '../../types';
 import type { ResolvedCardSchedule } from '../srs/scheduleWithLearningSteps';
-import type { DeckSnapshot } from '../sync/types';
 
 // ---------------------------------------------------------------------------
 // Internal row type
@@ -2404,52 +2403,6 @@ export function getExistingTagNames(db: Database): Set<string> {
   }
 }
 
-/** Atomically replace one per-deck cache with a verified canonical replay result.
- * Preserve the connection, app preferences and any legacy binary media.
- * @param db - Existing per-deck connection retained by active screens.
- * @param snapshot - Fully prepared canonical deck state.
- * @returns Success after the whole replacement commits; failures restore every row.
- */
-export function replaceDeckForReplay(db: Database, snapshot: DeckSnapshot): Result<void> {
-  const checked = <T>(result: Result<T>): T => {
-    if (!result.success) throw new Error(result.error);
-    return result.data;
-  };
-  try {
-    const decks = checked(getAllDecks(db));
-    if (decks.length !== 1 || decks[0]?.id !== snapshot.deckId) throw new Error('Replay requires an isolated per-deck database');
-    db.run('SAVEPOINT sync_rebase');
-    try {
-      db.run('DELETE FROM cards WHERE deck_id = ?', [snapshot.deckId]);
-      db.run('DELETE FROM notes WHERE deck_id = ?', [snapshot.deckId]);
-      db.run('DELETE FROM note_types WHERE deck_id = ?', [snapshot.deckId]);
-      db.run('DELETE FROM deck_tags WHERE deck_id = ?', [snapshot.deckId]);
-      db.run('DELETE FROM tag_colors');
-      db.run('UPDATE decks SET name = ?, description = ?, created_at = ?, updated_at = ? WHERE id = ?',
-        [snapshot.deck.name, snapshot.deck.description, snapshot.deck.createdAt, snapshot.deck.updatedAt, snapshot.deckId]);
-      for (const type of snapshot.noteTypes) checked(insertNoteType(db, type));
-      for (const note of snapshot.notes) checked(insertNote(db, note));
-      for (const card of snapshot.cards) checked(insertCard(db, card));
-      for (const state of snapshot.cardStates) checked(setCardState(db, state));
-      for (const log of snapshot.reviewLogs) checked(insertReviewLog(db, log));
-      const settings = snapshot.settings;
-      db.run(`INSERT OR REPLACE INTO deck_settings
-        (deck_id,new_cards_per_day,max_reviews_per_day,again_steps,graduating_interval,easy_interval,max_interval,leech_threshold,desired_retention)
-        VALUES (?,?,?,?,?,?,?,?,?)`, [snapshot.deckId, settings.newCardsPerDay, settings.maxReviewsPerDay,
-        JSON.stringify(settings.againSteps), settings.graduatingInterval, settings.easyInterval, settings.maxInterval,
-        settings.leechThreshold, settings.desiredRetention]);
-      for (const tag of snapshot.tags) checked(upsertTagColor(db, tag.tag, tag.color, snapshot.deck.updatedAt));
-      for (const tag of snapshot.deckTags) checked(addTagToDeck(db, snapshot.deckId, tag, snapshot.deck.updatedAt));
-      db.run('RELEASE SAVEPOINT sync_rebase');
-      return { success:true, data:undefined };
-    } catch (error) {
-      db.run('ROLLBACK TO SAVEPOINT sync_rebase');
-      db.run('RELEASE SAVEPOINT sync_rebase');
-      throw error;
-    }
-  } catch (error) { return { success:false, error:String(error) }; }
-}
-
 /** Insert a journal review once while surfacing all non-duplicate SQL failures.
  * @param db - Per-deck connection.
  * @param log - Immutable review identity and payload.
@@ -2457,7 +2410,7 @@ export function replaceDeckForReplay(db: Database, snapshot: DeckSnapshot): Resu
  */
 export function insertReplayReview(db: Database, log: ReviewLog): Result<void> {
   try {
-    db.run('INSERT OR IGNORE INTO review_logs (id,card_id,rating,reviewed_at,elapsed,scheduled_days) VALUES (?,?,?,?,?,?)',
+    db.run('INSERT INTO review_logs (id,card_id,rating,reviewed_at,elapsed,scheduled_days) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
       [log.id,log.cardId,log.rating,log.reviewedAt,log.elapsed,log.scheduledDays]);
     return { success:true, data:undefined };
   } catch (error) { return { success:false, error:String(error) }; }
@@ -2470,7 +2423,7 @@ export function insertReplayReview(db: Database, log: ReviewLog): Result<void> {
  */
 export function insertReplayCard(db: Database, card: Card): Result<boolean> {
   try {
-    db.run('INSERT OR IGNORE INTO cards (id,deck_id,note_id,front,back,tags,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)',
+    db.run('INSERT INTO cards (id,deck_id,note_id,front,back,tags,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING',
       [card.id,card.deckId,card.noteId,card.front,card.back,JSON.stringify(card.tags),card.createdAt,card.updatedAt]);
     return { success:true, data:db.getRowsModified()>0 };
   } catch (error) { return { success:false, error:String(error) }; }

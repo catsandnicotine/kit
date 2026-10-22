@@ -46,6 +46,7 @@ Kit can be used with the optional tutorial deck, a deck created in the app, or a
 2. Tap a deck to open it. Tap the eye or drag the card horizontally to reveal its answer. The two small paper-face controls return to the question and answer without advancing.
 3. Scheduled studying uses Again, Hard, Good, or Easy. These ratings change the review schedule. Free Practice uses Again / Put aside and leaves the schedule unchanged.
 4. In the library, swipe left to the second page for Practice and right to the first for scheduled studying. The two dots at the bottom are also accessible buttons; their accessibility labels identify each mode. There is no visible Study/Practice switch at the top.
+   Practice's bottom-left Previous and bottom-right Next controls work on both card faces without revealing or rating. Navigation returns to the question; an occurrence's reveal count is not incremented by browsing. Previously chosen occurrences can be revisited without making the same choice again. On the finish screen Previous returns to the last card.
 5. Select "Make cards" in setup or use + in the library. Name the deck, add text and/or media to each side, then Save. Press and hold a card while studying to offer "Edit this side"; choosing the offer opens the editor.
 6. Select "Import Anki" and choose a supported .apkg file from Files. Kit is independent of Anki and does not connect to AnkiWeb.
 7. The library's Settings control opens themes, study defaults, storage information, and bundled offline Support and Privacy pages.
@@ -66,6 +67,7 @@ Notes for reviewers:
 - Confirm the final price and business model in App Store Connect. The description intentionally contains no price or lifetime promise.
 - Verify the public description against the final shipping build, including card creation, Practice mode, media import, and export.
 - Complete two-device iCloud tests covering images, audio, offline reviews, reconnection, concurrent edits, and recovery before adding iCloud sync to the public feature list.
+- Resolve the remaining sync protocol gaps before promising reliable concurrent use: delayed edits below the global watermark, cross-device Undo/suspension, and deletion/pending-upload cleanup. Checkpoints retain source edits rather than pruning them, but retention alone does not solve ordering or remote undo.
 - Do not advertise Mac or Windows support until Kit is available and tested on those platforms.
 - Test representative Anki packages and document compatibility limits. Do not claim support for every deck, template, add-on, or existing Anki study schedule.
 - Confirm the privacy policy and App Store privacy answers match the shipping app.

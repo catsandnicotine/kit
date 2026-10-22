@@ -15,6 +15,8 @@ import type { Card } from '../types';
 import { getCardsByDeck } from '../lib/db/queries';
 import { hapticFlip, hapticNavigate, hapticCelebration } from '../lib/platform/haptics';
 import { v4 as uuidv4 } from 'uuid';
+import { choosePractice, createPracticeQueue, navigatePractice, updatePracticeCard } from '../lib/practiceNavigation';
+import type { PracticeChoice, PracticeDirection, PracticeQueue } from '../types/practiceNavigation';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -47,6 +49,13 @@ export interface UseReviewStudySessionReturn {
   putAside: () => void;
   /** Reshuffle put-aside cards for another round. */
   reshufflePutAside: () => void;
+  /** Browse adjacent occurrences on their question without a choice or reveal. */
+  previous: () => void;
+  next: () => void;
+  canPrevious: boolean;
+  canNext: boolean;
+  /** Historical choices stay viewable without repeating or undoing a decision. */
+  canChoose: boolean;
   updateCard: (card: Card) => void;
 }
 
@@ -73,134 +82,101 @@ export function useReviewStudySession(
   db: Database | null,
   deckId: string,
 ): UseReviewStudySessionReturn {
-  const queueRef = useRef<Card[]>([]);
-  const putAsideRef = useRef<Card[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [queue, setQueue] = useState(() => createPracticeQueue([]));
+  const queueRef = useRef(queue);
   const [seenSessionKey, setSeenSessionKey] = useState(() => uuidv4());
-  const occurrenceIdsRef = useRef<string[]>([]);
   const [phase, setPhase] = useState<ReviewStudyPhase>('loading');
+  const phaseRef = useRef(phase);
   const [errorMessage, setErrorMessage] = useState('');
   const [loadVersion, setLoadVersion] = useState(0);
-  const [stats, setStats] = useState<ReviewStudyStats>({
-    total: 0,
-    remaining: 0,
-    putAside: 0,
-  });
+  const changePhase = useCallback((next: ReviewStudyPhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
 
   // ── Load & shuffle cards ────────────────────────────────────────────────
   useLayoutEffect(() => {
     if (!db) return;
 
     const result = getCardsByDeck(db, deckId);
-    if (!result.success) { setErrorMessage('Could not open this deck for practice.'); setPhase('error'); return; }
+    if (!result.success) { setErrorMessage('Could not open this deck for practice.'); changePhase('error'); return; }
     setErrorMessage('');
-    if (result.data.length === 0) {
-      setPhase('complete');
-      return;
-    }
-
-    const shuffled = shuffle(result.data);
-    queueRef.current = shuffled;
+    const next = createPracticeQueue(shuffle(result.data));
+    queueRef.current = next;
+    setQueue(next);
     setSeenSessionKey(uuidv4());
-    occurrenceIdsRef.current = shuffled.map((_, index) => String(index));
-    putAsideRef.current = [];
-    setCurrentIndex(0);
-    setStats({ total: shuffled.length, remaining: shuffled.length, putAside: 0 });
-    setPhase('front');
-  }, [db, deckId, loadVersion]);
+    changePhase(next.entries.length ? 'front' : 'complete');
+  }, [db, deckId, loadVersion, changePhase]);
 
   // ── Helpers ─────────────────────────────────────────────────────────────
 
-  const advance = useCallback(() => {
-    const queue = queueRef.current;
-    const next = currentIndex + 1;
-    const remaining = Math.max(0, queue.length - next);
-    setStats(prev => ({ ...prev, remaining }));
-
-    if (next >= queue.length) {
-      void hapticCelebration();
-      setPhase('complete');
-    } else {
-      setCurrentIndex(next);
-      setPhase('front');
-    }
-  }, [currentIndex]);
+  const advance = useCallback((next: PracticeQueue, celebrate = false) => {
+    if (next === queueRef.current) return;
+    queueRef.current = next;
+    setQueue(next);
+    const complete = next.index >= next.entries.length;
+    changePhase(complete ? 'complete' : 'front');
+    if (celebrate && complete) void hapticCelebration();
+  }, [changePhase]);
 
   // ── Actions ─────────────────────────────────────────────────────────────
 
   const flip = useCallback(() => {
-    if (phase !== 'front' && phase !== 'back') return;
+    if (phaseRef.current !== 'front' && phaseRef.current !== 'back') return;
     hapticFlip();
-    setPhase(phase === 'front' ? 'back' : 'front');
-  }, [phase]);
+    changePhase(phaseRef.current === 'front' ? 'back' : 'front');
+  }, [changePhase]);
 
-  const sendToBack = useCallback(() => {
-    if (phase !== 'back') return;
-    const queue = queueRef.current;
-    const card = queue[currentIndex];
-    if (!card) return;
-    // Push a copy to the end
-    queue.push({ ...card });
-    occurrenceIdsRef.current.push(uuidv4());
-    advance();
-  }, [phase, currentIndex, advance]);
+  const choose = useCallback((choice: PracticeChoice) => {
+    if (phaseRef.current !== 'back') return;
+    advance(choosePractice(queueRef.current, choice, uuidv4()), true);
+  }, [advance]);
 
-  const putAside = useCallback(() => {
-    if (phase !== 'back') return;
-    const queue = queueRef.current;
-    const card = queue[currentIndex];
-    if (card) putAsideRef.current.push(card);
-    setStats(prev => ({ ...prev, putAside: putAsideRef.current.length }));
-    // Don't re-add to queue — just advance
-    const next = currentIndex + 1;
-    const remaining = Math.max(0, queue.length - next);
-    setStats(prev => ({ ...prev, remaining, putAside: putAsideRef.current.length }));
-    if (next >= queue.length) {
-      void hapticCelebration();
-      setPhase('complete');
-    } else {
-      setCurrentIndex(next);
-      setPhase('front');
-    }
-  }, [phase, currentIndex]);
+  const navigate = useCallback((direction: PracticeDirection) => {
+    if (phaseRef.current !== 'front' && phaseRef.current !== 'back' && !(phaseRef.current === 'complete' && direction === 'previous')) return;
+    const next = navigatePractice(queueRef.current, direction);
+    if (next === queueRef.current) return;
+    hapticNavigate();
+    advance(next);
+  }, [advance]);
 
   const reshufflePutAside = useCallback(() => {
-    if (putAsideRef.current.length === 0) return;
+    const cards = queueRef.current.entries.filter(entry => entry.choice === 'aside').map(entry => entry.card);
+    if (cards.length === 0) return;
     hapticNavigate();
-    const shuffled = shuffle(putAsideRef.current);
-    queueRef.current = shuffled;
+    const next = createPracticeQueue(shuffle(cards));
+    queueRef.current = next;
+    setQueue(next);
     setSeenSessionKey(uuidv4());
-    occurrenceIdsRef.current = shuffled.map((_, index) => String(index));
-    putAsideRef.current = [];
-    setCurrentIndex(0);
-    setStats({ total: shuffled.length, remaining: shuffled.length, putAside: 0 });
-    setPhase('front');
-  }, []);
+    changePhase('front');
+  }, [changePhase]);
 
   const updateCard = useCallback((updated: Card) => {
-    queueRef.current = queueRef.current.map(card => card.id === updated.id ? updated : card);
-    putAsideRef.current = putAsideRef.current.map(card => card.id === updated.id ? updated : card);
-    setStats(previous => ({ ...previous }));
+    queueRef.current = updatePracticeCard(queueRef.current, updated);
+    setQueue(queueRef.current);
   }, []);
 
   // ── Return ──────────────────────────────────────────────────────────────
 
-  const currentCard = (phase === 'front' || phase === 'back')
-    ? queueRef.current[currentIndex] ?? null
-    : null;
+  const current = phase === 'front' || phase === 'back' ? queue.entries[queue.index] : undefined;
 
   return {
     phase,
     errorMessage,
-    retry: () => { setPhase('loading'); setLoadVersion(value => value + 1); },
-    currentCard,
+    retry: () => { changePhase('loading'); setLoadVersion(value => value + 1); },
+    currentCard: current?.card ?? null,
     seenSessionKey,
-    seenOccurrenceId: currentCard ? occurrenceIdsRef.current[currentIndex] ?? null : null,
-    stats,
+    seenOccurrenceId: current?.occurrenceId ?? null,
+    stats: { total:queue.initialCount, remaining:queue.remaining, putAside:queue.putAside },
     flip,
-    sendToBack,
-    putAside,
+    sendToBack: () => choose('again'),
+    putAside: () => choose('aside'),
     reshufflePutAside,
+    previous: () => navigate('previous'),
+    next: () => navigate('next'),
+    canPrevious: queue.entries.length > 0 && queue.index > 0 && phase !== 'loading' && phase !== 'error',
+    canNext: Boolean(current),
+    canChoose: current?.choice === null,
     updateCard,
   };
 }

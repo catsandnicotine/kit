@@ -242,20 +242,20 @@
   {
     "area": "Still open",
     "path": "Tag reliability",
-    "decision": "Make global rename, delete and recolour propagate safely to deck/card uses; fix asynchronous success/failure handling and improve the remaining tag-detail flow.",
-    "verification": "Reviewed in source; repairs pending."
+    "decision": "Exact-name global/scoped rename, delete and recolour now update cards, notes, associations and colours. Awaited failures stay visible; cross-deck retries are idempotent rather than atomic.",
+    "verification": "Real SQL/reload/export, durable per-deck propagation and async UI tests pass. Physical two-device propagation and the broader sync protocol remain open."
   },
   {
     "area": "Still open",
     "path": "iCloud and desktop access",
     "decision": "Complete binary picture/audio sync and test offline recovery, concurrent changes and interrupted writes on two devices. Define Mac/PC delivery separately.",
-    "verification": "Incomplete; needs real two-device checks."
+    "verification": "Incomplete. Non-destructive live checkpoints retain source edits and preserve local Undo/leech state. Delayed-HLC ordering, cross-device Undo/suspension, deletion/pending cleanup, binary media and real two-device tests remain open. The incomplete canonical-rebuild experiment was removed after review."
   },
   {
     "area": "Still open",
     "path": "Anki compatibility",
     "decision": "Check the biology packages and representative complex decks end-to-end on the phone, including restored media and update-in-place progress.",
-    "verification": "Parser regressions pass; phone compatibility checks remain."
+    "verification": "Isolated 64-card biology import, one edited card plus one added manual card, both export modes and reimport preserve all65 current faces/tags and9 image hashes; source package unchanged. Strict media metadata and export failure regressions pass. Native/desktop Anki runtime and broader package checks remain."
   },
   {
     "area": "Still open",
@@ -406,5 +406,11 @@
     "path": "Slow drag → repainted traveller and sharper end detents",
     "decision": "Use immediate scoped Light impacts for lift/landing and retain quiet selection at midpoint. Move only the3px pip through absolute left inside88×44 paint containment, preserving bounded navigation,120mssettle, focus inset, ReduceMotion and traveller DOM retirement.",
     "verification": "52 focused swipe/haptic tests plus controller lifecycle harness pass. Browser midpoint has left42.5px and transformnone; no traveller remains at either rest. Full lint and434 tests pass. TypeScript/web and signed native build pass; installed and launched in place on the iPhone. Owner corrected an initial repeat trail report and said the trail no longer appears on the iPhone. Keep this implementation unchanged. Revised haptic strength has no separate explicit confirmation; native paint residue remains a hypothesis."
+  },
+  {
+    "area": "Release preparation",
+    "path": "Practice → Previous / Next on either face",
+    "decision": "Stable44px corner arrows browse without reveal or rating; keep occurrence identities and reopen the question. Previous can return from finish; Next is disabled at the end. Prior choices remain read-only.",
+    "verification": "28 focused navigation/hook/component checks pass. Combined diff/lint/TypeScript/web build and534 tests across58 files pass with one worker. Native phone feel and installation remain pending; no native build/upload during low-battery recovery."
   }
 ]

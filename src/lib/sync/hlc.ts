@@ -52,8 +52,6 @@ export interface HLCClock {
    * @returns The current monotonic counter.
    */
   counter(): number;
-  /** Advance past a retained or peer clock before creating another local edit. */
-  observe(hlc: string): void;
 }
 
 /**
@@ -90,14 +88,6 @@ export function createHLC(deviceId: string): HLCClock {
 
     counter(): number {
       return cnt;
-    },
-
-    observe(hlc: string): void {
-      const remote = parseHLC(hlc);
-      if (remote && remote.wallMs >= lastWallMs) {
-        lastWallMs = remote.wallMs + 1;
-        cnt = 0;
-      }
     },
   };
 }

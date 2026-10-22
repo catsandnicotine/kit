@@ -1,5 +1,5 @@
-/** Checkpoint verified canonical state without pruning immutable journals.
- * Offline peers need retained edits; age alone does not acknowledge delivery.
+/** Mirror a live local checkpoint without pruning source edit files.
+ * Age does not prove that an offline peer received an edit.
  */
 
 import type { Database } from 'sql.js';
@@ -25,17 +25,16 @@ import {
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Mirror an already verified checkpoint without claiming cloud delivery.
+/** Mirror a live local checkpoint without claiming cloud delivery.
  * @param storage - Cloud or browser sync storage.
- * @param snapshot - Canonical state and its exact stable baseline/journal coverage.
- * @returns True after the local iCloud file write, retaining all source journals.
+ * @param snapshot - Current local state, including local actions absent from the edit protocol.
+ * @returns True after the local iCloud file write, retaining all source edit files.
  */
 export async function compactDeck(storage: SyncStorage, snapshot: DeckSnapshot): Promise<boolean> {
   try {
-    if (!snapshot.replay) return false;
     await storage.writeFile(`${snapshot.deckId}/snapshot.json`, JSON.stringify(snapshot));
-    // Retain immutable cloud files and local replay copies. Time is not proof
-    // that an offline peer received an edit; pruning needs acknowledgements.
+    // Retain cloud edits and pending local writes. Time is not proof that an
+    // offline peer received an edit; safe pruning requires acknowledgements.
     return true;
   } catch (error) {
     console.warn('[compact] Checkpoint mirror remains unavailable:', snapshot.deckId, error);

@@ -16,6 +16,8 @@ import type { CardFace } from '../types/editorUi';
 import type { EditOp } from '../lib/sync/types';
 import { ModeAtmosphere } from '../components/ModeAtmosphere';
 import { StudyFooter } from '../components/StudyFooter';
+import { PracticeNavigationButton } from '../components/PracticeNavigationButton';
+import { PracticeFinishNavigation } from '../components/PracticeFinishNavigation';
 import { SessionFinish } from '../components/SessionFinish';
 import { DeckName } from '../components/DeckName';
 /**
@@ -134,16 +136,17 @@ export default function ReviewStudy({ db, deckId, deckName, mediaBootstrap, onEx
   }, [currentCard, rewriteHtml, mediaLoading]);
 
   const entranceReady = useSessionEntrance({ identity:deckId, ready:!mediaLoading && (phase === 'front' || phase === 'back'), contentKey:frontHtml, rootRef:entranceRootRef });
-  const hold = useHoldToEdit({ identity:`${currentCard?.id}:${phase}`, disabled:!entranceReady || choiceFeedback.pending || mediaLoading || Boolean(editingCard) || !currentCard,
+  const hold = useHoldToEdit({ identity:`${currentCard?.id}:${session.seenOccurrenceId}:${phase}`, disabled:!entranceReady || choiceFeedback.pending || mediaLoading || Boolean(editingCard) || !currentCard,
     onEdit:() => { if (currentCard) { setEditingFace(phase === 'back' ? 'back' : 'front'); setEditingCard(currentCard); } } });
   const seen = useCardSeen({ deckId:currentCard?.deckId ?? null, cardId:currentCard?.id ?? null,
     sessionKey:session.seenSessionKey, occurrenceId:session.seenOccurrenceId, mode:'practice', face:phase === 'back' ? 'back' : 'front',
     enabled:entranceReady && (phase === 'front' || phase === 'back'), onFlip:flip });
   const turn = useCardTurn({
-    face:phase === 'back' ? 'back' : 'front', identity:currentCard?.id ?? 'loading',
+    face:phase === 'back' ? 'back' : 'front', identity:`${currentCard?.id ?? 'loading'}:${session.seenOccurrenceId}`,
     disabled:!entranceReady || choiceFeedback.pending || mediaLoading || Boolean(editingCard) || !currentCard || hold.activated || hold.offered,
     locked:hold.locked, onFlip:seen.flip, onGestureStart:hold.dismiss,
   });
+  const navigationLocked = !entranceReady || mediaLoading || choiceFeedback.pending || Boolean(editingCard) || hold.locked || hold.holding || turn.moving;
 
   if (phase === 'error') return <main className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
     <header className="kit-page-header"><button type="button" className="kit-icon-button" onClick={onExit} aria-label="Back">‹</button><span className="deck-context-label"><DeckName name={deckName} /></span></header>
@@ -152,9 +155,10 @@ export default function ReviewStudy({ db, deckId, deckName, mediaBootstrap, onEx
 
   // ── Complete ────────────────────────────────────────────────────────────
   if (phase === 'complete') {
-    return <div className="h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
+    return <div className="study-session h-[100dvh] flex flex-col bg-[var(--kit-bg)] text-[#1c1c1e] dark:text-[#E5E5E5]">
       <header className="practice-finish-header"><span className="deck-context-label"><DeckName name={deckName} /></span></header>
-      <SessionFinish showMark={stats.total > 0} title={stats.total ? 'Practice complete' : 'No cards yet'} detail={stats.total ? `${stats.putAside} ${stats.putAside === 1 ? 'card' : 'cards'}` : undefined} onDone={() => { hapticTap(); onExit(); }} onPractise={stats.putAside > 0 ? reshufflePutAside : undefined} />
+      <SessionFinish showMark={stats.putAside > 0} title={stats.total ? 'Practice finished' : 'No cards yet'} detail={stats.putAside ? `${stats.putAside} ${stats.putAside === 1 ? 'card' : 'cards'} put aside` : undefined} onDone={() => { hapticTap(); onExit(); }} onPractise={stats.putAside > 0 ? reshufflePutAside : undefined} />
+      <PracticeFinishNavigation canPrevious={session.canPrevious} onPrevious={session.previous} />
     </div>;
   }
 
@@ -207,9 +211,11 @@ export default function ReviewStudy({ db, deckId, deckName, mediaBootstrap, onEx
       </CardTurnFrame>
 
       {!entranceReady && <div className="session-entrance-status" role="status"><span className="sr-only">Opening deck…</span><span className="session-entrance-track" aria-hidden="true" /></div>}
-      <StudyFooter face={phase === 'back' ? 'back' : 'front'} layoutFace={turn.layoutFace} seenCount={seen.count} onFlip={turn.flip} disabled={!entranceReady || choiceFeedback.pending} inert={!entranceReady}
+      <StudyFooter face={phase === 'back' ? 'back' : 'front'} layoutFace={turn.layoutFace} seenCount={seen.count} onFlip={turn.flip} disabled={navigationLocked} inert={!entranceReady}
+        leading={<PracticeNavigationButton direction="previous" onNavigate={session.previous} disabled={navigationLocked || !session.canPrevious} />}
+        trailing={<PracticeNavigationButton direction="next" onNavigate={session.next} disabled={navigationLocked || !session.canNext} />}
         frontActions={<ShowAnswerButton onReveal={turn.flip} practice />}
-        backActions={<ReviewChoices onRepeat={() => choiceFeedback.choose('again')} onPutAside={() => choiceFeedback.choose('aside')} selected={choiceFeedback.selected} pending={choiceFeedback.pending} />}
+        backActions={<ReviewChoices onRepeat={() => choiceFeedback.choose('again')} onPutAside={() => choiceFeedback.choose('aside')} selected={choiceFeedback.selected} pending={navigationLocked} readOnly={!session.canChoose} />}
       />
       {editingCard && <CardEditor db={db} card={editingCard} initialFace={editingFace} rewriteHtml={rewriteHtml} onMediaAdded={addMediaFile} onSyncEdit={onSyncEdit}
         onSave={updated => { session.updateCard(updated); setEditingCard(null); }} onDelete={onExit} onDismiss={() => setEditingCard(null)} />}
